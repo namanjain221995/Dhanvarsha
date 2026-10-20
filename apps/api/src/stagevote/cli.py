@@ -6,6 +6,7 @@ create-admin     create an admin interactively (never resets an existing one unl
 worker           run the background worker
 seed-demo        fill a pristine programme with 14 demo rounds and synthetic participants
 seed-rounds      add N blank events to fill in later (default 14; allowed in production)
+seed-sample-content  fill empty event descriptions and ballots with sample teams to replace later
 seed-loadtest    create an isolated synthetic programme for load testing (non-production)
 activate-programme   switch the active programme by slug
 reconcile        verify stored votes against receipts and aggregates
@@ -311,6 +312,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     sr = sub.add_parser("seed-rounds")
     sr.add_argument("--count", type=int, default=14)
+    sub.add_parser("seed-sample-content")
     sl = sub.add_parser("seed-loadtest")
     sl.add_argument("--participants", type=int, default=500)
     sl.add_argument("--events", type=int, default=4)
@@ -345,6 +347,10 @@ def main(argv: list[str] | None = None) -> int:
         from .seed import seed_rounds
 
         asyncio.run(seed_rounds(args.count))
+    elif args.command == "seed-sample-content":
+        from .seed import seed_sample_content
+
+        asyncio.run(seed_sample_content())
     elif args.command == "seed-loadtest":
         from .seed import seed_loadtest
 

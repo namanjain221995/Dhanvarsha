@@ -331,6 +331,92 @@ async def seed_rounds(count: int = 14) -> None:
     print(f"Added {count} blank events to {name}. Rename them and add the teams in Admin > Events.")
 
 
+async def seed_sample_content() -> None:
+    """Fill what is still empty in the active programme's upcoming events with sample content to
+    replace later: an event description, and 4 to 6 sample teams (with members) on each empty
+    team ballot, or sample people on each empty individual ballot.
+
+    Only empty fields and empty ballots are filled; anything an organiser has written is kept,
+    and running it again changes nothing. No participants or settings are touched, so it may
+    run in production.
+    """
+    from .services.live import begin_transition
+    from .state import Actor, audit, bump_state
+
+    maker, engine = _maker()
+    async with maker() as db, db.begin():
+        active = (
+            await db.execute(select(Programme).where(Programme.is_active.is_(True)))
+        ).scalar_one_or_none()
+        if active is None:
+            raise SystemExit("Run `stagevote bootstrap` first.")
+        programme, _ = await begin_transition(db, active.id, None)
+        events = list(
+            (
+                await db.execute(
+                    select(Event)
+                    .where(
+                        Event.programme_id == programme.id,
+                        Event.archived_at.is_(None),
+                        Event.status == "upcoming",
+                    )
+                    .order_by(Event.position)
+                )
+            ).scalars()
+        )
+        described = filled = 0
+        for index, event in enumerate(events):
+            sample_description = ROUNDS[index % len(ROUNDS)][1]
+            if not event.description.strip():
+                event.description = sample_description
+                event.version += 1
+                described += 1
+            ballots = list(
+                (
+                    await db.execute(
+                        select(Ballot).where(Ballot.event_id == event.id).order_by(Ballot.position)
+                    )
+                ).scalars()
+            )
+            for ballot in ballots:
+                has_nominees = (
+                    await db.execute(
+                        select(func.count()).select_from(Nominee).where(Nominee.ballot_id == ballot.id)
+                    )
+                ).scalar_one()
+                if has_nominees or ballot.frozen_at is not None:
+                    continue
+                rnd = random.Random(f"{index}-{ballot.position}")
+                if ballot.kind == "team":
+                    for position, team in enumerate(rnd.sample(TEAMS, k=rnd.randint(4, 6)), start=1):
+                        db.add(
+                            Nominee(
+                                ballot_id=ballot.id,
+                                position=position,
+                                name=team,
+                                members=list(TEAM_MEMBERS.get(team, [])),
+                            )
+                        )
+                else:
+                    for position, (person, team) in enumerate(
+                        rnd.sample(PEOPLE, k=rnd.randint(4, 6)), start=1
+                    ):
+                        db.add(Nominee(ballot_id=ballot.id, position=position, name=person, affiliation=team))
+                filled += 1
+        await db.flush()
+        if described or filled:
+            await bump_state(db, programme.id, live=True, reason="sample_content")
+            await audit(
+                db,
+                Actor.system("cli"),
+                "events.sample_content_added",
+                programme_id=programme.id,
+                details={"descriptions": described, "ballots": filled},
+            )
+    await engine.dispose()  # type: ignore[attr-defined]
+    print(f"Filled {described} event descriptions and {filled} empty ballots with sample content.")
+
+
 async def seed_demo(participants: int, activate_sample: int) -> None:
     _refuse_production()
     maker, engine = _maker()
