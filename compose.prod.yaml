@@ -152,12 +152,26 @@ services:
       - caddy_data:/data
       - caddy_config:/config
     ports:
-      - "80:80"
-      - "443:443"
-      - "443:443/udp"
+      # 127.0.0.1 behind a Cloudflare Tunnel (only cloudflared reaches the proxy then).
+      - "${PROXY_BIND:-0.0.0.0}:80:80"
+      - "${PROXY_BIND:-0.0.0.0}:443:443"
+      - "${PROXY_BIND:-0.0.0.0}:443:443/udp"
     depends_on:
       - api
       - web
+
+  # Cloudflare Tunnel connector: enabled with COMPOSE_PROFILES=tunnel in .env
+  # (scripts/deploy.sh --domain <host> --tunnel). The token comes from the Cloudflare
+  # dashboard (Zero Trust > Networks > Tunnels) and stays in .env only.
+  tunnel:
+    image: cloudflare/cloudflared:2026.9.3
+    profiles: ["tunnel"]
+    restart: always
+    command: ["tunnel", "--no-autoupdate", "run"]
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:-}
+    depends_on:
+      - proxy
 
 volumes:
   pgdata:

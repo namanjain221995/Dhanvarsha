@@ -5,7 +5,12 @@
 #   scripts/deploy.sh --domain vote.example.org --acme-email you@example.org
 #     creates .env with generated secrets (if missing) and writes the production settings for
 #     that domain. --domain also accepts the server's public IPv4 address (no domain yet): the
-#     site is then https://<ip> with a short-lived Let's Encrypt IP certificate. Then edit .env once for the email settings (SMTP_* and MAIL_FROM) and run:
+#     site is then https://<ip> with a short-lived Let's Encrypt IP certificate.
+#   scripts/deploy.sh --domain vote.example.org --acme-email you@example.org --tunnel
+#     serves the domain through a Cloudflare Tunnel instead (Cloudflare provides HTTPS; ports
+#     80/443 are closed to the internet). Put the tunnel token in .env as
+#     CLOUDFLARE_TUNNEL_TOKEN, and in Cloudflare point the tunnel's public hostname to
+#     http://proxy:80. Then edit .env once for the email settings (SMTP_* and MAIL_FROM) and run:
 #   scripts/deploy.sh --check          # validate .env and DNS only, change nothing
 #   scripts/deploy.sh                  # build and start the site
 #   scripts/deploy.sh --load-test      # ... then run the three capacity tests on this server
@@ -18,7 +23,7 @@
 set -eu
 cd "$(dirname "$0")/.."
 
-CHECK=""; LOAD=""; QUICK=""; DOMAIN=""; ACME=""; FORCE=""
+CHECK=""; LOAD=""; QUICK=""; DOMAIN=""; ACME=""; FORCE=""; TUNNEL=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --check) CHECK=1 ;;
@@ -27,6 +32,7 @@ while [ $# -gt 0 ]; do
     --domain) DOMAIN="$2"; shift ;;
     --acme-email) ACME="$2"; shift ;;
     --force) FORCE=1 ;;
+    --tunnel) TUNNEL=1 ;;
     *) echo "unknown option $1" >&2; exit 2 ;;
   esac
   shift
@@ -41,16 +47,20 @@ chmod 600 .env
 
 if [ -n "$DOMAIN" ] || [ -n "$ACME" ]; then
   [ -n "$DOMAIN" ] && [ -n "$ACME" ] || { echo "Give both --domain and --acme-email." >&2; exit 2; }
-  python3 - "$DOMAIN" "$ACME" "$(nproc)" <<'PY'
+  python3 - "$DOMAIN" "$ACME" "$(nproc)" "$TUNNEL" <<'PY'
 import re, sys
 from pathlib import Path
-domain, acme, cpus = sys.argv[1].strip().lower(), sys.argv[2].strip(), int(sys.argv[3])
+domain, acme, cpus, tunnel = sys.argv[1].strip().lower(), sys.argv[2].strip(), int(sys.argv[3]), sys.argv[4] == "1"
 is_ip = re.fullmatch(r"\d{1,3}(\.\d{1,3}){3}", domain) is not None
+if tunnel and is_ip:
+    sys.exit("--tunnel needs a host name (the tunnel's public hostname), not an IP address")
 if not is_ip and not re.fullmatch(r"[a-z0-9.-]+\.[a-z]{2,}", domain):
     sys.exit(f"--domain must be a host name such as vote.example.org or an IPv4 address (got {domain!r})")
 values = {
     # A domain gets a normal certificate; an IP address gets a short-lived IP certificate.
-    "CADDY_CONFIG": "Caddyfile.ip" if is_ip else "Caddyfile.prod",
+    "CADDY_CONFIG": "Caddyfile.tunnel" if tunnel else "Caddyfile.ip" if is_ip else "Caddyfile.prod",
+    "COMPOSE_PROFILES": "tunnel" if tunnel else "",
+    "PROXY_BIND": "127.0.0.1" if tunnel else "0.0.0.0",
     "APP_ENV": "production",
     "APP_BASE_URL": f"https://{domain}",
     "SITE_DOMAIN": domain,
@@ -95,6 +105,11 @@ if domain and url and url.rstrip("/") != f"https://{domain}":
     problems.append(f"APP_BASE_URL: must be https://{domain} (found {url})")
 if domain and re.fullmatch(r"\d{1,3}(\.\d{1,3}){3}", domain) and env.get("CADDY_CONFIG") != "Caddyfile.ip":
     problems.append("CADDY_CONFIG: must be Caddyfile.ip when SITE_DOMAIN is an IP address")
+if env.get("CADDY_CONFIG") == "Caddyfile.tunnel":
+    if len(env.get("CLOUDFLARE_TUNNEL_TOKEN", "")) < 50:
+        problems.append("CLOUDFLARE_TUNNEL_TOKEN: paste the tunnel token from Cloudflare (Zero Trust > Networks > Tunnels)")
+    if "tunnel" not in env.get("COMPOSE_PROFILES", ""):
+        problems.append("COMPOSE_PROFILES: must include tunnel")
 acme = need("ACME_EMAIL", "an email address for certificate notices")
 if acme and "@" not in acme:
     problems.append("ACME_EMAIL: must be an email address")
@@ -136,8 +151,13 @@ PY
 DOMAIN="$(grep '^SITE_DOMAIN=' .env | cut -d= -f2- | tr -d '"')"
 IS_IP=""
 case "$DOMAIN" in *[!0-9.]*) ;; *) IS_IP=1 ;; esac
+IS_TUNNEL=""
+grep -q '^CADDY_CONFIG=Caddyfile.tunnel' .env && IS_TUNNEL=1
 PUBLIC="$(curl -fsS --max-time 5 https://checkip.amazonaws.com 2>/dev/null || true)"
-if [ -n "$IS_IP" ]; then
+if [ -n "$IS_TUNNEL" ]; then
+  echo "== $DOMAIN is served through the Cloudflare Tunnel (public hostname -> http://proxy:80)"
+  RESOLVED="tunnel"
+elif [ -n "$IS_IP" ]; then
   echo "== site address is the IP $DOMAIN"
   if [ -n "$PUBLIC" ] && [ "$PUBLIC" != "$DOMAIN" ]; then
     echo "warning: this server's public IP is $PUBLIC, not $DOMAIN. Run: scripts/deploy.sh --domain $PUBLIC --acme-email <email>"
@@ -147,7 +167,7 @@ else
   echo "== checking DNS for $DOMAIN"
   RESOLVED="$(getent ahostsv4 "$DOMAIN" 2>/dev/null | awk 'NR==1{print $1}')"
 fi
-if [ -z "$IS_IP" ]; then
+if [ -z "$IS_IP" ] && [ -z "$IS_TUNNEL" ]; then
   if [ -z "$RESOLVED" ]; then
     echo "warning: $DOMAIN does not resolve yet. Create a DNS A record pointing to ${PUBLIC:-this server's public IP}."
   elif [ -n "$PUBLIC" ] && [ "$RESOLVED" != "$PUBLIC" ]; then
@@ -175,11 +195,18 @@ $COMPOSE up -d --build
 
 echo "== waiting for https://$DOMAIN (the first certificate can take a minute)"
 i=0
-# A domain is checked through this machine; an IP address is checked as visitors reach it.
-RESOLVE="--resolve $DOMAIN:443:127.0.0.1"
-[ -n "$IS_IP" ] && RESOLVE=""
-# shellcheck disable=SC2086 # RESOLVE is empty or one option with its value
-until curl -fsS --max-time 5 $RESOLVE "https://$DOMAIN/api/v1/ready" >/dev/null 2>&1; do
+# A domain is checked through this machine; an IP address is checked as visitors reach it;
+# behind a tunnel the local proxy is checked here and the public address after the start.
+ready() {
+  if [ -n "$IS_TUNNEL" ]; then
+    curl -fsS --max-time 5 -H "Host: $DOMAIN" "http://127.0.0.1/api/v1/ready" >/dev/null 2>&1
+  elif [ -n "$IS_IP" ]; then
+    curl -fsS --max-time 5 "https://$DOMAIN/api/v1/ready" >/dev/null 2>&1
+  else
+    curl -fsS --max-time 5 --resolve "$DOMAIN:443:127.0.0.1" "https://$DOMAIN/api/v1/ready" >/dev/null 2>&1
+  fi
+}
+until ready; do
   i=$((i + 1))
   if [ $i -gt 60 ]; then
     echo "The site did not answer over HTTPS within 5 minutes. Check DNS, ports 80/443 and:" >&2
@@ -188,6 +215,20 @@ until curl -fsS --max-time 5 $RESOLVE "https://$DOMAIN/api/v1/ready" >/dev/null 
   fi
   sleep 5
 done
+if [ -n "$IS_TUNNEL" ]; then
+  echo "== checking https://$DOMAIN through Cloudflare"
+  j=0
+  until curl -fsS --max-time 10 "https://$DOMAIN/api/v1/ready" >/dev/null 2>&1; do
+    j=$((j + 1))
+    if [ $j -gt 12 ]; then
+      echo "warning: https://$DOMAIN does not answer yet. In Cloudflare (Zero Trust > Networks > Tunnels >" >&2
+      echo "  your tunnel > Public Hostname) set: $DOMAIN -> Service HTTP, URL proxy:80. Tunnel log:" >&2
+      $COMPOSE logs --tail 5 tunnel >&2 || true
+      break
+    fi
+    sleep 5
+  done
+fi
 echo "== database permissions"
 $COMPOSE exec -T api stagevote check-privileges
 $COMPOSE ps --format '{{.Service}}: {{.Status}}'

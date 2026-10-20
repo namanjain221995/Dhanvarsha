@@ -1,0 +1,27 @@
+# Production behind a Cloudflare Tunnel: Cloudflare terminates HTTPS for SITE_DOMAIN and the
+# cloudflared container forwards requests to http://proxy:80 inside the Docker network.
+# No certificates here, and ports 80/443 are bound to 127.0.0.1 only (PROXY_BIND), so the
+# site cannot be reached around Cloudflare. Selected by CADDY_CONFIG=Caddyfile.tunnel.
+{
+	admin off
+	auto_https off
+	servers {
+		# Only cloudflared (a private Docker address) may set the visitor's address.
+		trusted_proxies static private_ranges
+		client_ip_headers Cf-Connecting-IP X-Forwarded-For
+		timeouts {
+			read_header 10s
+			idle 2m
+		}
+	}
+}
+
+http://{$SITE_DOMAIN} {
+	header Strict-Transport-Security "max-age=31536000"
+	import /etc/caddy/common.caddy
+}
+
+# Any other host name (for example the bare IP from inside the server): send to the site.
+:80 {
+	redir https://{$SITE_DOMAIN}{uri} permanent
+}

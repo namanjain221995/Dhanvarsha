@@ -5,6 +5,8 @@
 {
 	admin off
 	email {$ACME_EMAIL}
+	# Browsers send no server name (SNI) to a bare IP address: use the IP's certificate then.
+	default_sni {$SITE_DOMAIN}
 	servers {
 		timeouts {
 			read_header 10s
