@@ -280,6 +280,21 @@ async def reopen_programme(
     return {"ok": True}
 
 
+@router.post("/live/restart-programme")
+async def restart_programme(
+    body: VersionIn,
+    response: Response,
+    ctx: AdminContext = Depends(current_admin),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """Start again from round 1 with fresh copies of every event (old rounds are archived)."""
+    no_store(response)
+    async with db.begin():
+        programme = await active_programme(db)
+    summary = await live.restart_programme(db, programme.id, body.expected_live_version, ctx.actor)
+    return {"ok": True, **summary}
+
+
 @router.get("/schedule/preview")
 async def schedule_preview(response: Response, db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
     no_store(response)

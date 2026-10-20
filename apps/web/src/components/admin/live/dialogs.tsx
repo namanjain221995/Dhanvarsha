@@ -7,7 +7,7 @@ import type { LiveState, SchedulePreview } from '@/lib/admin/types'
 import { formatWhen } from '@/lib/admin/zoned'
 import { serverClock, useServerNow } from '@/lib/time'
 import { ConfirmDialog } from '../confirm'
-import { SelectField } from '../form'
+import { CheckboxField, SelectField } from '../form'
 import { DeadlinePicker, initialDeadline, resolveDeadline, type DeadlineChoice } from './deadline'
 
 export type LiveBody = Record<string, unknown>
@@ -439,6 +439,41 @@ export function ResumeScheduleDialog({
           ))}
         </ol>
       )}
+    </ConfirmDialog>
+  )
+}
+
+export function RestartProgrammeDialog({ state, busy, error, onSubmit, onClose }: BaseProps) {
+  const [understood, setUnderstood] = useState(false)
+  const current = state.current_event
+  const rounds = state.events.length
+  return (
+    <ConfirmDialog
+      open
+      tone="danger"
+      title="Restart from round 1?"
+      description={`All ${rounds} rounds go back to the start, exactly as they are now: same names, ballots, teams and members. Nothing opens by itself; you open round 1 when you are ready.`}
+      confirmLabel="Restart from round 1"
+      confirmDisabled={!understood}
+      busy={busy}
+      error={error}
+      onConfirm={() => onSubmit({})}
+      onClose={onClose}
+    >
+      <ul className="list-disc space-y-1.5 pl-5 text-sm text-plum">
+        {current ? <li>Voting for <strong>{current.name}</strong> closes now.</li> : null}
+        <li>Everyone can vote again in every round. Participants stay signed in.</li>
+        <li>
+          Votes cast so far are kept safely, but they no longer count: they stay with the old rounds, which are archived
+          (Events › show archived) and hidden from participants and results.
+        </li>
+        <li>Planned times that are already in the past are cleared.</li>
+      </ul>
+      <CheckboxField
+        label="I understand that the results so far will no longer count"
+        checked={understood}
+        onChange={setUnderstood}
+      />
     </ConfirmDialog>
   )
 }

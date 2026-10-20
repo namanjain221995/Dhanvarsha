@@ -32,7 +32,7 @@ real venue network, real phones, or an external email provider, except where sta
 
 ## Backend integration tests (real PostgreSQL)
 
-`cd apps/api && uv run pytest -q` reported **108 passed in 54.1 s** in the final run
+`cd apps/api && uv run pytest -q` reported **110 passed in 54.7 s** in the final run
 (2026-10-20, after the invitation editor, one-step invitations, frameless logo and team members were added). Each run creates `stagevote_test_<hex>` owned by the owner role, migrates it with Alembic,
 serves the app as the restricted runtime role, and drops the database at the end.
 
@@ -50,6 +50,7 @@ serves the app as the restricted runtime role, and drops the database at the end
 | `test_email_delivery.py` | 13 | Transient errors back off, permanent errors fail once, and the attempt limit holds. A configuration error pauses the loop. `unknown` is retried only after the admin confirms. Lease expiry after send gives `unknown`; before send, the job is requeued. Two workers never send the same job. The emailed password is purged after acceptance and never appears in logs or responses. Superseded invitations are never sent. The status wording says accepted, not delivered. One real SMTP message reaches Mailpit with the email-address user ID, the password, the link and a plain-text part. |
 | `test_email_templates.py` | 9 | Built-in wording until an organiser saves their own. Saved wording reaches invitations with placeholders filled, organiser text escaped (never HTML), and the user ID, password and link always present; resetting restores the built-in wording. Unknown placeholders, line breaks or control characters in single-line fields, empty or over-long fields and extra fields are refused and nothing is stored. The draft preview renders without storing or sending. A preview to several addresses sends one message each, marked `[Preview]`, with the example password. Bad or more than 10 addresses queue nothing. The programme logo is embedded as an inline PNG (`multipart/related`, `cid:`), and a missing logo file sends the email without an image. A programme logo upload loses its transparent margins (other image kinds keep their canvas), and the email shows it 56 px high at its own shape without a frame. |
 | `test_team_members.py` | 2 | Team member names are cleaned (spaces, blanks, repeats), saved, and shown in the admin detail, the admin preview and the participant event. They can be corrected after voting opens, with an audit entry. A vote for the team gives a receipt naming the team. More than 30 names, line breaks or tabs, names over 120 characters and a plain string instead of a list are refused, and nothing is stored. |
+| `test_restart.py` | 2 | *Restart from round 1* closes the live round, archives every round, and creates identical upcoming copies in order, with ballots, nominees and team members. Stored votes are unchanged. The participant's receipts disappear, and they can vote again on the copy, while the archived ballot refuses votes. It is audited. It is refused when nothing has started yet (`ALREADY_AT_START`) or with a stale live version. |
 | `test_multiprocess_live.py` | 1 (scenario) | Two real uvicorn processes: an admin change through process B reaches a socket on process A within 2 s, and a session reset through B closes A's socket with code 4401. Killing the listener connections leads to a `resync`. A row inserted with the notify trigger bypassed arrives through the outbox catch-up poll within about 5 s. A bad Origin or forged cookie is rejected at the handshake. |
 | `test_db_invariants.py` | 5 | The runtime role cannot UPDATE, DELETE or TRUNCATE votes or the audit log. The trigger blocks the owner too. There is at most one open event and one live session. Composite FKs reject inconsistent vote rows. |
 | `test_admin_api.py` | 7 | Round numbers ignore archived events; nominee order freezes when voting opens; participant counts and completion ignore archived rounds; email jobs are scoped to the programme; organiser session status and logout signal; the hub closes only the signed-out admin session; names reject control characters (email-header safety). |
@@ -157,6 +158,28 @@ submissions therefore arrive just before, during or after a transition.
 
 Together with `test_cutoff_races.py`, this shows that a transition never loses an
 acknowledged vote and never accepts one after the cutoff, under concurrent traffic.
+
+### API stress mode (2026-10-20)
+
+`tests/load/run.sh --yes-synthetic-load --users 500 --requests N` makes 500 signed-in
+synthetic users share N API calls. Each user sends its next call as soon as the previous
+answer arrives (35% snapshot, 25% live event, 10% time, 10% public programme, 20% vote then
+receipt). Every run writes an HTML report: `tests/load/results/<run>/report.html`. Runs were
+on the 20-core development host with 6 API workers.
+
+| Requests | Pause | Failed | Average / sustained speed | p50 | p95 | p99 | Votes accepted = stored |
+|---|---|---|---|---|---|---|---|
+| 10,000 | none | 0 | 973 / 1,322 per s | 351 ms | 1.56 s (over the 1 s target) | 2.74 s | 442 = 442 |
+| 10,000 | 1 s | 0 | 459 / 499 per s | 8.8 ms | 663 ms | 2.43 s | 460 = 460 |
+| 100,000 | none | 0 | 2,101 / 2,316 per s | 184 ms | 551 ms | 920 ms | 500 = 500 |
+| 1,000,000 | none | 0 | 1,936 / 2,555 per s | 203 ms | 617 ms | 963 ms | 500 = 500 |
+
+The million-request run lasted 8 min 37 s with no failures. Throughput and waiting time were
+steady from the first minute to the last. API memory stayed at about 3.0 GB from start to end,
+so no leak was seen. The slowest step is 500 sign-ins in the same second: about 2 s typical
+and up to 3.4 s, because password hashing (Argon2id) is deliberately expensive. In the short
+runs this login burst dominates p95 and p99. These numbers are for this host; measure the
+production server separately.
 
 ## Other checks
 

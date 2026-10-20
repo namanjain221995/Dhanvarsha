@@ -97,8 +97,23 @@ tests/e2e/run.sh --project=mobile-chromium specs/journey.spec.ts
 Load test (isolated stack on port 3190, synthetic accounts only):
 
 ```sh
+# API stress test: 500 signed-in users share 10,000 API calls, sent as fast as the server answers
+tests/load/run.sh --yes-synthetic-load --users 500 --requests 10000
+# Live event simulation: voting rounds with WebSockets, retries and lost responses
 tests/load/run.sh --yes-synthetic-load --voters 500 --rounds 3 --burst 10
+# See the HTML reports (verdict, charts, every API call, server CPU/memory)
+tests/load/serve.sh        # then open http://localhost:8099/
+python3 tests/load/report.py --export-passed reports-test   # copy only the passed reports to share
 ```
+
+Each run writes `tests/load/results/<run>/report.html` and refreshes
+`tests/load/results/index.html`. Add `--think-ms 500` to pause between a user's requests
+(closer to real people), `--api-workers N` to change the number of API processes, and
+`--down` to delete the test stack afterwards.
+
+Deploy on AWS EC2 with HTTPS and run the capacity tests there: see [docs/deploy-ec2.md](docs/deploy-ec2.md)
+(`sudo scripts/server-setup.sh`, then `scripts/deploy.sh --domain <domain> --acme-email <email>`, then
+`scripts/deploy.sh --load-test`).
 
 Operations:
 

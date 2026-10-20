@@ -17,6 +17,9 @@ Gmail API provider); development uses `compose.yaml`.
 
 ## First production deployment
 
+On AWS EC2, follow [deploy-ec2.md](deploy-ec2.md): `scripts/server-setup.sh` and
+`scripts/deploy.sh` do the steps below and run the capacity tests on the server.
+
 1. Point DNS for `SITE_DOMAIN` at the server; open ports 80 and 443.
 2. `scripts/bootstrap.sh` to generate secrets, then edit `.env`:
    `APP_ENV=production`, `APP_BASE_URL=https://<domain>`, `SITE_DOMAIN`, `ACME_EMAIL`,
@@ -59,6 +62,11 @@ Gmail API provider); development uses `compose.yaml`.
 - Rehearse with a test round and two or three test participants on real phones over the
   venue Wi-Fi and mobile data. Archive the test round afterwards (votes stay in the
   database but the round disappears from the programme).
+- After a full rehearsal of the real rounds, use *Live control › Start again › Restart from
+  round 1*. It closes any open round, archives every round with its votes (votes are never
+  deleted; they stop counting and are hidden from participants and results) and creates
+  identical fresh copies, all upcoming, in the same order. Participants stay signed in and
+  can vote again. Planned times already in the past are cleared.
 - Check: *Live control* shows the worker as healthy and the live channel connected;
   `curl -fsS https://<domain>/api/v1/ready` returns `"status":"ok"`.
 - Print the help-desk sheet: how to reset a session and resend an invitation

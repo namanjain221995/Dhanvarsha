@@ -26,7 +26,9 @@ async def test_team_members_are_cleaned_saved_and_shown_to_voters(world: World) 
     assert resp.status_code == 201, resp.text
     nominee_id = resp.json()["id"]
     members = ["Asha Rao", "Ravi Kumar"]
-    assert _nominee((await admin.get(f"/events/{event.id}")).json()["event"], nominee_id)["members"] == members
+    assert (
+        _nominee((await admin.get(f"/events/{event.id}")).json()["event"], nominee_id)["members"] == members
+    )
     assert _nominee((await admin.get(f"/events/{event.id}/preview")).json(), nominee_id)["members"] == members
 
     assert (await admin.open_event(event.id)).status_code == 200

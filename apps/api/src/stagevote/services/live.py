@@ -314,6 +314,125 @@ async def reopen_programme(
         await audit(db, actor, "programme.reopened", programme_id=programme_id)
 
 
+async def restart_programme(
+    db: AsyncSession, programme_id: uuid.UUID, expected_live_version: int, actor: Actor
+) -> dict[str, int]:
+    """Start the programme again from round 1.
+
+    Votes are never deleted or changed (the database refuses it). Instead every current event
+    is closed if open and archived, together with its ballots and votes, and an identical fresh
+    copy (name, description, rules, logo, ballots, nominees, team members) is created in the
+    same order with status `upcoming`. Participants can vote again on the copies; the archived
+    rounds keep their votes and audit trail but are hidden from participants and results.
+    Planned windows are copied only when they are still in the future.
+    """
+    async with db.begin():
+        programme, now = await begin_transition(db, programme_id, expected_live_version)
+        events = list(
+            (
+                await db.execute(
+                    select(Event)
+                    .where(Event.programme_id == programme_id, Event.archived_at.is_(None))
+                    .order_by(Event.position, Event.created_at)
+                    .with_for_update(key_share=True)
+                    .execution_options(populate_existing=True)
+                )
+            ).scalars()
+        )
+        if not events:
+            raise conflict("NOTHING_TO_RESTART", "There are no events to restart.")
+        if programme.ended_at is None and all(e.status == "upcoming" for e in events):
+            raise conflict(
+                "ALREADY_AT_START", "No event has been opened yet: the programme is already at round 1."
+            )
+        event_ids = [e.id for e in events]
+        ballots = list(
+            (
+                await db.execute(
+                    select(Ballot)
+                    .where(Ballot.event_id.in_(event_ids))
+                    .order_by(Ballot.position, Ballot.created_at)
+                )
+            ).scalars()
+        )
+        nominees = list(
+            (
+                await db.execute(
+                    select(Nominee)
+                    .where(Nominee.ballot_id.in_([b.id for b in ballots]))
+                    .order_by(Nominee.position, Nominee.created_at)
+                )
+            ).scalars()
+        )
+        ballots_by_event: dict[uuid.UUID, list[Ballot]] = {}
+        for ballot in ballots:
+            ballots_by_event.setdefault(ballot.event_id, []).append(ballot)
+        nominees_by_ballot: dict[uuid.UUID, list[Nominee]] = {}
+        for nominee in nominees:
+            nominees_by_ballot.setdefault(nominee.ballot_id, []).append(nominee)
+
+        closed = 0
+        copies: list[tuple[Event, Event]] = []
+        for event in events:
+            if event.status == "open":
+                _close(event, now, "restarted")
+                closed += 1
+            event.archived_at = now
+            event.version += 1
+            future = event.planned_start_at is not None and event.planned_start_at > now
+            copy = Event(
+                id=uuid.uuid4(),
+                programme_id=programme_id,
+                position=event.position,
+                name=event.name,
+                description=event.description,
+                rules=event.rules,
+                logo_asset_id=event.logo_asset_id,
+                status="upcoming",
+                planned_start_at=event.planned_start_at if future else None,
+                planned_end_at=event.planned_end_at if future else None,
+            )
+            db.add(copy)
+            copies.append((event, copy))
+        # The models have no ORM relationships, so insert parents before children explicitly.
+        await db.flush()
+        ballot_copies: list[tuple[Ballot, Ballot]] = []
+        for event, copy in copies:
+            for ballot in ballots_by_event.get(event.id, []):
+                ballot_copy = Ballot(
+                    id=uuid.uuid4(),
+                    programme_id=programme_id,
+                    event_id=copy.id,
+                    position=ballot.position,
+                    title=ballot.title,
+                    kind=ballot.kind,
+                    description=ballot.description,
+                )
+                db.add(ballot_copy)
+                ballot_copies.append((ballot, ballot_copy))
+        await db.flush()
+        for ballot, ballot_copy in ballot_copies:
+            for nominee in nominees_by_ballot.get(ballot.id, []):
+                db.add(
+                    Nominee(
+                        ballot_id=ballot_copy.id,
+                        position=nominee.position,
+                        name=nominee.name,
+                        affiliation=nominee.affiliation,
+                        description=nominee.description,
+                        members=list(nominee.members),
+                        photo_asset_id=nominee.photo_asset_id,
+                    )
+                )
+        programme.ended_at = None
+        await db.flush()
+        scheduled = await regenerate_schedule(db, programme, now)
+        await bump_state(db, programme_id, live=True, reason="restart")
+        summary = {"events": len(events), "closed": closed, "scheduled": scheduled}
+        await audit(db, actor, "programme.restarted", programme_id=programme_id, details=summary)
+    return summary
+
+
 # ---- schedule -----------------------------------------------------------------
 
 

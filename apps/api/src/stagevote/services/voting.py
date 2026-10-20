@@ -281,9 +281,11 @@ async def get_receipt(db: AsyncSession, ctx: ParticipantContext, ballot_id: uuid
 
 
 async def list_receipts(db: AsyncSession, participant_id: uuid.UUID) -> list[Receipt]:
+    """Receipts for the rounds participants can see (archived rounds, for example after a
+    restart, are hidden; their votes stay stored)."""
     rows = (
         await db.execute(
-            text(_RECEIPT_SQL.format(where="TRUE") + " ORDER BY v.created_at"),
+            text(_RECEIPT_SQL.format(where="e.archived_at IS NULL") + " ORDER BY v.created_at"),
             {"pid": participant_id},
         )
     ).all()

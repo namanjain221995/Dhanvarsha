@@ -11,6 +11,7 @@ import {
   Play,
   Power,
   RefreshCw,
+  RotateCcw,
   SkipForward,
   Square,
   TimerReset,
@@ -50,6 +51,7 @@ import {
   OpenEventDialog,
   ResumeProgrammeDialog,
   ResumeScheduleDialog,
+  RestartProgrammeDialog,
   StartNextDialog,
   type LiveBody,
 } from './dialogs'
@@ -61,6 +63,7 @@ type LiveDialog =
   | { kind: 'deadline' }
   | { kind: 'end' }
   | { kind: 'reopen' }
+  | { kind: 'restart' }
   | { kind: 'resume-schedule'; preview: SchedulePreview }
 
 const STALE_MESSAGE = 'Another organiser or the schedule changed the live state. Review and try again.'
@@ -302,6 +305,17 @@ export function LiveControl() {
                 </Button>
               </Panel>
             ) : null}
+            {p.ended_at || state.events.some((e) => e.status !== 'upcoming') ? (
+              <Panel
+                title="Start again"
+                description="Puts every round back to the start, for example after a rehearsal. Votes so far stop counting."
+              >
+                <Button variant="secondary" onClick={(event) => openDialog({ kind: 'restart' }, event.currentTarget)}>
+                  <RotateCcw aria-hidden className="size-4" />
+                  Restart from round 1…
+                </Button>
+              </Panel>
+            ) : null}
           </div>
         </div>
       </div>
@@ -362,6 +376,19 @@ export function LiveControl() {
           key={dialog.key}
           {...dialogProps}
           onSubmit={(body) => void run('/admin/live/reopen-programme', body, 'The programme is running again. You can open events.')}
+        />
+      ) : null}
+      {dialog.value?.kind === 'restart' ? (
+        <RestartProgrammeDialog
+          key={dialog.key}
+          {...dialogProps}
+          onSubmit={(body) =>
+            void run<{ events: number }>(
+              '/admin/live/restart-programme',
+              body,
+              (result) => `Restarted: all ${result.events} rounds are back at the start. Open round 1 when you are ready.`,
+            )
+          }
         />
       ) : null}
       {dialog.value?.kind === 'resume-schedule' ? (

@@ -70,6 +70,9 @@ export const options = {
   },
 }
 
+// 409 answers (already voted, voting closed) are part of normal voting, not failures.
+http.setResponseCallback(http.expectedStatuses({ min: 200, max: 399 }, 409))
+
 const voteLatency = new Trend('vote_latency', true)
 const statePropagation = new Trend('state_propagation', true)
 const snapshotLatency = new Trend('snapshot_latency', true)

@@ -6,6 +6,7 @@ export const CLOSE_REASONS: Record<string, string> = {
   superseded: 'Closed when the next event started',
   superseded_by_schedule: 'Closed when the schedule opened the next event',
   programme_ended: 'Closed when the programme ended',
+  restarted: 'Closed when the programme restarted from round 1',
 }
 
 export const SCHEDULE_JOB_LABELS: Record<ScheduleJobStatus, string> = {
@@ -84,6 +85,7 @@ const AUDIT_ACTIONS: Record<string, string> = {
   'participant.session_reset': 'Participant session reset',
   'participants.imported': 'Participants imported',
   'programme.ended': 'Programme ended',
+  'programme.restarted': 'Programme restarted from round 1',
   'programme.reopened': 'Programme resumed',
   'programme.updated': 'Programme settings changed',
   'recovery.issued': 'Reset link queued',

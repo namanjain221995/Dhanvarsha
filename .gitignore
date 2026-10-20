@@ -35,3 +35,7 @@ tests/load/results/*
 media/
 data/
 shots/
+
+# Generated load-test report exports (each machine writes its own)
+reports-test/
+reports-test.zip
