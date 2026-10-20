@@ -148,6 +148,27 @@ waits safely: the run fails with "Not deploying: voting is open", and you run it
 GitHub › Actions › CI/CD › *Run workflow* after the round closes. Do not push changes during the
 event unless they fix a problem.
 
+## Cloudflare Tunnel (recommended with Cloudflare DNS)
+
+With a Cloudflare Tunnel the server needs no open web ports and no certificate: Cloudflare
+serves HTTPS for your hostname and the `cloudflared` container forwards requests to the site.
+This is how `dhanvarsha.techsarasolutions.com` runs.
+
+1. Cloudflare › Zero Trust › Networks › Tunnels › *Create a tunnel* (Cloudflared), choose
+   Docker, and copy only the token (the long text after `--token`).
+2. On the server, add it to `.env` (`nano .env`): `CLOUDFLARE_TUNNEL_TOKEN=<token>`, then
+   ```sh
+   scripts/deploy.sh --domain dhanvarsha.techsarasolutions.com --acme-email <you> --tunnel
+   scripts/deploy.sh
+   ```
+3. In the tunnel, *Add published application* (public hostname): subdomain `dhanvarsha`,
+   domain `techsarasolutions.com`, path empty, **Service URL `http://proxy:80`**. Cloudflare
+   creates the DNS record itself.
+
+Ports 80 and 443 are then bound to the server itself only; you can remove them from the
+security group (keep SSH for maintenance and the CI/CD deploy). Treat the token like a password:
+if it was shared, use *Refresh token* in Cloudflare and update `.env`.
+
 ## Without a domain yet
 
 `scripts/deploy.sh --domain <ip-with-dashes>.sslip.io` (for example `52-91-241-136.sslip.io`)
