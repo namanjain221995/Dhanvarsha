@@ -10,7 +10,19 @@
  * With reduced motion, three still coins rest at the top instead.
  */
 
-type Coin = { x: number; size: number; fall: number; delay: number; sway: number; drift: number; spin: number; tilt: number; alpha: number }
+type Coin = {
+  x: number
+  size: number
+  fall: number
+  delay: number
+  sway: number
+  drift: number
+  spin: number
+  tilt: number
+  alpha: number
+  twinkle: number
+  twinkleDelay: number
+}
 
 // A fixed seed: the same coins on the server and in the browser (no hydration mismatch).
 function makeCoins(count: number): Coin[] {
@@ -30,28 +42,41 @@ function makeCoins(count: number): Coin[] {
       drift: 3 + rand() * 9,
       spin: 2.4 + rand() * 1.8,
       tilt: 14 + rand() * 22,
-      // Faint enough that text passing over a coin stays easy to read.
-      alpha: 0.45 + depth * 0.45,
+      // Near coins solid and shining; far ones a little faint, which reads as distance.
+      alpha: 0.72 + depth * 0.28,
+      twinkle: 3.2 + rand() * 3.5,
+      twinkleDelay: -rand() * 6,
     }
   })
 }
 
-const COINS = makeCoins(14)
-const EDGE_SLICES = 7
+const COINS = makeCoins(12)
+const EDGE_SLICES = 6
 
 /** One 3D coin. The parent sets its size (and, for still coins, its pose). */
 function CoinBody({ className = '', style }: { className?: string; style?: React.CSSProperties }) {
   return (
     <span className={`coin-body ${className}`} style={style}>
-      <svg className="coin-side coin-front" viewBox="0 0 64 64">
-        <use href="#sv-coin" />
-      </svg>
+      {/* Each face: the struck coin, a glint of light that sweeps across it as it turns, and
+          a shadow that deepens as it turns away from the light. */}
+      <span className="coin-side coin-front">
+        <svg viewBox="0 0 64 64">
+          <use href="#sv-coin" />
+        </svg>
+        <span className="coin-glint" />
+        <span className="coin-shade" />
+        <span className="coin-spark" />
+      </span>
       {Array.from({ length: EDGE_SLICES }, (_, i) => (
         <span key={i} className="coin-edge" style={{ '--i': i / (EDGE_SLICES - 1) } as React.CSSProperties} />
       ))}
-      <svg className="coin-side coin-back" viewBox="0 0 64 64">
-        <use href="#sv-coin" />
-      </svg>
+      <span className="coin-side coin-back">
+        <svg viewBox="0 0 64 64">
+          <use href="#sv-coin" />
+        </svg>
+        <span className="coin-glint" />
+        <span className="coin-shade" />
+      </span>
     </span>
   )
 }
@@ -61,24 +86,40 @@ export function CoinRain() {
     <div aria-hidden className="coin-rain">
       <svg width="0" height="0" className="absolute" focusable="false">
         <defs>
-          <radialGradient id="sv-coin-face" cx="34%" cy="28%" r="78%">
-            <stop offset="0" stopColor="#fff6cc" />
-            <stop offset="0.3" stopColor="#f8d76a" />
-            <stop offset="0.66" stopColor="#e2aa2e" />
-            <stop offset="1" stopColor="#ad7412" />
+          {/* Polished metal: bright and dark bands, as gold reflects its surroundings. */}
+          <linearGradient id="sv-coin-face" x1="0.12" y1="0" x2="0.88" y2="1">
+            <stop offset="0" stopColor="#fff0a8" />
+            <stop offset="0.14" stopColor="#ffd447" />
+            <stop offset="0.33" stopColor="#d39318" />
+            <stop offset="0.47" stopColor="#ffe27a" />
+            <stop offset="0.58" stopColor="#f4b828" />
+            <stop offset="0.79" stopColor="#ad6c08" />
+            <stop offset="1" stopColor="#f8cd45" />
+          </linearGradient>
+          <radialGradient id="sv-coin-light" cx="30%" cy="24%" r="60%">
+            <stop offset="0" stopColor="#ffffff" stopOpacity="0.7" />
+            <stop offset="0.45" stopColor="#fff6d6" stopOpacity="0.18" />
+            <stop offset="1" stopColor="#fff6d6" stopOpacity="0" />
           </radialGradient>
-          <linearGradient id="sv-coin-rim" x1="0" y1="0" x2="1" y2="1">
-            <stop offset="0" stopColor="#fde7a0" />
-            <stop offset="0.45" stopColor="#d49b25" />
-            <stop offset="1" stopColor="#7f540a" />
+          {/* The rim runs the other way round, so face and rim read as a bevel. */}
+          <linearGradient id="sv-coin-rim" x1="0.9" y1="1" x2="0.1" y2="0">
+            <stop offset="0" stopColor="#fbe08c" />
+            <stop offset="0.35" stopColor="#c58a1b" />
+            <stop offset="0.6" stopColor="#fff0b6" />
+            <stop offset="1" stopColor="#8a5a09" />
+          </linearGradient>
+          <linearGradient id="sv-coin-bevel" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0" stopColor="#fff7d1" />
+            <stop offset="1" stopColor="#7d5208" />
           </linearGradient>
           <symbol id="sv-coin" viewBox="0 0 64 64">
             <circle cx="32" cy="32" r="32" fill="url(#sv-coin-rim)" />
             {/* Milled rim and the raised border around the face. */}
             <circle cx="32" cy="32" r="30.4" fill="none" stroke="#8a5d0c" strokeWidth="2.4" strokeDasharray="1.1 1.6" opacity="0.5" />
-            <circle cx="32" cy="32" r="26" fill="#9a6810" />
+            <circle cx="32" cy="32" r="26" fill="none" stroke="url(#sv-coin-bevel)" strokeWidth="1.6" />
             <circle cx="32" cy="32" r="25" fill="url(#sv-coin-face)" />
-            <circle cx="32" cy="32" r="21.5" fill="none" stroke="#fff2bf" strokeWidth="0.9" opacity="0.7" />
+            <circle cx="32" cy="32" r="25" fill="url(#sv-coin-light)" />
+            <circle cx="32" cy="32" r="21.5" fill="none" stroke="#fff2bf" strokeWidth="0.9" opacity="0.75" />
             {/* Raised rupee: a light edge above, the struck colour below. */}
             <text x="32.9" y="43" textAnchor="middle" fontSize="28" fontWeight="800" fill="#fff4c8" opacity="0.7" fontFamily="system-ui, sans-serif">
               ₹
@@ -86,7 +127,7 @@ export function CoinRain() {
             <text x="32" y="42.1" textAnchor="middle" fontSize="28" fontWeight="800" fill="#9c6a0d" fontFamily="system-ui, sans-serif">
               ₹
             </text>
-            <ellipse cx="22" cy="16" rx="11" ry="4.6" fill="#ffffff" opacity="0.4" transform="rotate(-30 22 16)" />
+            <ellipse cx="22" cy="16" rx="11" ry="4.2" fill="#ffffff" opacity="0.55" transform="rotate(-30 22 16)" />
           </symbol>
         </defs>
       </svg>
@@ -105,6 +146,8 @@ export function CoinRain() {
               '--spin': `${coin.spin}s`,
               '--tilt': `${coin.tilt}deg`,
               '--alpha': coin.alpha,
+              '--twinkle': `${coin.twinkle}s`,
+              '--twinkle-delay': `${coin.twinkleDelay}s`,
             } as React.CSSProperties
           }
         >
