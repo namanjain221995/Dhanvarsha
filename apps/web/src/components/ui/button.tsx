@@ -36,6 +36,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
       ref={ref}
       disabled={disabled || busy}
       aria-busy={busy || undefined}
+      data-variant={variant}
       className={`inline-flex select-none items-center justify-center rounded-full font-semibold transition-colors duration-150 disabled:cursor-not-allowed ${variants[variant]} ${sizes[size]} ${block ? 'w-full' : ''} ${className}`}
       {...rest}
     >

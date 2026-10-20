@@ -36,6 +36,7 @@ export function StatusChip({ kind, label }: { kind: ChipKind; label?: string }) 
   }
   return (
     <span
+      data-chip={kind}
       className={`inline-flex min-h-7 shrink-0 items-center gap-1.5 rounded-full px-2.5 text-[0.8rem] font-semibold ${styles[kind]}`}
     >
       {icon[kind]}
@@ -69,7 +70,7 @@ export function EventLogo({
     )
   }
   return (
-    <span style={transitionId ? { viewTransitionName: transitionId } : undefined} className="inline-flex shrink-0">
+    <span style={transitionId ? { viewTransitionName: transitionId } : undefined} className="gold-frame gold-frame-tile">
       <Avatar src={src} name={name} size={size} rounded="xl" />
     </span>
   )
@@ -204,7 +205,9 @@ export function ParticipantHeader({
           onClick={() => setOpen((v) => !v)}
           className="flex size-11 items-center justify-center rounded-full"
         >
-          <Avatar name={displayName || userCode} size={36} />
+          <span className="gold-frame">
+            <Avatar name={displayName || userCode} size={36} />
+          </span>
         </button>
         {open ? (
           <div

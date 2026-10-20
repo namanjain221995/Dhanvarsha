@@ -34,6 +34,7 @@ function NomineeOption({
   return (
     <label
       htmlFor={id}
+      data-checked={checked ? 'true' : undefined}
       className={`group relative flex min-h-[4.25rem] cursor-pointer items-center gap-3.5 rounded-[1.25rem] border-2 bg-paper px-3.5 py-3 transition-[border-color,background-color,box-shadow] duration-150 has-[:focus-visible]:shadow-[0_0_0_3px_var(--primary-ring)] ${
         checked ? 'border-primary bg-primary-wash/60' : 'border-sand hover:border-plum-faint/50'
       } ${disabled ? 'cursor-not-allowed opacity-70' : ''}`}
@@ -397,7 +398,7 @@ export function EventDetailView({ eventId }: { eventId: string }) {
           </div>
           {event.description ? <p className="mt-4 leading-relaxed text-plum-soft">{event.description}</p> : null}
           {event.rules ? (
-            <details className="group mt-3 rounded-2xl border border-sand bg-paper/70 px-4 [&_summary::-webkit-details-marker]:hidden">
+            <details className="rules-box group mt-3 rounded-2xl border border-sand bg-paper/70 px-4 [&_summary::-webkit-details-marker]:hidden">
               <summary className="flex min-h-11 cursor-pointer items-center justify-between font-semibold">
                 How voting works
                 <span aria-hidden className="text-plum-soft transition-transform duration-150 group-open:rotate-45">+</span>
@@ -465,7 +466,7 @@ export function EventDetailView({ eventId }: { eventId: string }) {
       </PageColumn>
 
       {showBar && target ? (
-        <div className="fixed inset-x-0 bottom-0 z-40 border-t border-sand bg-paper/95 backdrop-blur-md safe-bottom">
+        <div className="vote-bar fixed inset-x-0 bottom-0 z-40 border-t border-sand bg-paper/95 backdrop-blur-md safe-bottom">
           <PageColumn className="pt-3">
             <div aria-live="polite">
               {targetState?.submit.phase === 'error' ? (

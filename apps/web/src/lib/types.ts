@@ -1,6 +1,6 @@
 /** Participant-facing API shapes (see apps/api/src/stagevote/services/snapshot.py). */
 
-export type Accent = 'violet' | 'plum' | 'indigo' | 'teal' | 'rose' | 'amber'
+export type Accent = 'violet' | 'plum' | 'indigo' | 'teal' | 'rose' | 'amber' | 'gold'
 export type LoginPhase = 'before_open' | 'open' | 'closed'
 
 export type PublicProgramme = {

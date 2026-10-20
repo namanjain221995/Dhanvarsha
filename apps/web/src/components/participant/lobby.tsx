@@ -81,6 +81,7 @@ function LiveFeature({ event, snapshot }: { event: EventSummary; snapshot: Snaps
         </p>
       ) : null}
       <span
+        data-variant={allVoted ? undefined : 'primary'}
         className={`mt-5 flex min-h-13 w-full items-center justify-center gap-2 rounded-full text-base font-semibold ${
           allVoted ? 'border border-plum-faint/60 text-plum' : 'bg-primary text-white'
         }`}

@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { Button } from '@/components/ui/button'
 import { Notice } from '@/components/ui/misc'
 import { ConnectionBanner, PageColumn, ParticipantHeader } from './bits'
+import { CoinRain } from './coin-rain'
 import { useParticipant } from './provider'
 
 export function ParticipantFrame({ children }: { children: React.ReactNode }) {
@@ -21,6 +22,7 @@ export function ParticipantFrame({ children }: { children: React.ReactNode }) {
             </p>
             <Link
               href="/"
+              data-variant="primary"
               className="mt-6 inline-flex min-h-12 items-center gap-2 rounded-full bg-primary px-6 font-semibold text-white hover:bg-primary-deep"
             >
               <LogIn aria-hidden className="size-4" />
@@ -66,7 +68,8 @@ export function ParticipantFrame({ children }: { children: React.ReactNode }) {
 
   const s = p.snapshot
   return (
-    <div data-accent={s.programme.accent} className="min-h-dvh">
+    <div data-accent={s.programme.accent} className="relative isolate min-h-dvh">
+      {s.programme.accent === 'gold' ? <CoinRain /> : null}
       <PageColumn className="safe-top">
         <ParticipantHeader
           programme={s.programme}

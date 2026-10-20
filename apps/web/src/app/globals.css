@@ -72,6 +72,159 @@
   --primary-ring: rgb(138 90 0 / 0.4);
 }
 
+/*
+ * Gold look ("Dhanvarsha", rain of wealth): navy ink, gold for what matters to a voter (the
+ * live round, their choice, the submit button, picture frames) and a coin rain behind the page.
+ * Navy text on gold passes contrast; gold is never used for text on cream.
+ */
+[data-accent='gold'] {
+  --primary: #23339a;
+  --primary-deep: #18247a;
+  --primary-wash: #e9ecfb;
+  --primary-ring: rgb(35 51 154 / 0.38);
+  --color-plum: #18215c;
+  --color-plum-soft: #4b5384;
+  --color-plum-faint: #8a8fb3;
+  --color-sand: #efdfb8;
+  --color-sand-strong: #e0c98f;
+  --color-ivory: #fbf6ea;
+  --color-paper: #fffdf7;
+  --color-gold: #c9971f;
+  --color-gold-deep: #8a6410;
+  --color-gold-wash: #fdf3d8;
+  --gold-ink: #1b1f4d;
+  --gold-fill: linear-gradient(180deg, #ffe9a8 0%, #f4cb52 40%, #dba62d 74%, #bb841b 100%);
+  --gold-ring: conic-gradient(from 210deg, #fff0b8, #dba62d, #8a6410, #f4cb52, #fff0b8);
+  color: var(--color-plum);
+  background:
+    radial-gradient(110% 55% at 50% -12%, #fbe6ad 0%, rgb(251 230 173 / 0) 62%),
+    var(--color-ivory);
+}
+html:has([data-accent='gold']),
+html:has([data-accent='gold']) body {
+  background: #fbf6ea;
+}
+[data-accent='gold'] [data-variant='primary']:not(:disabled) {
+  background: var(--gold-fill);
+  color: var(--gold-ink);
+  text-shadow: 0 1px 0 rgb(255 255 255 / 0.35);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.65),
+    inset 0 -1px 0 rgb(138 100 16 / 0.35),
+    0 10px 20px -12px rgb(138 100 16 / 0.75);
+}
+[data-accent='gold'] [data-variant='primary']:not(:disabled):hover {
+  filter: brightness(1.05) saturate(1.05);
+}
+[data-accent='gold'] [data-variant='primary']:not(:disabled):active {
+  filter: brightness(0.96);
+}
+[data-accent='gold'] [data-chip='live'] {
+  background: var(--gold-fill);
+  color: var(--gold-ink);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.6), 0 0 0 1px rgb(187 132 27 / 0.35);
+}
+[data-accent='gold'] [data-chip='live'] .live-lamp {
+  background: var(--gold-ink);
+  animation-name: sv-lamp-ink;
+}
+@keyframes sv-lamp-ink {
+  0% {
+    box-shadow: 0 0 0 0 rgb(27 31 77 / 0.45);
+  }
+  70% {
+    box-shadow: 0 0 0 8px rgb(27 31 77 / 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgb(27 31 77 / 0);
+  }
+}
+[data-accent='gold'] [data-checked='true'] {
+  border-color: #dba62d;
+  background: #fffaf0;
+  box-shadow: 0 0 0 3px rgb(244 203 82 / 0.32), 0 12px 26px -18px rgb(138 100 16 / 0.7);
+}
+.gold-frame {
+  display: inline-flex;
+  flex-shrink: 0;
+  border-radius: 999px;
+}
+.gold-frame.gold-frame-tile {
+  border-radius: 17px;
+}
+[data-accent='gold'] .gold-frame {
+  padding: 2.5px;
+  background: var(--gold-ring);
+  box-shadow: 0 3px 10px -4px rgb(138 100 16 / 0.65);
+}
+[data-accent='gold'] .gold-frame > * {
+  box-shadow: 0 0 0 1.5px #fffdf7;
+}
+[data-accent='gold'] .rules-box {
+  border-color: #e6c873;
+  background: #fffaf0;
+}
+[data-accent='gold'] .vote-bar {
+  border-top-color: #e6c873;
+  box-shadow: 0 -14px 32px -24px rgb(138 100 16 / 0.6);
+}
+
+/* The coin rain (components/participant/coin-rain.tsx). Transforms only. */
+.coin-rain {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  overflow: hidden;
+  pointer-events: none;
+}
+.coin-rain .coin {
+  position: absolute;
+  top: -12vh;
+  left: var(--x);
+  width: var(--size);
+  height: var(--size);
+  opacity: var(--alpha);
+  will-change: transform;
+  animation: sv-coin-fall var(--fall) linear var(--delay) infinite;
+}
+.coin-rain .coin-sway {
+  display: block;
+  width: 100%;
+  height: 100%;
+  perspective: 160px;
+  animation: sv-coin-sway var(--sway) ease-in-out var(--delay) infinite alternate;
+}
+.coin-rain .coin-face {
+  display: block;
+  width: 100%;
+  height: 100%;
+  animation: sv-coin-spin var(--spin) linear infinite;
+}
+@keyframes sv-coin-fall {
+  to {
+    transform: translate3d(0, 130vh, 0);
+  }
+}
+@keyframes sv-coin-sway {
+  from {
+    transform: translateX(calc(var(--drift) * -1)) rotate(-14deg);
+  }
+  to {
+    transform: translateX(var(--drift)) rotate(14deg);
+  }
+}
+@keyframes sv-coin-spin {
+  to {
+    transform: rotateY(360deg);
+  }
+}
+.coin-rain .coin-still {
+  display: none;
+}
+.coin-rain .coin-still svg {
+  position: absolute;
+}
+
 @theme inline {
   --color-primary: var(--primary);
   --color-primary-deep: var(--primary-deep);
@@ -274,6 +427,12 @@
   .live-lamp {
     animation: none;
     box-shadow: 0 0 0 3px rgb(184 137 43 / 0.25);
+  }
+  .coin-rain .coin {
+    display: none;
+  }
+  .coin-rain .coin-still {
+    display: block;
   }
   ::view-transition-group(*),
   ::view-transition-old(*),

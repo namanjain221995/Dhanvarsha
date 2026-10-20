@@ -9,6 +9,7 @@ import { ApiError, participantApi } from '@/lib/api'
 import { formatInZone, localEquivalent, serverClock, useServerNow, zoneAbbreviation } from '@/lib/time'
 import type { PublicProgramme } from '@/lib/types'
 import { PageColumn } from './bits'
+import { CoinRain } from './coin-rain'
 import { ProgrammeLogo } from './programme-logo'
 import { clearVotingStorage } from './use-voting'
 
@@ -186,7 +187,8 @@ export function SignIn() {
   const open = phase === 'open'
 
   return (
-    <div data-accent={programme.accent}>
+    <div data-accent={programme.accent} className="relative isolate min-h-dvh">
+      {programme.accent === 'gold' ? <CoinRain /> : null}
       <PageColumn className="pb-16">
         <ProgrammeMasthead programme={programme} />
 

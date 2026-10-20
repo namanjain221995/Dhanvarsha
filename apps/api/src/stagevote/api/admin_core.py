@@ -190,7 +190,7 @@ class ProgrammePatch(Model):
     banner_asset_id: uuid.UUID | None = None
     clear_logo: bool = False
     clear_banner: bool = False
-    accent: Literal["violet", "plum", "indigo", "teal", "rose", "amber"] | None = None
+    accent: Literal["violet", "plum", "indigo", "teal", "rose", "amber", "gold"] | None = None
     timezone: str | None = Field(default=None, max_length=64)
     login_opens_at: AwareDatetime | None = None
     login_closes_at: AwareDatetime | None = None

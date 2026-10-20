@@ -12,7 +12,7 @@ export type AdminMe = {
   product_name: string
 }
 
-export type Accent = 'violet' | 'plum' | 'indigo' | 'teal' | 'rose' | 'amber'
+export type Accent = 'violet' | 'plum' | 'indigo' | 'teal' | 'rose' | 'amber' | 'gold'
 export type RunMode = 'manual' | 'scheduled'
 export type LoginPhase = 'before_open' | 'open' | 'closed'
 export type EventStatus = 'upcoming' | 'open' | 'closed'

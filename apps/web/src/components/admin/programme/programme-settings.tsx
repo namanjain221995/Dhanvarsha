@@ -28,7 +28,9 @@ const ACCENT_SWATCH: Record<Accent, string> = {
   teal: '#136f6a',
   rose: '#b02a55',
   amber: '#8a5a00',
+  gold: 'conic-gradient(from 210deg, #fff0b8, #dba62d, #8a6410, #f4cb52, #fff0b8)',
 }
+const ACCENT_LABEL: Partial<Record<Accent, string>> = { gold: 'Gold with coin rain' }
 
 type Draft = {
   name: string
@@ -335,9 +337,9 @@ export function ProgrammeSettingsPage() {
                           className="flex size-7 shrink-0 items-center justify-center rounded-full"
                           style={{ background: ACCENT_SWATCH[accent] }}
                         >
-                          {checked ? <Check className="size-4 text-white" strokeWidth={3} /> : null}
+                          {checked ? <Check className={`size-4 ${accent === 'gold' ? 'text-[#1b1f4d]' : 'text-white'}`} strokeWidth={3} /> : null}
                         </span>
-                        <span className="text-[0.95rem] font-semibold capitalize text-plum">{accent}</span>
+                        <span className="text-[0.95rem] font-semibold capitalize text-plum">{ACCENT_LABEL[accent] ?? accent}</span>
                       </label>
                     )
                   })}

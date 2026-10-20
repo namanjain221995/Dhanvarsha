@@ -21,8 +21,12 @@ export function Confetti({ fireKey }: { fireKey: string | null }) {
     canvas.width = width * dpr
     canvas.height = height * dpr
     ctx.scale(dpr, dpr)
-    const primary = getComputedStyle(document.documentElement).getPropertyValue('--primary').trim() || '#5b34c4'
-    const colors = [primary, '#b8892b', '#2b1631', '#e9d9a8', primary]
+    const themed = canvas.closest('[data-accent]')
+    const primary = getComputedStyle(themed ?? document.documentElement).getPropertyValue('--primary').trim() || '#5b34c4'
+    const colors =
+      themed?.getAttribute('data-accent') === 'gold'
+        ? ['#f4cb52', '#dba62d', '#ffe9a8', '#bb841b', primary]
+        : [primary, '#b8892b', '#2b1631', '#e9d9a8', primary]
     const originX = width / 2
     const originY = Math.min(height * 0.38, 320)
     const pieces = Array.from({ length: 64 }, () => {

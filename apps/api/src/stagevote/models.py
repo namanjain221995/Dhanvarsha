@@ -31,7 +31,7 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
-ACCENTS = ("violet", "plum", "indigo", "teal", "rose", "amber")
+ACCENTS = ("violet", "plum", "indigo", "teal", "rose", "amber", "gold")
 EVENT_STATUSES = ("upcoming", "open", "closed")
 BALLOT_KINDS = ("team", "individual")
 EMAIL_JOB_KINDS = ("invitation", "login_reminder", "password_reset", "test")

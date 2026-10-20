@@ -34,6 +34,8 @@ ACCENT_HEX = {
     "teal": "#136f6a",
     "rose": "#b02a55",
     "amber": "#8a5a00",
+    # The gold look: white text on gold is unreadable in email, so emails use its royal blue.
+    "gold": "#23339a",
 }
 
 PLACEHOLDERS: dict[str, str] = {
