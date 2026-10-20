@@ -13,7 +13,7 @@ In the AWS console, region **Asia Pacific (Mumbai) ap-south-1**, *EC2 › Launch
 | Setting | Value |
 |---|---|
 | Name | `dhanvarsha-vote` |
-| Image | **Ubuntu Server 24.04 LTS**, 64-bit (x86) |
+| Image | **Ubuntu Server 24.04 LTS** or **Amazon Linux 2023**, 64-bit (x86) |
 | Instance type | **c5a.4xlarge** (16 vCPU, 32 GiB). Smaller also works: t3.large for rehearsals |
 | Key pair | create one, download the `.pem` file and keep it safe |
 | Storage | **40 GiB gp3** |
@@ -29,8 +29,11 @@ HTTPS certificate. Wait until `ping vote.techsarasolutions.com` shows the Elasti
 
 ## 3. Install Docker
 
+The login user is `ubuntu` on Ubuntu and `ec2-user` on Amazon Linux (used below).
+
 ```sh
-ssh -i dhanvarsha.pem ubuntu@<elastic-ip>
+ssh -i Dhanvarsha.pem ec2-user@<elastic-ip>
+sudo dnf install -y git                # Amazon Linux only; Ubuntu has git
 git clone https://github.com/namanjain221995/Dhanvarsha.git
 cd Dhanvarsha
 sudo scripts/server-setup.sh
@@ -40,7 +43,7 @@ exit                                   # log out and back in so docker works wit
 ## 4. Configure
 
 ```sh
-ssh -i dhanvarsha.pem ubuntu@<elastic-ip>
+ssh -i Dhanvarsha.pem ec2-user@<elastic-ip>
 cd Dhanvarsha
 scripts/deploy.sh --domain vote.techsarasolutions.com --acme-email naman.jain@techsarasolutions.com
 ```
@@ -97,13 +100,13 @@ server.
 Either download them to your computer:
 
 ```sh
-scp -i dhanvarsha.pem -r ubuntu@<elastic-ip>:Dhanvarsha/reports-test .
+scp -i Dhanvarsha.pem -r ec2-user@<elastic-ip>:Dhanvarsha/reports-test .
 ```
 
 and open `reports-test/index.html`. Or view them through an SSH tunnel:
 
 ```sh
-ssh -i dhanvarsha.pem -L 8100:localhost:8100 ubuntu@<elastic-ip> \
+ssh -i Dhanvarsha.pem -L 8100:localhost:8100 ec2-user@<elastic-ip> \
   'cd Dhanvarsha && python3 -m http.server 8100 --bind 127.0.0.1 --directory reports-test'
 ```
 
@@ -124,9 +127,46 @@ is fewer than 1% failed requests, 95% of answers within 1 second, and every acce
 The server starts with an empty database: nothing from the development machine (demo rounds,
 fake participants) is copied. That is deliberate.
 
+## Automatic deploys (CI/CD)
+
+`.github/workflows/ci-cd.yml` runs on every push and pull request: backend lint, type checks
+and the integration tests on a real PostgreSQL, and the web type checks and lint. When a push to
+`main` passes, it deploys to the server. Connect the server once, from your computer (needs the
+`gh` CLI signed in to GitHub):
+
+```sh
+scripts/setup-cicd.sh --host <elastic-ip> --user ec2-user --key Dhanvarsha.pem
+```
+
+It creates a new SSH key just for GitHub Actions, allows it on the server with a forced
+command (that key can only fetch `main` and run `scripts/deploy.sh`: no shell), and stores the
+four `DEPLOY_*` secrets in the repository. Your `.pem` key stays on your computer. Until this is
+done, the pipeline runs the tests and skips the deploy.
+
+A deploy refuses to restart the site while a voting round is open, so a push during the event
+waits safely: the run fails with "Not deploying: voting is open", and you run it again from
+GitHub › Actions › CI/CD › *Run workflow* after the round closes. Do not push changes during the
+event unless they fix a problem.
+
+## Without a domain yet
+
+`scripts/deploy.sh --domain <ip-with-dashes>.sslip.io` (for example `52-91-241-136.sslip.io`)
+gives the server a working name and a real HTTPS certificate straight away: sslip.io answers
+any name that contains an IP address with that address. Some company networks block sslip.io
+(for example a Fortinet web filter shows its own "blocked" certificate); phones on mobile data
+work. For the event, use your own domain:
+
+1. Attach an **Elastic IP** (otherwise the address changes when the instance stops).
+2. Add the DNS A record `vote.techsarasolutions.com` → that IP (Cloudflare: *DNS only*).
+3. On the server: `scripts/deploy.sh --domain vote.techsarasolutions.com --acme-email <you>`,
+   then `scripts/deploy.sh`. Invitations sent before the change contain the old link: send
+   them again (or send them only after the switch).
+4. If the IP changed, run `scripts/setup-cicd.sh` again with the new `--host`.
+
 ## Updates, backups and cost
 
-- **Update** to the newest code: `cd Dhanvarsha && git pull && scripts/deploy.sh`. Data stays.
+- **Update** to the newest code: push to `main` (the pipeline deploys), or on the server
+  `cd Dhanvarsha && git pull && scripts/deploy.sh`. Data stays.
 - **Back up** before the event and after it: `scripts/backup.sh` (files in `backups/`), and an
   EBS snapshot in the AWS console.
 - **Cost**: c5a.4xlarge is about 0.62 USD per hour while running (about 15 USD per day). After

@@ -1,0 +1,93 @@
+# CI/CD for StageVote.
+#
+# Every push and pull request: backend lint, type checks and the integration tests on a real
+# PostgreSQL, plus web type checks and lint.
+# Every push to main (or a manual run) that passes: deploy to the production server over SSH.
+# The server's deploy key may only run the deploy command (forced command in authorized_keys),
+# and scripts/deploy.sh refuses to restart the site while a voting round is open.
+#
+# Repository secrets DEPLOY_HOST, DEPLOY_USER, DEPLOY_SSH_KEY and DEPLOY_KNOWN_HOSTS are set by
+# scripts/setup-cicd.sh (docs/deploy-ec2.md, "Automatic deploys"). Without them the deploy job
+# is skipped and only the tests run.
+name: CI/CD
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    name: Backend tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: Start PostgreSQL and Mailpit
+        run: |
+          python3 scripts/bootstrap.py
+          docker compose up -d --wait db mailpit
+      - name: Install
+        working-directory: apps/api
+        run: uv sync --frozen
+      - name: Lint and type-check
+        working-directory: apps/api
+        run: |
+          uv run ruff check src tests
+          uv run mypy src
+      - name: Integration tests (real PostgreSQL)
+        working-directory: apps/api
+        run: uv run pytest -q
+
+  web:
+    name: Web checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: apps/web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+      - run: npm ci
+      - run: npx tsc --noEmit
+      - run: npx eslint .
+
+  deploy:
+    name: Deploy to production
+    needs: [backend, web]
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment:
+      name: production
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
+    steps:
+      - name: Deploy over SSH
+        env:
+          SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+          HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+        run: |
+          if [ -z "$SSH_KEY" ] || [ -z "$HOST" ]; then
+            echo "::notice::Deploy skipped: the server is not connected yet. Run scripts/setup-cicd.sh once."
+            exit 0
+          fi
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy
+          chmod 600 ~/.ssh/deploy
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          # The server runs its forced deploy command whatever is sent here.
+          ssh -i ~/.ssh/deploy -o BatchMode=yes -o StrictHostKeyChecking=yes "$DEPLOY_USER@$HOST" deploy
