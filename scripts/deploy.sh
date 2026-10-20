@@ -190,6 +190,13 @@ if [ -z "$FORCE" ] && [ -n "$($COMPOSE ps -q db 2>/dev/null)" ]; then
 fi
 STAGEVOTE_VERSION="$(git rev-parse --short HEAD 2>/dev/null || echo local)"
 export STAGEVOTE_VERSION
+# Recorded in .env so later commands (docker compose -f compose.prod.yaml run --rm migrate ...)
+# use the image of this deploy, not an older one.
+if grep -q '^STAGEVOTE_VERSION=' .env; then
+  sed -i "s/^STAGEVOTE_VERSION=.*/STAGEVOTE_VERSION=$STAGEVOTE_VERSION/" .env
+else
+  echo "STAGEVOTE_VERSION=$STAGEVOTE_VERSION" >> .env
+fi
 echo "== building and starting version $STAGEVOTE_VERSION"
 $COMPOSE up -d --build
 

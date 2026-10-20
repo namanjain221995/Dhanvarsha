@@ -284,16 +284,17 @@ async def _build_rounds(
             await db.flush()
 
 
-async def seed_rounds() -> None:
-    """Add the 14 sample rounds (names, rules, ballots, teams with members, logos) to the active
-    programme as upcoming events: a starting line-up for organisers to edit in Admin > Events.
-
-    Unlike seed-demo it creates no participants and changes no programme settings, so it may
-    run in production. It is refused when the programme already has rounds.
+async def seed_rounds(count: int = 14) -> None:
+    """Add `count` blank upcoming events ("Event 1" ... "Event N") to the active programme, each
+    with one empty team ballot "Best team": real slots for organisers to rename and fill with
+    their teams in Admin > Events. No sample teams, no participants, no settings changes, so
+    it may run in production. Refused when the programme already has events.
     """
     from .services.live import begin_transition
     from .state import Actor, audit, bump_state
 
+    if not 1 <= count <= 100:
+        raise SystemExit("Choose between 1 and 100 events.")
     maker, engine = _maker()
     async with maker() as db, db.begin():
         active = (
@@ -310,22 +311,24 @@ async def seed_rounds() -> None:
             )
         ).scalar_one()
         if existing:
-            raise SystemExit(
-                f"The active programme already has {existing} rounds; nothing was added. "
-                "Archive them first if you really want the sample line-up."
+            raise SystemExit(f"The active programme already has {existing} events; nothing was added.")
+        for index in range(1, count + 1):
+            event = Event(programme_id=programme.id, position=index, name=f"Event {index}", rules=RULES)
+            db.add(event)
+            await db.flush()
+            db.add(
+                Ballot(
+                    programme_id=programme.id, event_id=event.id, position=1, title="Best team", kind="team"
+                )
             )
-        await _build_rounds(db, programme, ROUNDS)
+        await db.flush()
         await bump_state(db, programme.id, live=True, reason="seed_rounds")
         await audit(
-            db,
-            Actor.system("cli"),
-            "events.seeded",
-            programme_id=programme.id,
-            details={"events": len(ROUNDS)},
+            db, Actor.system("cli"), "events.seeded", programme_id=programme.id, details={"events": count}
         )
         name = programme.name
     await engine.dispose()  # type: ignore[attr-defined]
-    print(f"Added {len(ROUNDS)} upcoming rounds to {name}. Edit them in Admin > Events.")
+    print(f"Added {count} blank events to {name}. Rename them and add the teams in Admin > Events.")
 
 
 async def seed_demo(participants: int, activate_sample: int) -> None:

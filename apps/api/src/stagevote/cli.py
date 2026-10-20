@@ -5,7 +5,7 @@ migrate          apply database migrations only
 create-admin     create an admin interactively (never resets an existing one unless asked)
 worker           run the background worker
 seed-demo        fill a pristine programme with 14 demo rounds and synthetic participants
-seed-rounds      add the 14 sample rounds only (no participants; allowed in production)
+seed-rounds      add N blank events to fill in later (default 14; allowed in production)
 seed-loadtest    create an isolated synthetic programme for load testing (non-production)
 activate-programme   switch the active programme by slug
 reconcile        verify stored votes against receipts and aggregates
@@ -309,7 +309,8 @@ def main(argv: list[str] | None = None) -> int:
         default=0,
         help="give N synthetic participants one generated password (printed once) so they can sign in without an invitation",
     )
-    sub.add_parser("seed-rounds")
+    sr = sub.add_parser("seed-rounds")
+    sr.add_argument("--count", type=int, default=14)
     sl = sub.add_parser("seed-loadtest")
     sl.add_argument("--participants", type=int, default=500)
     sl.add_argument("--events", type=int, default=4)
@@ -343,7 +344,7 @@ def main(argv: list[str] | None = None) -> int:
     elif args.command == "seed-rounds":
         from .seed import seed_rounds
 
-        asyncio.run(seed_rounds())
+        asyncio.run(seed_rounds(args.count))
     elif args.command == "seed-loadtest":
         from .seed import seed_loadtest
 

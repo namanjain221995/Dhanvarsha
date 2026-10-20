@@ -1,34 +1,30 @@
-"""`stagevote seed-rounds`: the 14 sample rounds as an editable starting line-up, nothing else."""
+"""`stagevote seed-rounds`: blank events to fill in later, nothing else."""
 
 from __future__ import annotations
 
 import pytest
 
 from helpers import World
-from stagevote.seed import ROUNDS, TEAM_MEMBERS, seed_rounds
+from stagevote.seed import seed_rounds
 
 
-async def test_seed_rounds_adds_the_sample_line_up_and_nothing_else(world: World) -> None:
+async def test_seed_rounds_adds_blank_events_and_nothing_else(world: World) -> None:
     before = await world.factory.fetchrow(
         "SELECT name, (SELECT count(*) FROM participants WHERE programme_id = :p) AS people "
         "FROM programmes WHERE id = :p",
         p=world.programme_id,
     )
-    await seed_rounds()
+    await seed_rounds(14)
 
     events = await world.factory.fetch(
-        "SELECT id, name, status, position FROM events WHERE programme_id = :p AND archived_at IS NULL "
-        "ORDER BY position",
+        "SELECT e.name, e.status, e.position, b.title, b.kind, "
+        "(SELECT count(*) FROM nominees n WHERE n.ballot_id = b.id) AS nominees "
+        "FROM events e JOIN ballots b ON b.event_id = e.id "
+        "WHERE e.programme_id = :p AND e.archived_at IS NULL ORDER BY e.position",
         p=world.programme_id,
     )
-    assert [e.name for e in events] == [name for name, _, _ in ROUNDS]
-    assert all(e.status == "upcoming" for e in events) and [e.position for e in events] == list(range(1, 15))
-    teams = await world.factory.fetch(
-        "SELECT n.name, n.members FROM nominees n JOIN ballots b ON b.id = n.ballot_id "
-        "JOIN events e ON e.id = b.event_id WHERE e.programme_id = :p AND b.kind = 'team'",
-        p=world.programme_id,
-    )
-    assert teams and all(t.members == TEAM_MEMBERS[t.name] for t in teams)
+    assert [e.name for e in events] == [f"Event {i}" for i in range(1, 15)]
+    assert {(e.status, e.title, e.kind, e.nominees) for e in events} == {("upcoming", "Best team", "team", 0)}
 
     after = await world.factory.fetchrow(
         "SELECT name, (SELECT count(*) FROM participants WHERE programme_id = :p) AS people "
@@ -43,6 +39,5 @@ async def test_seed_rounds_adds_the_sample_line_up_and_nothing_else(world: World
         )
         == 1
     )
-
-    with pytest.raises(SystemExit, match="already has 14 rounds"):
-        await seed_rounds()
+    with pytest.raises(SystemExit, match="already has 14 events"):
+        await seed_rounds(14)
