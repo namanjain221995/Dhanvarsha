@@ -144,7 +144,8 @@ services:
       ACME_EMAIL: ${ACME_EMAIL:?set ACME_EMAIL for certificate notices}
       WEB_UPSTREAM: web:3000
       API_UPSTREAM: api:8000
-    command: ["caddy", "run", "--config", "/etc/caddy/Caddyfile.prod", "--adapter", "caddyfile"]
+    # Caddyfile.prod for a domain; Caddyfile.ip when the site is reached by its IP address.
+    command: ["caddy", "run", "--config", "/etc/caddy/${CADDY_CONFIG:-Caddyfile.prod}", "--adapter", "caddyfile"]
     volumes:
       - ./infra/caddy:/etc/caddy:ro
       - media:/srv/media:ro

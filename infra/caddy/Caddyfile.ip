@@ -1,0 +1,23 @@
+# Production on a bare IP address (no domain yet): HTTPS with a Let's Encrypt IP-address
+# certificate. Let's Encrypt issues these only as short-lived certificates (about 6 days,
+# "shortlived" profile); Caddy renews them automatically. Ports 80 and 443 must reach this host.
+# Selected by CADDY_CONFIG=Caddyfile.ip (scripts/deploy.sh --domain <ip> sets it).
+{
+	admin off
+	email {$ACME_EMAIL}
+	servers {
+		timeouts {
+			read_header 10s
+			idle 2m
+		}
+	}
+}
+
+{$SITE_DOMAIN} {
+	tls {
+		issuer acme {
+			profile shortlived
+		}
+	}
+	import /etc/caddy/common.caddy
+}
