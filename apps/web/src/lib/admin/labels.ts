@@ -68,6 +68,7 @@ const AUDIT_ACTIONS: Record<string, string> = {
   'event.started_next': 'Next event started',
   'event.unarchived': 'Event restored',
   'event.updated': 'Event edited',
+  'events.seeded': 'Sample rounds added',
   'invitation.issued': 'Invitations issued',
   'invitation.login_reminder': 'Login reminder queued',
   'nominee.corrected': 'Nominee corrected after opening',

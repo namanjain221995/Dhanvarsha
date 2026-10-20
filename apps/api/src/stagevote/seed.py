@@ -284,6 +284,50 @@ async def _build_rounds(
             await db.flush()
 
 
+async def seed_rounds() -> None:
+    """Add the 14 sample rounds (names, rules, ballots, teams with members, logos) to the active
+    programme as upcoming events: a starting line-up for organisers to edit in Admin > Events.
+
+    Unlike seed-demo it creates no participants and changes no programme settings, so it may
+    run in production. It is refused when the programme already has rounds.
+    """
+    from .services.live import begin_transition
+    from .state import Actor, audit, bump_state
+
+    maker, engine = _maker()
+    async with maker() as db, db.begin():
+        active = (
+            await db.execute(select(Programme).where(Programme.is_active.is_(True)))
+        ).scalar_one_or_none()
+        if active is None:
+            raise SystemExit("Run `stagevote bootstrap` first.")
+        programme, _ = await begin_transition(db, active.id, None)
+        existing = (
+            await db.execute(
+                select(func.count())
+                .select_from(Event)
+                .where(Event.programme_id == programme.id, Event.archived_at.is_(None))
+            )
+        ).scalar_one()
+        if existing:
+            raise SystemExit(
+                f"The active programme already has {existing} rounds; nothing was added. "
+                "Archive them first if you really want the sample line-up."
+            )
+        await _build_rounds(db, programme, ROUNDS)
+        await bump_state(db, programme.id, live=True, reason="seed_rounds")
+        await audit(
+            db,
+            Actor.system("cli"),
+            "events.seeded",
+            programme_id=programme.id,
+            details={"events": len(ROUNDS)},
+        )
+        name = programme.name
+    await engine.dispose()  # type: ignore[attr-defined]
+    print(f"Added {len(ROUNDS)} upcoming rounds to {name}. Edit them in Admin > Events.")
+
+
 async def seed_demo(participants: int, activate_sample: int) -> None:
     _refuse_production()
     maker, engine = _maker()
