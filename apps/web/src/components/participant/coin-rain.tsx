@@ -1,13 +1,16 @@
 /**
  * Dhanvarsha, "rain of wealth": gold coins falling behind the page in the gold look.
  *
- * Decorative only: hidden from assistive technology, never clickable, and behind every card.
- * Each coin falls, sways and spins at its own pace (CSS transforms only, so phones stay
- * smooth). Smaller coins are fainter and slower, so they read as further away. With reduced
- * motion, three still coins rest at the top instead.
+ * Each coin is a real 3D object: a front face, a back face and a ridged edge between them
+ * (about 12% of the diameter, like a ten-rupee coin), so a coin turning edge-on shows its
+ * thickness instead of vanishing into a line. Coins fall with weight (they speed up as they
+ * drop, sway little and tumble slowly), using CSS transforms only so phones stay smooth.
+ *
+ * Decorative only: hidden from assistive technology, never clickable, behind every card.
+ * With reduced motion, three still coins rest at the top instead.
  */
 
-type Coin = { x: number; size: number; fall: number; delay: number; sway: number; drift: number; spin: number; alpha: number }
+type Coin = { x: number; size: number; fall: number; delay: number; sway: number; drift: number; spin: number; tilt: number; alpha: number }
 
 // A fixed seed: the same coins on the server and in the browser (no hydration mismatch).
 function makeCoins(count: number): Coin[] {
@@ -20,19 +23,38 @@ function makeCoins(count: number): Coin[] {
     const depth = rand() // 0 = far, 1 = near
     return {
       x: ((i + rand() * 0.8) / count) * 100,
-      size: Math.round(16 + depth * 30),
-      fall: 14 - depth * 6 + rand() * 2,
-      delay: -rand() * 16,
-      sway: 2.2 + rand() * 2.4,
-      drift: 8 + rand() * 22,
-      spin: 1.3 + rand() * 2.2,
+      size: Math.round(22 + depth * 28),
+      fall: 8.5 - depth * 3 + rand() * 1.5, // near coins fall faster
+      delay: -rand() * 10,
+      sway: 1.8 + rand() * 1.4,
+      drift: 3 + rand() * 9,
+      spin: 2.4 + rand() * 1.8,
+      tilt: 14 + rand() * 22,
       // Faint enough that text passing over a coin stays easy to read.
-      alpha: 0.38 + depth * 0.47,
+      alpha: 0.45 + depth * 0.45,
     }
   })
 }
 
-const COINS = makeCoins(16)
+const COINS = makeCoins(14)
+const EDGE_SLICES = 7
+
+/** One 3D coin. The parent sets its size (and, for still coins, its pose). */
+function CoinBody({ className = '', style }: { className?: string; style?: React.CSSProperties }) {
+  return (
+    <span className={`coin-body ${className}`} style={style}>
+      <svg className="coin-side coin-front" viewBox="0 0 64 64">
+        <use href="#sv-coin" />
+      </svg>
+      {Array.from({ length: EDGE_SLICES }, (_, i) => (
+        <span key={i} className="coin-edge" style={{ '--i': i / (EDGE_SLICES - 1) } as React.CSSProperties} />
+      ))}
+      <svg className="coin-side coin-back" viewBox="0 0 64 64">
+        <use href="#sv-coin" />
+      </svg>
+    </span>
+  )
+}
 
 export function CoinRain() {
   return (
@@ -41,9 +63,9 @@ export function CoinRain() {
         <defs>
           <radialGradient id="sv-coin-face" cx="34%" cy="28%" r="78%">
             <stop offset="0" stopColor="#fff6cc" />
-            <stop offset="0.32" stopColor="#f8d76a" />
-            <stop offset="0.68" stopColor="#e2aa2e" />
-            <stop offset="1" stopColor="#b37a14" />
+            <stop offset="0.3" stopColor="#f8d76a" />
+            <stop offset="0.66" stopColor="#e2aa2e" />
+            <stop offset="1" stopColor="#ad7412" />
           </radialGradient>
           <linearGradient id="sv-coin-rim" x1="0" y1="0" x2="1" y2="1">
             <stop offset="0" stopColor="#fde7a0" />
@@ -51,21 +73,20 @@ export function CoinRain() {
             <stop offset="1" stopColor="#7f540a" />
           </linearGradient>
           <symbol id="sv-coin" viewBox="0 0 64 64">
-            <ellipse cx="33" cy="35" rx="29" ry="29" fill="#7a4f08" opacity="0.28" />
-            <circle cx="32" cy="32" r="30" fill="url(#sv-coin-rim)" />
-            {/* Milled edge. */}
-            <circle cx="32" cy="32" r="28.6" fill="none" stroke="#8a5d0c" strokeWidth="2.2" strokeDasharray="1.1 1.7" opacity="0.55" />
-            <circle cx="32" cy="32" r="24.5" fill="url(#sv-coin-face)" />
-            <circle cx="32" cy="32" r="24.5" fill="none" stroke="#a6720f" strokeWidth="1.4" />
-            <circle cx="32" cy="32" r="21" fill="none" stroke="#fff2bf" strokeWidth="0.9" opacity="0.7" />
-            {/* Raised rupee: a light edge above, the face colour below. */}
-            <text x="32.8" y="42.6" textAnchor="middle" fontSize="27" fontWeight="800" fill="#fff4c8" opacity="0.65" fontFamily="system-ui, sans-serif">
+            <circle cx="32" cy="32" r="32" fill="url(#sv-coin-rim)" />
+            {/* Milled rim and the raised border around the face. */}
+            <circle cx="32" cy="32" r="30.4" fill="none" stroke="#8a5d0c" strokeWidth="2.4" strokeDasharray="1.1 1.6" opacity="0.5" />
+            <circle cx="32" cy="32" r="26" fill="#9a6810" />
+            <circle cx="32" cy="32" r="25" fill="url(#sv-coin-face)" />
+            <circle cx="32" cy="32" r="21.5" fill="none" stroke="#fff2bf" strokeWidth="0.9" opacity="0.7" />
+            {/* Raised rupee: a light edge above, the struck colour below. */}
+            <text x="32.9" y="43" textAnchor="middle" fontSize="28" fontWeight="800" fill="#fff4c8" opacity="0.7" fontFamily="system-ui, sans-serif">
               ₹
             </text>
-            <text x="32" y="41.8" textAnchor="middle" fontSize="27" fontWeight="800" fill="#9c6a0d" fontFamily="system-ui, sans-serif">
+            <text x="32" y="42.1" textAnchor="middle" fontSize="28" fontWeight="800" fill="#9c6a0d" fontFamily="system-ui, sans-serif">
               ₹
             </text>
-            <ellipse cx="22" cy="17" rx="10" ry="4.5" fill="#ffffff" opacity="0.42" transform="rotate(-28 22 17)" />
+            <ellipse cx="22" cy="16" rx="11" ry="4.6" fill="#ffffff" opacity="0.4" transform="rotate(-30 22 16)" />
           </symbol>
         </defs>
       </svg>
@@ -82,27 +103,20 @@ export function CoinRain() {
               '--sway': `${coin.sway}s`,
               '--drift': `${coin.drift}px`,
               '--spin': `${coin.spin}s`,
+              '--tilt': `${coin.tilt}deg`,
               '--alpha': coin.alpha,
             } as React.CSSProperties
           }
         >
           <span className="coin-sway">
-            <svg className="coin-face" viewBox="0 0 64 64">
-              <use href="#sv-coin" />
-            </svg>
+            <CoinBody className="coin-tumble" />
           </span>
         </span>
       ))}
       <span className="coin-still">
-        <svg viewBox="0 0 64 64" style={{ width: 54, right: 18, top: 10, transform: 'rotate(-18deg)' }}>
-          <use href="#sv-coin" />
-        </svg>
-        <svg viewBox="0 0 64 64" style={{ width: 34, right: 70, top: 4, transform: 'rotate(12deg)' }}>
-          <use href="#sv-coin" />
-        </svg>
-        <svg viewBox="0 0 64 64" style={{ width: 26, right: 6, top: 64, transform: 'rotate(30deg)' }}>
-          <use href="#sv-coin" />
-        </svg>
+        <CoinBody style={{ '--size': '58px', width: 58, height: 58, right: 16, top: 8, transform: 'rotateX(52deg) rotateZ(-24deg)' } as React.CSSProperties} />
+        <CoinBody style={{ '--size': '38px', width: 38, height: 38, right: 74, top: 6, transform: 'rotateX(38deg) rotateY(-28deg)' } as React.CSSProperties} />
+        <CoinBody style={{ '--size': '30px', width: 30, height: 30, right: 8, top: 70, transform: 'rotateX(60deg) rotateZ(40deg)' } as React.CSSProperties} />
       </span>
     </div>
   )

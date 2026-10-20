@@ -179,49 +179,90 @@ html:has([data-accent='gold']) body {
 }
 .coin-rain .coin {
   position: absolute;
-  top: -12vh;
+  top: -14vh;
   left: var(--x);
   width: var(--size);
   height: var(--size);
   opacity: var(--alpha);
   will-change: transform;
-  animation: sv-coin-fall var(--fall) linear var(--delay) infinite;
+  /* Weight: a slow start, then faster and faster, like something heavy dropping. */
+  animation: sv-coin-fall var(--fall) cubic-bezier(0.42, 0, 0.82, 0.55) var(--delay) infinite;
 }
 .coin-rain .coin-sway {
   display: block;
   width: 100%;
   height: 100%;
-  perspective: 160px;
+  perspective: calc(var(--size) * 9);
   animation: sv-coin-sway var(--sway) ease-in-out var(--delay) infinite alternate;
 }
-.coin-rain .coin-face {
+/* A coin with real thickness: two faces and a stack of edge slices between them. */
+.coin-body {
+  --thick: calc(var(--size, 48px) * 0.12);
+  position: relative;
   display: block;
   width: 100%;
   height: 100%;
-  animation: sv-coin-spin var(--spin) linear infinite;
+  transform-style: preserve-3d;
+}
+.coin-rain .coin-tumble {
+  animation: sv-coin-tumble var(--spin) linear infinite;
+}
+.coin-side {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  backface-visibility: hidden;
+}
+.coin-front {
+  transform: translateZ(calc(var(--thick) / 2));
+}
+.coin-back {
+  transform: rotateY(180deg) translateZ(calc(var(--thick) / 2));
+}
+.coin-edge {
+  position: absolute;
+  inset: 0.5%;
+  border-radius: 50%;
+  background: #b07818;
+  /* Strictly between the faces (never at the same depth, which would hide a face). */
+  transform: translateZ(calc((var(--i) - 0.5) * var(--thick) * 0.86));
+}
+/* Alternate shades read as the milled edge when a coin turns sideways. */
+.coin-edge:nth-child(odd) {
+  background: #dcaa3f;
 }
 @keyframes sv-coin-fall {
   to {
-    transform: translate3d(0, 130vh, 0);
+    transform: translate3d(0, 132vh, 0);
   }
 }
 @keyframes sv-coin-sway {
   from {
-    transform: translateX(calc(var(--drift) * -1)) rotate(-14deg);
+    transform: translateX(calc(var(--drift) * -1)) rotate(-7deg);
   }
   to {
-    transform: translateX(var(--drift)) rotate(14deg);
+    transform: translateX(var(--drift)) rotate(7deg);
   }
 }
-@keyframes sv-coin-spin {
-  to {
-    transform: rotateY(360deg);
+@keyframes sv-coin-tumble {
+  0% {
+    transform: rotateX(var(--tilt)) rotateY(0deg);
+  }
+  50% {
+    transform: rotateX(calc(var(--tilt) * -1)) rotateY(180deg);
+  }
+  100% {
+    transform: rotateX(var(--tilt)) rotateY(360deg);
   }
 }
 .coin-rain .coin-still {
   display: none;
+  position: absolute;
+  inset: 0;
+  perspective: 600px;
 }
-.coin-rain .coin-still svg {
+.coin-rain .coin-still .coin-body {
   position: absolute;
 }
 
