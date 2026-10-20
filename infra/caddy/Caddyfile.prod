@@ -1,0 +1,16 @@
+# Production: automatic HTTPS for SITE_DOMAIN (ports 80/443 must reach this host).
+{
+	admin off
+	email {$ACME_EMAIL}
+	servers {
+		timeouts {
+			read_header 10s
+			idle 2m
+		}
+	}
+}
+
+{$SITE_DOMAIN} {
+	header Strict-Transport-Security "max-age=31536000; includeSubDomains"
+	import /etc/caddy/common.caddy
+}

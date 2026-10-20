@@ -1,0 +1,15 @@
+email,name
+aditi.rao@example.com,Aditi Rao
+bhavin.shah@example.com,Bhavin Shah
+chitra.iyer@example.com,Chitra Iyer
+daniel.fernandes@example.com,Daniel Fernandes
+esha.kapoor@example.com,Esha Kapoor
+faisal.khan@example.com,Faisal Khan
+gauri.menon@example.com,Gauri Menon
+harsh.patel@example.com,Harsh Patel
+ira.sen@example.com,Ira Sen
+jai.malhotra@example.com,Jai Malhotra
+kiran.das@example.com,Kiran Das
+leela.nair@example.com,Leela Nair
+not-an-email,Invalid Row Example
+ADITI.RAO@example.com,Duplicate Of Row 2 (case-insensitive)

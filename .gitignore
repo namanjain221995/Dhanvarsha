@@ -1,0 +1,37 @@
+# Secrets and local state
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
+infra/secrets/
+*service-account*.json
+backups/
+*.dump
+*.sql.gz
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Node
+node_modules/
+.next/
+out/
+*.tsbuildinfo
+next-env.d.ts
+
+# Test and load artefacts
+test-results/
+playwright-report/
+tests/e2e/.auth/
+tests/load/results/*
+!tests/load/results/.gitkeep
+media/
+data/
+shots/

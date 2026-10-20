@@ -1,0 +1,170 @@
+# Local development stack. Start with:
+#   scripts/bootstrap.sh && docker compose up --build -d
+# Browser traffic goes through the Caddy proxy (same origin): / -> web, /api/v1 -> api,
+# /ws -> api (WebSocket upgrade), /media -> uploaded images.
+# Production uses compose.prod.yaml instead (HTTPS, no Mailpit, no published database).
+name: stagevote
+
+x-api-env: &api-env
+  APP_ENV: ${APP_ENV:-development}
+  APP_BASE_URL: ${APP_BASE_URL}
+  APP_SECRET_KEY: ${APP_SECRET_KEY}
+  PROGRAMME_TIMEZONE: ${PROGRAMME_TIMEZONE:-Asia/Kolkata}
+  PRODUCT_NAME: ${PRODUCT_NAME:-StageVote}
+  DATABASE_URL: ${DATABASE_URL}
+  DB_APP_ROLE: ${DB_APP_ROLE:-stagevote_app}
+  DB_POOL_SIZE: ${DB_POOL_SIZE:-10}
+  DB_MAX_OVERFLOW: ${DB_MAX_OVERFLOW:-5}
+  DB_STATEMENT_TIMEOUT_MS: ${DB_STATEMENT_TIMEOUT_MS:-15000}
+  VOTE_LOCK_TIMEOUT_MS: ${VOTE_LOCK_TIMEOUT_MS:-5000}
+  PASSWORD_HASH_CONCURRENCY: ${PASSWORD_HASH_CONCURRENCY:-8}
+  EXTRA_ALLOWED_ORIGINS: ${EXTRA_ALLOWED_ORIGINS:-}
+  INVITATION_ENCRYPTION_KEY: ${INVITATION_ENCRYPTION_KEY}
+  SESSION_TTL_HOURS: ${SESSION_TTL_HOURS:-12}
+  ADMIN_SESSION_TTL_HOURS: ${ADMIN_SESSION_TTL_HOURS:-12}
+  INVITATION_RETRY_HOURS: ${INVITATION_RETRY_HOURS:-72}
+  LOGIN_FAILURES_PER_ACCOUNT: ${LOGIN_FAILURES_PER_ACCOUNT:-8}
+  LOGIN_FAILURE_WINDOW_SECONDS: ${LOGIN_FAILURE_WINDOW_SECONDS:-900}
+  LOGIN_FAILURES_PER_IP: ${LOGIN_FAILURES_PER_IP:-1000}
+  LOGIN_IP_WINDOW_SECONDS: ${LOGIN_IP_WINDOW_SECONDS:-600}
+  EMAIL_PROVIDER: ${EMAIL_PROVIDER:-mailpit}
+  MAIL_FROM: ${MAIL_FROM:-StageVote <noreply@example.com>}
+  MAIL_REPLY_TO: ${MAIL_REPLY_TO:-}
+  SMTP_HOST: ${SMTP_HOST:-mailpit}
+  SMTP_PORT: ${SMTP_PORT:-1025}
+  SMTP_USERNAME: ${SMTP_USERNAME:-}
+  SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+  SMTP_TLS_MODE: ${SMTP_TLS_MODE:-none}
+  SMTP_TIMEOUT_SECONDS: ${SMTP_TIMEOUT_SECONDS:-30}
+  GOOGLE_SERVICE_ACCOUNT_FILE: ${GOOGLE_SERVICE_ACCOUNT_FILE:-}
+  GOOGLE_WORKSPACE_SENDER: ${GOOGLE_WORKSPACE_SENDER:-}
+  EMAIL_MAX_PER_MINUTE: ${EMAIL_MAX_PER_MINUTE:-120}
+  EMAIL_CONCURRENCY: ${EMAIL_CONCURRENCY:-4}
+  EMAIL_MAX_ATTEMPTS: ${EMAIL_MAX_ATTEMPTS:-6}
+  MAILPIT_UI_URL: ${MAILPIT_UI_URL:-http://localhost:8025}
+  MEDIA_ROOT: /data/media
+  MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-5242880}
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+
+services:
+  db:
+    image: postgres:17.11-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_SUPERUSER_PASSWORD}
+      POSTGRES_DB: postgres
+      STAGEVOTE_DB_NAME: stagevote
+      STAGEVOTE_OWNER_PASSWORD: ${DB_OWNER_PASSWORD}
+      STAGEVOTE_APP_PASSWORD: ${DB_APP_PASSWORD}
+    command: ["postgres", "-c", "max_connections=200", "-c", "shared_buffers=256MB"]
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./infra/postgres/init:/docker-entrypoint-initdb.d:ro
+    ports:
+      - "127.0.0.1:${DB_HOST_PORT:-55432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d stagevote"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+
+  mailpit:
+    image: axllent/mailpit:v1.31.6
+    restart: unless-stopped
+    environment:
+      MP_MAX_MESSAGES: "5000"
+      MP_SMTP_AUTH_ACCEPT_ANY: "1"
+      MP_SMTP_AUTH_ALLOW_INSECURE: "1"
+    ports:
+      - "127.0.0.1:${MAILPIT_UI_PORT:-8025}:8025"
+      # SMTP published on localhost only, for running the API or tests on the host.
+      - "127.0.0.1:${MAILPIT_SMTP_PORT:-1025}:1025"
+
+  migrate:
+    build: ./apps/api
+    image: stagevote-api:local
+    environment:
+      <<: *api-env
+      DATABASE_MIGRATION_URL: ${DATABASE_MIGRATION_URL}
+      ADMIN_BOOTSTRAP_EMAIL: ${ADMIN_BOOTSTRAP_EMAIL:-}
+      ADMIN_BOOTSTRAP_PASSWORD: ${ADMIN_BOOTSTRAP_PASSWORD:-}
+    command: ["stagevote", "bootstrap"]
+    volumes:
+      - media:/data/media
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    image: stagevote-api:local
+    restart: unless-stopped
+    environment: *api-env
+    # Two processes on purpose: live updates must cross process boundaries through
+    # PostgreSQL LISTEN/NOTIFY, never through in-memory state alone.
+    command:
+      - uvicorn
+      - stagevote.main:app
+      - --host=0.0.0.0
+      - --port=8000
+      - --workers=${API_WORKERS:-6}
+      - --proxy-headers
+      - --forwarded-allow-ips=*
+      - --no-access-log
+      - --timeout-graceful-shutdown=20
+    volumes:
+      - media:/data/media
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/v1/ready', timeout=3).status == 200 else 1)"]
+      interval: 5s
+      timeout: 4s
+      retries: 20
+
+  worker:
+    image: stagevote-api:local
+    restart: unless-stopped
+    environment: *api-env
+    command: ["stagevote", "worker"]
+    stop_grace_period: 30s
+    volumes:
+      - media:/data/media
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  web:
+    build: ./apps/web
+    image: stagevote-web:local
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      HOSTNAME: 0.0.0.0
+    depends_on:
+      - api
+
+  proxy:
+    image: caddy:2.11.7-alpine
+    restart: unless-stopped
+    environment:
+      SITE_ADDRESS: ":80"
+      WEB_UPSTREAM: ${WEB_UPSTREAM:-web:3000}
+      API_UPSTREAM: api:8000
+    volumes:
+      - ./infra/caddy:/etc/caddy:ro
+      - media:/srv/media:ro
+      - caddy_data:/data
+    ports:
+      - "${STAGEVOTE_BIND:-127.0.0.1}:${STAGEVOTE_HTTP_PORT:-3000}:80"
+    depends_on:
+      - api
+      - web
+
+volumes:
+  pgdata:
+  media:
+  caddy_data:

@@ -1,0 +1,283 @@
+@import 'tailwindcss';
+
+/*
+ * StageVote design tokens.
+ * Programme paper (ivory), plum ink, violet for actions only, gold as foil (thin lines,
+ * the live lamp, receipt notches). Gold is never used for text on ivory: it fails contrast.
+ */
+@theme {
+  --font-sans: var(--font-archivo), ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+
+  --color-ivory: #fbf7ef;
+  --color-paper: #fffdf8;
+  --color-sand: #eadfcf;
+  --color-sand-strong: #d9cbb4;
+  --color-plum: #2b1631;
+  --color-plum-soft: #5e4a63;
+  --color-plum-faint: #8c7b8f;
+  --color-gold: #b8892b;
+  --color-gold-deep: #7d5a12;
+  --color-gold-wash: #fbf1dc;
+  --color-success: #23704a;
+  --color-success-wash: #e3f2ea;
+  --color-danger: #b3263e;
+  --color-danger-wash: #fce8ec;
+
+  --radius-chip: 999px;
+  --radius-control: 0.875rem;
+  --radius-card: 1.5rem;
+  --radius-hero: 1.75rem;
+
+  --shadow-card: 0 1px 1px rgb(43 22 49 / 0.03), 0 10px 28px -18px rgb(43 22 49 / 0.28);
+  --shadow-lift: 0 1px 2px rgb(43 22 49 / 0.05), 0 18px 40px -22px rgb(43 22 49 / 0.38);
+
+  --ease-soft: cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+/* Programme accent presets. Only these values are accepted by the API. */
+:root {
+  --primary: #5b34c4;
+  --primary-deep: #47279e;
+  --primary-wash: #efe8ff;
+  --primary-ring: rgb(91 52 196 / 0.4);
+}
+[data-accent='plum'] {
+  --primary: #7a2a6e;
+  --primary-deep: #5f1f56;
+  --primary-wash: #f8e6f3;
+  --primary-ring: rgb(122 42 110 / 0.4);
+}
+[data-accent='indigo'] {
+  --primary: #3b43b8;
+  --primary-deep: #2d3392;
+  --primary-wash: #e7e9ff;
+  --primary-ring: rgb(59 67 184 / 0.4);
+}
+[data-accent='teal'] {
+  --primary: #136f6a;
+  --primary-deep: #0d5551;
+  --primary-wash: #dff3f1;
+  --primary-ring: rgb(19 111 106 / 0.4);
+}
+[data-accent='rose'] {
+  --primary: #b02a55;
+  --primary-deep: #8d2043;
+  --primary-wash: #fde6ee;
+  --primary-ring: rgb(176 42 85 / 0.4);
+}
+[data-accent='amber'] {
+  --primary: #8a5a00;
+  --primary-deep: #6c4600;
+  --primary-wash: #fbefd6;
+  --primary-ring: rgb(138 90 0 / 0.4);
+}
+
+@theme inline {
+  --color-primary: var(--primary);
+  --color-primary-deep: var(--primary-deep);
+  --color-primary-wash: var(--primary-wash);
+}
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+    background: var(--color-ivory);
+  }
+  body {
+    background: var(--color-ivory);
+    color: var(--color-plum);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    -webkit-tap-highlight-color: transparent;
+    min-height: 100dvh;
+    overflow-x: hidden;
+  }
+  :focus-visible {
+    outline: 3px solid var(--primary);
+    outline-offset: 2px;
+    border-radius: 6px;
+  }
+  ::selection {
+    background: var(--primary-wash);
+    color: var(--color-plum);
+  }
+  button,
+  [role='button'],
+  label,
+  summary {
+    touch-action: manipulation;
+  }
+}
+
+/* Condensed display cut of Archivo (width axis). Fits long round names on 320px phones. */
+.type-display {
+  font-variation-settings: 'wdth' 78;
+  font-weight: 760;
+  letter-spacing: -0.012em;
+  line-height: 1.04;
+}
+.type-condensed {
+  font-variation-settings: 'wdth' 84;
+}
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Upcoming placeholders: stable, muted shapes. Deliberately not animated. */
+.placeholder-bar {
+  background: repeating-linear-gradient(
+    -45deg,
+    rgb(43 22 49 / 0.06) 0 6px,
+    rgb(43 22 49 / 0.035) 6px 12px
+  );
+  border-radius: 8px;
+}
+
+/* Real loading only. */
+.skeleton {
+  position: relative;
+  overflow: hidden;
+  background: rgb(43 22 49 / 0.07);
+  border-radius: 10px;
+}
+.skeleton::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, rgb(255 253 248 / 0.75), transparent);
+  animation: sv-shimmer 1.4s infinite;
+}
+@keyframes sv-shimmer {
+  to {
+    transform: translateX(100%);
+  }
+}
+
+/* The live lamp: the only ambient motion in the participant app. */
+.live-lamp {
+  width: 0.625rem;
+  height: 0.625rem;
+  border-radius: 999px;
+  background: var(--color-gold);
+  box-shadow: 0 0 0 0 rgb(184 137 43 / 0.55);
+  animation: sv-lamp 2.2s var(--ease-soft) infinite;
+}
+@keyframes sv-lamp {
+  0% {
+    box-shadow: 0 0 0 0 rgb(184 137 43 / 0.55);
+  }
+  70% {
+    box-shadow: 0 0 0 9px rgb(184 137 43 / 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgb(184 137 43 / 0);
+  }
+}
+
+.enter-up {
+  animation: sv-enter-up 240ms var(--ease-soft) both;
+}
+@keyframes sv-enter-up {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+}
+.enter-fade {
+  animation: sv-enter-fade 200ms ease-out both;
+}
+@keyframes sv-enter-fade {
+  from {
+    opacity: 0;
+  }
+}
+
+/* Receipt stamp and check. */
+.check-draw path {
+  stroke-dasharray: 48;
+  stroke-dashoffset: 48;
+  animation: sv-draw 420ms 120ms var(--ease-soft) forwards;
+}
+@keyframes sv-draw {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+.stamp-in {
+  animation: sv-stamp 300ms var(--ease-soft) both;
+}
+@keyframes sv-stamp {
+  from {
+    opacity: 0;
+    transform: scale(0.96) translateY(6px);
+  }
+}
+
+/* Ticket perforation for receipts: notches cut with radial gradients. */
+.perforation {
+  position: relative;
+  height: 1px;
+  background-image: linear-gradient(90deg, var(--color-sand-strong) 50%, transparent 50%);
+  background-size: 10px 1px;
+}
+.perforation::before,
+.perforation::after {
+  content: '';
+  position: absolute;
+  top: -11px;
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  background: var(--color-ivory);
+  border: 1px solid var(--color-sand);
+}
+.perforation::before {
+  left: -12px;
+  clip-path: inset(0 0 0 50%);
+}
+.perforation::after {
+  right: -12px;
+  clip-path: inset(0 50% 0 0);
+}
+
+/* Card-to-detail shared element transition (View Transitions API, where supported). */
+::view-transition-group(*) {
+  animation-duration: 260ms;
+  animation-timing-function: cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 200ms;
+}
+
+.safe-bottom {
+  padding-bottom: max(1rem, env(safe-area-inset-bottom));
+}
+.safe-top {
+  padding-top: max(0px, env(safe-area-inset-top));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  .check-draw path {
+    stroke-dashoffset: 0;
+  }
+  .live-lamp {
+    animation: none;
+    box-shadow: 0 0 0 3px rgb(184 137 43 / 0.25);
+  }
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation: none !important;
+  }
+}

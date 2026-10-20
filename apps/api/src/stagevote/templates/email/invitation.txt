@@ -1,0 +1,18 @@
+{% if preview %}PREVIEW: this is how participants see their invitation. The password below
+is an example and does not work: every participant gets their own password.
+
+{% endif %}{{ programme_name }}: {{ heading }}
+
+{{ intro_text }}
+
+User ID (your email address): {{ user_id }}
+Password: {{ password }}
+
+Sign in: {{ link }}
+{% if opens_at %}
+Sign-in opens {{ opens_at }} ({{ timezone }}).
+{% endif %}{% if closing_text %}
+{{ closing_text }}
+{% endif %}{% if help_contact %}
+Need help? Contact {{ help_contact }}.
+{% endif %}

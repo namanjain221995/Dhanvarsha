@@ -1,0 +1,18 @@
+# Same-origin routing for StageVote (development and the plain-HTTP local stack).
+#   /api/*   -> FastAPI          /ws, /ws/admin -> FastAPI (WebSocket upgrade)
+#   /media/* -> uploaded images  everything else -> Next.js
+# Production uses Caddyfile.prod (automatic HTTPS, HSTS).
+{
+	admin off
+	auto_https off
+	servers {
+		timeouts {
+			read_header 10s
+			idle 2m
+		}
+	}
+}
+
+{$SITE_ADDRESS::80} {
+	import /etc/caddy/common.caddy
+}

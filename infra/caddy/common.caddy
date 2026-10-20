@@ -1,0 +1,43 @@
+# Shared routing and headers, imported by Caddyfile and Caddyfile.prod.
+encode zstd gzip
+
+request_body {
+	max_size 12MB
+}
+
+header {
+	X-Content-Type-Options nosniff
+	Referrer-Policy strict-origin-when-cross-origin
+	X-Frame-Options DENY
+	Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
+	Cross-Origin-Opener-Policy same-origin
+	-Server
+}
+
+handle /api/* {
+	reverse_proxy {$API_UPSTREAM:api:8000} {
+		header_up X-Request-ID {http.request.uuid}
+	}
+}
+
+@socket path /ws /ws/admin
+handle @socket {
+	reverse_proxy {$API_UPSTREAM:api:8000} {
+		stream_close_delay 5m
+	}
+}
+
+handle_path /media/* {
+	root * /srv/media
+	@image path_regexp ^/[a-f0-9]{32}\.webp$
+	handle @image {
+		header Cache-Control "public, max-age=31536000, immutable"
+		header Content-Type image/webp
+		file_server
+	}
+	respond 404
+}
+
+handle {
+	reverse_proxy {$WEB_UPSTREAM:web:3000}
+}

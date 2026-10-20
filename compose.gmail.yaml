@@ -1,0 +1,22 @@
+# Optional overlay for EMAIL_PROVIDER=gmail_workspace.
+# Place the *replacement* service-account key (never a key that was ever pasted into chat,
+# tickets or screenshots) at ./secrets/google-service-account.json with mode 0400.
+# It is mounted read-only at /run/secrets/google-service-account.json for the API (diagnostics)
+# and the worker (sending). It is never baked into an image or passed as an env value.
+services:
+  api:
+    environment:
+      GOOGLE_SERVICE_ACCOUNT_FILE: /run/secrets/google-service-account.json
+    secrets:
+      - source: google-service-account
+        target: google-service-account.json
+  worker:
+    environment:
+      GOOGLE_SERVICE_ACCOUNT_FILE: /run/secrets/google-service-account.json
+    secrets:
+      - source: google-service-account
+        target: google-service-account.json
+
+secrets:
+  google-service-account:
+    file: ./secrets/google-service-account.json
