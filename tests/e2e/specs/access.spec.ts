@@ -110,4 +110,26 @@ test.describe('access window and sessions', () => {
     await holder.close()
     await admin.dispose()
   })
+
+  test('gold look: the stage sign-in refuses a wrong password, then signs in', async ({ page, baseURL }) => {
+    const admin = await Admin.login(baseURL!)
+    const before = (await admin.programme()) as unknown as { accent: string }
+    const person = await invitedParticipant(admin, baseURL!, 'stage')
+    await admin.patchProgramme({ accent: 'gold' })
+    try {
+      await page.goto('/')
+      const enter = page.getByRole('button', { name: 'Enter the arena' })
+      await expect(enter).toBeEnabled()
+      await page.getByLabel('Email ID').fill(person.userId)
+      await page.getByLabel('Password', { exact: true }).fill('WRONG-PASS-0000')
+      await enter.click()
+      await expect(page.getByRole('alert').filter({ hasText: 'not right' })).toContainText('That user ID or password is not right.')
+      await page.getByLabel('Password', { exact: true }).fill(person.password)
+      await enter.click()
+      await expect(page).toHaveURL(/\/lobby$/)
+    } finally {
+      await admin.patchProgramme({ accent: before.accent })
+      await admin.dispose()
+    }
+  })
 })

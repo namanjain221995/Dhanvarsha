@@ -169,6 +169,328 @@ html:has([data-accent='gold']) body {
   box-shadow: 0 -14px 32px -24px rgb(138 100 16 / 0.6);
 }
 
+/*
+ * The stage sign-in of the gold look (components/participant/stage-sign-in.tsx): a night-blue
+ * arena, gold light and a lit stage. One load sequence (the ring draws, the ticket appears,
+ * the title and form rise); afterwards only the spotlights breathe.
+ */
+[data-accent='gold'][data-scene='stage'],
+[data-scene='stage'] {
+  /* Room at the foot for the lit stage, so the form never sits on the platform. */
+  padding-bottom: clamp(120px, 27vw, 190px);
+  color: #eef0ff;
+  background:
+    radial-gradient(90% 50% at 50% 26%, rgb(36 70 180 / 0.5) 0%, rgb(36 70 180 / 0) 70%),
+    radial-gradient(140% 80% at 50% 100%, #0e2063 0%, #050c2c 62%),
+    #050c2c;
+}
+html:has([data-scene='stage']),
+html:has([data-scene='stage']) body {
+  background: #050c2c;
+}
+[data-scene='stage'] :focus-visible {
+  outline-color: #f2c14e;
+}
+[data-scene='stage'] ::selection {
+  background: rgb(242 193 78 / 0.35);
+  color: #fff;
+}
+.stage-arcs {
+  position: absolute;
+  inset: 0 0 auto;
+  z-index: -1;
+  width: 100%;
+  height: min(80vh, 680px);
+  pointer-events: none;
+  /* The light fades out instead of stopping at a hard edge. */
+  -webkit-mask-image: linear-gradient(to bottom, #000 55%, transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 55%, transparent 100%);
+}
+.stage-emblem-wrap {
+  position: relative;
+  isolation: isolate;
+  display: inline-flex;
+}
+.stage-emblem-wrap::before {
+  content: '';
+  position: absolute;
+  inset: -26%;
+  z-index: -1;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgb(242 193 78 / 0.38) 0%, rgb(242 193 78 / 0) 64%);
+  animation: sv-stage-halo 4.5s ease-in-out 1.4s infinite alternate;
+}
+.stage-emblem {
+  display: block;
+  width: 7.25rem;
+  height: 7.25rem;
+}
+.stage-emblem-ring {
+  transform-box: fill-box;
+  transform-origin: center;
+  transform: rotate(-90deg);
+  stroke-dasharray: 100;
+  stroke-dashoffset: 100;
+  animation: sv-stage-draw 0.9s cubic-bezier(0.6, 0, 0.2, 1) 0.05s forwards;
+}
+.stage-ticket {
+  transform-box: fill-box;
+  transform-origin: center;
+  opacity: 0;
+  animation: sv-stage-ticket 0.5s cubic-bezier(0.2, 0.9, 0.25, 1.25) 0.4s forwards;
+}
+.stage-title {
+  font-family: var(--font-cinzel), 'Times New Roman', serif;
+  font-weight: 700;
+  font-size: clamp(2.1rem, 10vw, 2.9rem);
+  line-height: 1.06;
+  letter-spacing: 0.03em;
+  overflow-wrap: anywhere;
+  background: linear-gradient(180deg, #fff3c4 0%, #f6d26b 38%, #d9a43a 64%, #a87414 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  filter: drop-shadow(0 2px 12px rgb(242 193 78 / 0.25));
+}
+.stage-tagline {
+  font-size: 1.05rem;
+  line-height: 1.45;
+  color: #dfe3ff;
+}
+/* Small text that may sit over the spotlights keeps a dark halo. */
+.stage-hint {
+  text-shadow:
+    0 0 2px rgb(5 12 44 / 0.9),
+    0 1px 10px rgb(5 12 44 / 0.95);
+}
+.stage-rise {
+  animation: sv-stage-rise 0.5s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+.stage-glass {
+  background: rgb(13 27 82 / 0.62);
+  border: 1px solid rgb(170 185 255 / 0.2);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.06);
+}
+.stage-gold-text {
+  background: linear-gradient(180deg, #fff3c4 0%, #f6d26b 45%, #c99027 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.stage-note {
+  border-radius: 0.85rem;
+  border: 1px solid rgb(242 193 78 / 0.32);
+  background: rgb(13 27 82 / 0.66);
+  padding: 0.75rem 1rem;
+  font-size: 0.92rem;
+  line-height: 1.45;
+  color: #e4e7ff;
+}
+.stage-note-danger {
+  border-color: rgb(255 140 150 / 0.55);
+  background: rgb(84 18 40 / 0.6);
+  color: #ffe3e7;
+}
+.stage-link {
+  font-weight: 600;
+  color: #f6d26b;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.stage-input {
+  display: flex;
+  align-items: center;
+  min-height: 3.25rem;
+  border-radius: 0.8rem;
+  border: 1px solid rgb(170 185 255 / 0.3);
+  background: rgb(9 20 66 / 0.8);
+  transition:
+    border-color 150ms,
+    box-shadow 150ms;
+}
+.stage-input:focus-within {
+  border-color: #f2c14e;
+  box-shadow: 0 0 0 3px rgb(242 193 78 / 0.22);
+}
+.stage-input input {
+  flex: 1;
+  min-width: 0;
+  height: 3.25rem;
+  border: 0;
+  background: transparent;
+  padding-right: 0.75rem;
+  font-size: 1rem;
+  color: #f5f6ff;
+  outline: none;
+}
+.stage-input input::placeholder {
+  color: #8f98c2;
+}
+.stage-input input:disabled {
+  color: #8f98c2;
+  cursor: not-allowed;
+}
+/* Keep browser autofill on the dark field instead of a white box. */
+.stage-input input:-webkit-autofill {
+  -webkit-text-fill-color: #f5f6ff;
+  box-shadow: 0 0 0 100px #091442 inset;
+  caret-color: #f5f6ff;
+}
+.stage-input-icon {
+  display: flex;
+  padding: 0 0.7rem 0 0.95rem;
+  color: #aeb8e6;
+}
+.stage-input-toggle {
+  display: flex;
+  width: 2.75rem;
+  height: 2.75rem;
+  flex-shrink: 0;
+  margin-right: 0.25rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  color: #aeb8e6;
+}
+.stage-input-toggle:hover {
+  color: #fff;
+}
+.stage-cta {
+  position: relative;
+  display: flex;
+  width: 100%;
+  min-height: 3.5rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.85rem;
+  background: linear-gradient(180deg, #ffe9a8 0%, #f4cb52 40%, #dba62d 74%, #bb841b 100%);
+  color: #1b1f4d;
+  font-size: 0.98rem;
+  font-weight: 800;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  text-shadow: 0 1px 0 rgb(255 255 255 / 0.35);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.6),
+    inset 0 -2px 0 rgb(138 100 16 / 0.35),
+    0 16px 32px -16px rgb(242 193 78 / 0.6);
+  transition:
+    filter 150ms,
+    transform 150ms;
+}
+.stage-cta:hover:not(:disabled) {
+  filter: brightness(1.06);
+}
+.stage-cta:active:not(:disabled) {
+  transform: translateY(1px);
+}
+.stage-cta:disabled {
+  cursor: not-allowed;
+  filter: saturate(0.35) brightness(0.75);
+}
+.stage-cta-chevron {
+  position: absolute;
+  right: 0.6rem;
+  display: flex;
+  width: 2.1rem;
+  height: 2.1rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: rgb(122 82 8 / 0.2);
+  box-shadow: inset 0 0 0 1px rgb(122 82 8 / 0.32);
+}
+/* The stage stands at the foot of the screen (or of the page, when the page is taller). */
+.stage-floor {
+  position: absolute;
+  bottom: 0;
+  left: 50%;
+  z-index: -1;
+  width: min(100%, 760px);
+  aspect-ratio: 400 / 240;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+.stage-floor svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+.stage-beam {
+  opacity: 0.55;
+  animation: sv-stage-beam 6s ease-in-out infinite alternate;
+}
+.stage-spotlight {
+  animation: sv-stage-spot 3.6s ease-in-out infinite alternate;
+}
+.stage-dust {
+  position: absolute;
+  border-radius: 999px;
+  background: radial-gradient(circle, #fff6d0 0%, #f2c14e 55%, rgb(242 193 78 / 0) 72%);
+  opacity: 0;
+  animation: sv-stage-dust 5s ease-in-out infinite;
+}
+@keyframes sv-stage-draw {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+@keyframes sv-stage-ticket {
+  from {
+    opacity: 0;
+    transform: scale(0.6);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+@keyframes sv-stage-rise {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+}
+@keyframes sv-stage-halo {
+  from {
+    opacity: 0.55;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes sv-stage-beam {
+  from {
+    opacity: 0.28;
+  }
+  to {
+    opacity: 0.85;
+  }
+}
+@keyframes sv-stage-spot {
+  from {
+    opacity: 0.6;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes sv-stage-dust {
+  0% {
+    opacity: 0;
+    transform: translateY(0);
+  }
+  20% {
+    opacity: 0.9;
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-70px);
+  }
+}
+
 /* The coin rain (components/participant/coin-rain.tsx). Transforms only. */
 .coin-rain {
   position: fixed;

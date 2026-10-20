@@ -1,16 +1,17 @@
 'use client'
 
 import { useRouter, useSearchParams } from 'next/navigation'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { PasswordField, TextField } from '@/components/ui/field'
 import { Notice } from '@/components/ui/misc'
 import { ApiError, participantApi } from '@/lib/api'
-import { formatInZone, localEquivalent, serverClock, useServerNow, zoneAbbreviation } from '@/lib/time'
+import { formatInZone, localEquivalent, serverClock, zoneAbbreviation } from '@/lib/time'
 import type { PublicProgramme } from '@/lib/types'
 import { PageColumn } from './bits'
-import { CoinRain } from './coin-rain'
+import { OpeningCountdown } from './opening-countdown'
 import { ProgrammeLogo } from './programme-logo'
+import { StageLoading, StageSignIn, useRememberedAccent } from './stage-sign-in'
 import { clearVotingStorage } from './use-voting'
 
 export function usePublicProgramme() {
@@ -68,44 +69,10 @@ export function ProgrammeMasthead({ programme, compact = false }: { programme: P
   )
 }
 
-function OpeningCountdown({ opensAt, onReached }: { opensAt: string; onReached: () => void }) {
-  const now = useServerNow(1000)
-  const remaining = Date.parse(opensAt) - now
-  const fired = useRef(false)
-  useEffect(() => {
-    if (remaining <= 0 && !fired.current) {
-      fired.current = true
-      onReached()
-    }
-  }, [remaining, onReached])
-  const total = Math.max(0, Math.ceil(remaining / 1000))
-  const parts = [
-    { value: Math.floor(total / 86400), label: 'days' },
-    { value: Math.floor((total % 86400) / 3600), label: 'hours' },
-    { value: Math.floor((total % 3600) / 60), label: 'minutes' },
-    { value: total % 60, label: 'seconds' },
-  ].filter((p, i) => i > 0 || p.value > 0)
-  return (
-    <section aria-label="Time until sign-in opens" className="mt-8">
-      <div className="flex gap-2 sm:gap-3" aria-hidden>
-        {parts.map((p) => (
-          <div key={p.label} className="min-w-0 flex-1 rounded-2xl border border-sand bg-paper px-2 py-3 text-center">
-            <div className="type-display tabular text-[2.2rem] text-plum sm:text-[2.6rem]">
-              {String(p.value).padStart(2, '0')}
-            </div>
-            <div className="text-xs font-medium text-plum-soft">{p.label}</div>
-          </div>
-        ))}
-      </div>
-      <p className="sr-only">
-        Sign-in opens in {parts.map((p) => `${p.value} ${p.label}`).join(', ')}.
-      </p>
-      <p className="mt-3 text-sm text-plum-soft">This page opens sign-in by itself when the time comes.</p>
-    </section>
-  )
-}
+export type SignInForm = ReturnType<typeof useSignInForm>
 
-export function SignIn() {
+/** Everything the sign-in pages share: the programme, the form state and the submit action. */
+export function useSignInForm() {
   const router = useRouter()
   const params = useSearchParams()
   const { programme, error: loadError, reload } = usePublicProgramme()
@@ -161,6 +128,28 @@ export function SignIn() {
     }
   }
 
+  return {
+    programme,
+    loadError,
+    reload,
+    userId,
+    setUserId,
+    password,
+    setPassword,
+    busy,
+    formError,
+    checkingSession,
+    notice,
+    submit,
+  }
+}
+
+export function SignIn() {
+  const form = useSignInForm()
+  const { programme, loadError, reload, userId, setUserId, password, setPassword, busy, formError, checkingSession, notice, submit } = form
+  const rememberedAccent = useRememberedAccent(programme?.accent)
+
+  if (!programme && rememberedAccent === 'gold') return <StageLoading error={loadError} onRetry={() => void reload()} />
   if (!programme) {
     return (
       <PageColumn className="pb-16">
@@ -182,13 +171,15 @@ export function SignIn() {
     )
   }
 
+  // The gold look signs people in on its own stage.
+  if (programme.accent === 'gold') return <StageSignIn programme={programme} form={form} />
+
   const tz = programme.timezone
   const phase = programme.login_phase
   const open = phase === 'open'
 
   return (
     <div data-accent={programme.accent} className="relative isolate min-h-dvh">
-      {programme.accent === 'gold' ? <CoinRain /> : null}
       <PageColumn className="pb-16">
         <ProgrammeMasthead programme={programme} />
 

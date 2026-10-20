@@ -12,6 +12,15 @@ const archivo = localFont({
   declarations: [{ prop: 'font-stretch', value: '62% 125%' }],
 })
 
+// Cinzel (SIL Open Font License), self-hosted: the classical display face of the stage
+// sign-in in the gold look. Its lowercase letters are small capitals.
+const cinzel = localFont({
+  src: './fonts/cinzel-latin-wght-normal.woff2',
+  variable: '--font-cinzel',
+  weight: '400 900',
+  display: 'swap',
+})
+
 export const metadata: Metadata = {
   title: { default: 'StageVote', template: '%s · StageVote' },
   description: 'Live voting for your programme.',
@@ -30,7 +39,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   // Every page renders per request so the CSP script nonce from proxy.ts applies.
   await connection()
   return (
-    <html lang="en" className={archivo.variable}>
+    <html lang="en" className={`${archivo.variable} ${cinzel.variable}`}>
       <body>{children}</body>
     </html>
   )
