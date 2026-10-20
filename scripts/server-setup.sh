@@ -47,7 +47,9 @@ case "${ID:-}" in
       sum="$(curl -fsSL "$base/docker-compose-linux-$c_arch.sha256" | awk '{print $1}')"
       install_plugin docker-compose "$base/docker-compose-linux-$c_arch" "$sum"
     fi
-    if ! docker buildx version >/dev/null 2>&1; then
+    # Compose builds need buildx 0.17 or newer; Amazon Linux bundles an older one.
+    current="$(docker buildx version 2>/dev/null | awk '{print $2}' | sed 's/^v//')"
+    if [ -z "$current" ] || [ "$(printf '%s\n0.17.0\n' "$current" | sort -V | head -1)" != 0.17.0 ]; then
       tag="$(curl -fsSL https://api.github.com/repos/docker/buildx/releases/latest | python3 -c 'import json,sys; print(json.load(sys.stdin)["tag_name"])')"
       base="https://github.com/docker/buildx/releases/download/$tag"
       file="buildx-$tag.linux-$b_arch"
