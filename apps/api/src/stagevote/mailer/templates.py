@@ -74,8 +74,8 @@ DEFAULT_INVITATION = Wording(
         "You're invited to vote at {programme}. Your account is ready: sign in with the details below."
     ),
     closing=(
-        "Keep this email: you need the password to sign in on the day. Your account can be signed in "
-        "on one browser at a time.\n\n"
+        "Keep this email: you need the password to sign in on the day. You can sign in on more "
+        "than one device, and you vote once per round.\n\n"
         "If you lose this email or get stuck, ask the organisers to send it again. The new email has a "
         "new password and the old one stops working."
     ),

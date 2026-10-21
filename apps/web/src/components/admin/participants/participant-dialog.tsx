@@ -30,14 +30,14 @@ const ACTIONS: Record<
     label: 'Send invitation',
     icon: <Mail aria-hidden className="size-4" />,
     description:
-      'Emails their user ID (their email address) and a new password. The account works as soon as the email arrives. Any earlier password stops working and any open session is signed out.',
+      'Emails their user ID (their email address) and a new password. The account works as soon as the email arrives. Any earlier password stops working and every device they are signed in on is signed out.',
     tone: 'primary',
     path: (id) => `/admin/participants/${id}/invite`,
   },
   'reset-session': {
-    label: 'Reset session',
+    label: 'Sign out everywhere',
     icon: <LogOut aria-hidden className="size-4" />,
-    description: 'Signs them out on the device they are using now, so they can sign in on another one. Their votes are kept.',
+    description: 'Signs them out on every device they are signed in on, for example a lost phone. They can sign in again with their password. Their votes are kept.',
     tone: 'primary',
     path: (id) => `/admin/participants/${id}/reset-session`,
   },

@@ -1,4 +1,4 @@
-"""Participant sessions: one live session per account and every way a session ends."""
+"""Participant sessions: several devices per account, and every way a session ends."""
 
 from __future__ import annotations
 
@@ -45,13 +45,14 @@ async def live_context(world: World, voter: ParticipantClient) -> ParticipantCon
     )
 
 
-async def test_simultaneous_logins_leave_exactly_one_live_session(
+async def test_several_devices_can_be_signed_in_at_once(
     world: World, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    event = await world.live_event()
     info = await world.factory.create_participant(world.programme_id)
-    browsers = [world.browser(info) for _ in range(4)]
+    devices = [world.browser(info) for _ in range(4)]
     # Release all four logins together at the participant row lock.
-    barrier = asyncio.Barrier(len(browsers))
+    barrier = asyncio.Barrier(len(devices))
     original_lock = auth_service.lock_participant
 
     async def lock_together(db: Any, participant_id: uuid.UUID) -> Any:
@@ -59,30 +60,51 @@ async def test_simultaneous_logins_leave_exactly_one_live_session(
         return await original_lock(db, participant_id)
 
     monkeypatch.setattr(auth_service, "lock_participant", lock_together)
-    responses = await asyncio.gather(*(b.login() for b in browsers))
+    responses = await asyncio.gather(*(d.login() for d in devices))
     monkeypatch.setattr(auth_service, "lock_participant", original_lock)
 
-    winners = [b for b, r in zip(browsers, responses, strict=True) if r.status_code == 200]
-    assert len(winners) == 1, [(r.status_code, r.text) for r in responses]
-    for resp in responses:
-        if resp.status_code != 200:
-            assert_error(resp, 409, "SESSION_ACTIVE_ELSEWHERE")
-            assert "set-cookie" not in resp.headers
-    [row] = await sessions(world, info.id)
-    assert row.revoked_at is None
+    assert [r.status_code for r in responses] == [200] * 4, [r.text for r in responses]
+    rows = await sessions(world, info.id)
+    assert len(rows) == 4 and all(r.revoked_at is None for r in rows)
+    assert len({d.token for d in devices}) == 4
+    for device in devices:
+        assert (await device.snapshot()).status_code == 200
 
     # The same browser signing in again reuses its session (same cookie, same row).
-    winner = winners[0]
-    token = winner.token
-    again = await winner.login()
+    first = devices[0]
+    token = first.token
+    again = await first.login()
     assert again.status_code == 200 and again.json() == {"ok": True, "reused_session": True}
-    assert winner.token == token
-    assert [r.id for r in await sessions(world, info.id)] == [row.id]
-    loser = next(b for b in browsers if b is not winner)
-    assert_error(await loser.login(), 409, "SESSION_ACTIVE_ELSEWHERE")
+    assert first.token == token
+    assert len(await sessions(world, info.id)) == 4
+
+    # Still one vote per ballot: the other devices get the same receipt back.
+    ballot = event.ballot
+    assert (await devices[1].vote(ballot.id, ballot.nominee_ids[0])).status_code == 201
+    later = await devices[2].vote(ballot.id, ballot.nominee_ids[1])
+    assert_error(later, 409, "ALREADY_VOTED")
+    assert (
+        await world.factory.fetchval("SELECT count(*) FROM votes WHERE participant_id = :p", p=info.id) == 1
+    )
+
+    # Signing out on one device leaves the others signed in.
+    assert (await devices[3].logout()).status_code == 200
+    assert (await devices[0].snapshot()).status_code == 200
 
 
-async def test_logout_frees_the_account_for_another_browser(world: World) -> None:
+async def test_organiser_reset_signs_out_every_device(world: World) -> None:
+    phone = await world.participant()
+    laptop = world.browser(phone.info)
+    assert (await laptop.login()).status_code == 200
+    admin = await world.admin()
+    resp = await admin.post(f"/participants/{phone.info.id}/reset-session")
+    assert resp.json() == {"ok": True, "sessions_revoked": 2}
+    for device in (phone, laptop):
+        error = assert_error(await device.snapshot(), 401, "SESSION_REVOKED")
+        assert error["details"]["reason"] == "admin_reset"
+
+
+async def test_logout_ends_only_that_session(world: World) -> None:
     first = await world.participant()
     old_token = first.token
     assert (await first.logout()).status_code == 200

@@ -66,7 +66,7 @@ Defined in `apps/api/src/stagevote/models.py`; constraints and triggers in
 | 3 | Nominee belongs to the ballot | composite FK `(ballot_id, nominee_id) → nominees(ballot_id, id)` |
 | 4 | No crossing of programme/event/ballot/participant/session | composite FKs `(event_id, ballot_id)`, `(programme_id, event_id)`, `(programme_id, participant_id)`, `(participant_id, session_id)` |
 | 5 | At most one OPEN event per programme | partial unique index `WHERE status = 'open'` |
-| 6 | At most one active session per participant | partial unique index `WHERE revoked_at IS NULL`, plus serialised login (see below) |
+| 6 | One vote per participant per ballot, however many devices they use | unique `(participant_id, ballot_id)` on `votes`. Since migration 0005 a participant may hold several live sessions (one per device); the earlier one-session index is gone |
 | 7 | Votes immutable | runtime role has only `SELECT, INSERT` on `votes`; trigger rejects `UPDATE`/`DELETE`/`TRUNCATE` for every role; every FK to votes' parents is `ON DELETE RESTRICT`; the initial migration refuses to downgrade while votes exist |
 | 8 | Overlapping planned windows rejected | `EXCLUDE USING gist (programme_id WITH =, tstzrange(...) WITH &&)`, deferrable |
 | 9 | Aggregates reconcile to stored votes | results are always `COUNT` over `votes` (indexed by `(ballot_id, nominee_id)`); there is no second tally |
@@ -129,13 +129,13 @@ automatically.
   `Secure` over HTTPS). Only token hashes are stored. Nothing goes in localStorage.
 - Unsafe methods require an allowed `Origin` (or `Referer`) **and** an `X-CSRF-Token`
   that is an HMAC of the session id. WebSockets require the cookie and an allowed `Origin`.
-- **One active browser session per participant.** Login locks the participant row
-  `FOR UPDATE`; a second login while a valid session exists gets
-  `409 SESSION_ACTIVE_ELSEWHERE`. Expired sessions are revoked inside the same
-  transaction before a replacement is inserted. Tabs and reloads that share the cookie
-  keep working. This is one active *browser* session, not proof of a physical device:
-  two browsers on one phone are two sessions. IP addresses are not used (a venue shares
-  one public IP).
+- **Several devices per participant.** A voter may be signed in on a phone and a laptop at
+  the same time; each sign-in creates its own session. Login locks the participant row
+  `FOR UPDATE`, revokes that participant's expired sessions in the same transaction, and
+  reuses the session when the same browser signs in again. Tabs and reloads that share the
+  cookie keep working. Votes stay one per ballot whichever device sends them: a second
+  device gets `409 ALREADY_VOTED` with the same receipt. Logging out ends only that device's
+  session. IP addresses are not used (a venue shares one public IP).
 - A sleeping phone or a dropped socket does not end the session; WebSocket presence and
   session lifetime are independent. Sessions expire after `SESSION_TTL_HOURS` (default 12),
   or when ended by logout, an organiser reset, account disabling or a re-sent invitation.

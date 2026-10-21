@@ -472,7 +472,7 @@ async def reset_session(
     ctx: AdminContext = Depends(current_admin),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
-    """End the participant's active browser session so they can sign in elsewhere."""
+    """Sign the participant out on every device."""
     no_store(response)
     async with db.begin():
         p = await _participant(db, participant_id)

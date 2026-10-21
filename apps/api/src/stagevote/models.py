@@ -323,13 +323,11 @@ class ParticipantSession(Base):
             ondelete="RESTRICT",
         ),
         UniqueConstraint("participant_id", "id", name="uq_sessions_participant_id_id"),
-        # Invariant 6: at most one non-revoked session per participant. Expired sessions
-        # are revoked (reason 'expired') inside the serialized login transaction before a
-        # replacement is inserted.
+        # A participant may be signed in on several devices (migration 0005 dropped the old
+        # one-session rule). This index finds their live sessions at login and on revocation.
         Index(
-            "uq_sessions_one_active_per_participant",
+            "ix_sessions_active_by_participant",
             "participant_id",
-            unique=True,
             postgresql_where=text("revoked_at IS NULL"),
         ),
     )

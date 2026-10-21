@@ -11,7 +11,7 @@ each round goes live; organisers run the programme from a live control dashboard
   invitations, live control (open, close, start next, deadlines, schedule override),
   results with CSV export and publication, email delivery status, audit log.
 - Safety: one vote per participant per ballot enforced by PostgreSQL, a precise voting
-  cutoff, idempotent submissions with receipts, one active browser session per
+  cutoff, idempotent submissions with receipts, sign-in on several devices per
   participant, durable email and schedule jobs, live updates across API processes.
 
 Read [docs/architecture.md](docs/architecture.md) for how it works,

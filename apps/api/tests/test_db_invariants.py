@@ -86,30 +86,28 @@ async def test_at_most_one_open_event_per_programme(world: World, factory: Facto
     assert error.constraint_name == "uq_events_one_open_per_programme"
 
 
-async def test_at_most_one_live_session_per_participant(world: World, factory: Factory) -> None:
+async def test_several_live_sessions_per_participant_but_tokens_stay_unique(
+    world: World, factory: Factory
+) -> None:
     voter = await world.participant()
+    insert = (
+        "INSERT INTO participant_sessions (id, participant_id, programme_id, token_hash, expires_at, user_agent) "
+        "VALUES (:id, :p, :prog, :h, clock_timestamp() + interval '1 hour', 'second device')"
+    )
+    # A second device signed in at the same time is allowed (migration 0005).
+    second_hash = uuid.uuid4().bytes * 2
+    await factory.execute(insert, id=uuid.uuid4(), p=voter.info.id, prog=world.programme_id, h=second_hash)
+    live = await factory.fetchval(
+        "SELECT count(*) FROM participant_sessions WHERE participant_id = :p AND revoked_at IS NULL",
+        p=voter.info.id,
+    )
+    assert live == 2
+    # Two sessions can never share a token.
     with pytest.raises(IntegrityError) as caught:
         await factory.execute(
-            "INSERT INTO participant_sessions (id, participant_id, programme_id, token_hash, expires_at, user_agent) "
-            "VALUES (:id, :p, :prog, :h, clock_timestamp() + interval '1 hour', 'forged')",
-            id=uuid.uuid4(),
-            p=voter.info.id,
-            prog=world.programme_id,
-            h=uuid.uuid4().bytes * 2,
+            insert, id=uuid.uuid4(), p=voter.info.id, prog=world.programme_id, h=second_hash
         )
-    error = pg_error(caught.value)
-    assert error.sqlstate == UNIQUE_VIOLATION
-    assert error.constraint_name == "uq_sessions_one_active_per_participant"
-    # A revoked session may coexist with the live one (history is kept).
-    await factory.execute(
-        "INSERT INTO participant_sessions (id, participant_id, programme_id, token_hash, expires_at, "
-        "user_agent, revoked_at, revoke_reason) VALUES (:id, :p, :prog, :h, clock_timestamp(), 'old', "
-        "clock_timestamp(), 'logout')",
-        id=uuid.uuid4(),
-        p=voter.info.id,
-        prog=world.programme_id,
-        h=uuid.uuid4().bytes * 2,
-    )
+    assert pg_error(caught.value).sqlstate == UNIQUE_VIOLATION
 
 
 async def test_vote_rows_must_be_internally_consistent(world: World, factory: Factory) -> None:

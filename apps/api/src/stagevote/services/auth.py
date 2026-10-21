@@ -16,7 +16,6 @@ from dataclasses import dataclass
 from datetime import timedelta
 
 from sqlalchemy import or_, select, text, update
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import get_settings
@@ -162,27 +161,30 @@ async def participant_login(
         if phase == "closed":
             raise AppError("LOGIN_CLOSED", "Sign-in for this programme has closed.", 403)
 
+        # A voter may be signed in on several devices at once. Votes stay one per ballot per
+        # participant, whichever device sends them. Sessions that have expired are revoked here.
         active = (
-            await db.execute(
-                select(ParticipantSession).where(
-                    ParticipantSession.participant_id == locked.id, ParticipantSession.revoked_at.is_(None)
+            (
+                await db.execute(
+                    select(ParticipantSession).where(
+                        ParticipantSession.participant_id == locked.id,
+                        ParticipantSession.revoked_at.is_(None),
+                    )
                 )
             )
-        ).scalar_one_or_none()
-        if active is not None:
-            if active.expires_at > now:
-                if presented_token and token_hash(presented_token) == active.token_hash:
-                    await clear(db, limits[0].key)
-                    return LoginResult(None, active.id, locked, reused=True)
-                raise AppError(
-                    "SESSION_ACTIVE_ELSEWHERE",
-                    "This account is already signed in on another browser. Sign out there, or ask "
-                    "the help desk to reset your session.",
-                    409,
-                )
-            active.revoked_at = now
-            active.revoke_reason = "expired"
-            await db.flush()
+            .scalars()
+            .all()
+        )
+        presented_hash = token_hash(presented_token) if presented_token else None
+        for existing in active:
+            if existing.expires_at <= now:
+                existing.revoked_at = now
+                existing.revoke_reason = "expired"
+            elif presented_hash is not None and existing.token_hash == presented_hash:
+                # The same browser signing in again keeps its session.
+                await clear(db, limits[0].key)
+                return LoginResult(None, existing.id, locked, reused=True)
+        await db.flush()
 
         token = new_token()
         session = ParticipantSession(
@@ -194,12 +196,7 @@ async def participant_login(
             user_agent=user_agent[:200],
         )
         db.add(session)
-        try:
-            await db.flush()
-        except IntegrityError as exc:  # backstop: partial unique index on active sessions
-            raise AppError(
-                "SESSION_ACTIVE_ELSEWHERE", "This account is already signed in on another browser.", 409
-            ) from exc
+        await db.flush()
         if locked.activated_at is None:
             locked.activated_at = now  # first sign-in
         await clear(db, limits[0].key)

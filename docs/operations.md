@@ -90,7 +90,7 @@ On AWS EC2, follow [deploy-ec2.md](deploy-ec2.md): `scripts/server-setup.sh` and
 
 | Participant says | Do this |
 |---|---|
-| "It says my account is signed in on another browser" | Participants › find them › *Reset session*. They can then sign in on the device in hand. |
+| "I lost my phone" or "someone else is using my account" | Participants › find them › *Sign out everywhere*. Every device they were signed in on is signed out. If someone else may have the password, use *Resend invitation* instead: it also replaces the password. |
 | "I lost the email / my password doesn't work" | Participants › find them › *Resend invitation*. A new email arrives with a new password; the old password stops working and any open session is signed out. (There is no self-service reset by design.) |
 | "I never got an invitation" | Check the address on the participant row and the email page status; fix the address if needed and *Send invitation*. Ask them to look in spam. |
 | "Did my vote count?" | Their receipt is on the round page and in the lobby. Admins can see that a ballot was voted (completion), never the choice. |

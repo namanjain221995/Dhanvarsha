@@ -40,7 +40,7 @@ test.describe('access window and sessions', () => {
     }
   })
 
-  test('one active browser session; organiser reset ends it live', async ({ browser, baseURL }) => {
+  test('several devices at once; organiser sign-out ends them all live', async ({ browser, baseURL }) => {
     const admin = await Admin.login(baseURL!)
     const person = await invitedParticipant(admin, baseURL!, 'session')
     const first = await browser.newContext()
@@ -48,25 +48,21 @@ test.describe('access window and sessions', () => {
     const page = await first.newPage()
     await signIn(page, person.userId, person.password)
 
+    // The same account signs in on a second device while the first stays signed in.
     const other = await second.newPage()
-    await other.goto('/')
-    await other.getByLabel('Email address').fill(person.userId)
-    await other.getByLabel('Password', { exact: true }).fill(person.password)
-    await other.getByRole('button', { name: 'Sign in' }).click()
-    await expect(other.getByRole('alert').filter({ hasText: 'already signed in' })).toContainText('already signed in on another browser')
+    await signIn(other, person.userId, person.password)
+    await expect(other).toHaveURL(/\/lobby$/)
 
-    // A reload in the first browser keeps the same session.
+    // A reload in the first browser keeps its session.
     await page.reload()
     await expect(page).toHaveURL(/\/lobby$/)
 
-    // The help desk resets the session: the open page learns it immediately.
+    // The help desk signs the account out everywhere: both open pages learn it immediately.
     await admin.resetSession(person.id)
-    await expect(page.getByRole('heading', { name: 'You are signed out' })).toBeVisible({ timeout: 15_000 })
-    await expect(page.getByText(/reset by the organisers/)).toBeVisible()
-
-    // The second browser can now sign in.
-    await other.getByRole('button', { name: 'Sign in' }).click()
-    await expect(other).toHaveURL(/\/lobby$/)
+    for (const p of [page, other]) {
+      await expect(p.getByRole('heading', { name: 'You are signed out' })).toBeVisible({ timeout: 15_000 })
+      await expect(p.getByText(/reset by the organisers/)).toBeVisible()
+    }
     await first.close()
     await second.close()
     await admin.dispose()
