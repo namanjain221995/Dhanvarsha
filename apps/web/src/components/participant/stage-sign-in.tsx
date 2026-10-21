@@ -1,6 +1,6 @@
 'use client'
 
-import { ChevronRight, Eye, EyeOff, LoaderCircle, LockKeyhole, UserRound } from 'lucide-react'
+import { Eye, EyeOff, LoaderCircle, LockKeyhole, UserRound } from 'lucide-react'
 import { useEffect, useId, useState, useSyncExternalStore } from 'react'
 import { formatInZone, zoneAbbreviation } from '@/lib/time'
 import type { Accent, PublicProgramme } from '@/lib/types'
@@ -203,7 +203,9 @@ function StageInput({
       <label htmlFor={id} className="mb-1.5 block text-[0.92rem] font-semibold text-[#eef0ff]">
         {label}
       </label>
-      <div className="stage-input">
+      {/* The input is the whole field (icon and eye button sit on top of it), so browser
+          autofill colours one rounded box instead of a square inside the field. */}
+      <div className={`stage-input${password ? ' stage-input-password' : ''}`}>
         <span aria-hidden className="stage-input-icon">
           {icon}
         </span>
@@ -336,18 +338,14 @@ export function StageSignIn({ programme, form }: { programme: PublicProgramme; f
               ) : null}
             </div>
             <button type="submit" className="stage-cta" disabled={disabled || busy} aria-busy={busy || undefined}>
-              <span className="stage-cta-label">
-                {busy ? 'Entering…' : open ? 'Enter the arena' : phase === 'before_open' ? 'Opens soon' : 'Sign-in closed'}
-              </span>
-              <span aria-hidden className="stage-cta-chevron">
-                {busy ? <LoaderCircle className="size-4 animate-spin" /> : <ChevronRight className="size-4" strokeWidth={2.6} />}
-              </span>
+              {busy ? <LoaderCircle aria-hidden className="size-[1.1rem] animate-spin" /> : null}
+              {busy ? 'Entering…' : open ? 'Enter the arena' : phase === 'before_open' ? 'Opens soon' : 'Sign-in closed'}
             </button>
           </form>
 
-          <p className="stage-hint mt-4 text-center text-[0.85rem] text-[#b4bbdc]">Use the email and password from your invitation email.</p>
+          <p className="stage-hint mt-4 text-balance text-center text-[0.85rem] text-[#b4bbdc]">Use the email and password from your invitation.</p>
           {programme.help_contact ? (
-            <p className="stage-hint mt-1 text-center text-[0.85rem] text-[#b4bbdc]">Need help? Ask {programme.help_contact}.</p>
+            <p className="stage-hint mt-1 text-balance text-center text-[0.85rem] text-[#b4bbdc]">Need help? Ask {programme.help_contact}.</p>
           ) : null}
         </section>
       </main>

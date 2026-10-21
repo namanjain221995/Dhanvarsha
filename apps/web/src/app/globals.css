@@ -297,31 +297,33 @@ html:has([data-scene='stage']) body {
   text-decoration: underline;
   text-underline-offset: 3px;
 }
+/* The input is the whole rounded field; the icon and the eye button sit on top of it. The
+   field is one solid colour, so browser autofill can be painted the same colour exactly. */
 .stage-input {
-  display: flex;
-  align-items: center;
-  min-height: 3.25rem;
+  position: relative;
+}
+.stage-input input {
+  display: block;
+  width: 100%;
+  height: 3.25rem;
   border-radius: 0.8rem;
   border: 1px solid rgb(170 185 255 / 0.3);
-  background: rgb(9 20 66 / 0.8);
+  background-color: #0a1646;
+  padding: 0 0.9rem 0 2.9rem;
+  font-size: 1rem;
+  color: #f5f6ff;
+  outline: none;
+  text-overflow: ellipsis;
   transition:
     border-color 150ms,
     box-shadow 150ms;
 }
-.stage-input:focus-within {
+.stage-input-password input {
+  padding-right: 3.25rem;
+}
+.stage-input input:focus {
   border-color: #f2c14e;
   box-shadow: 0 0 0 3px rgb(242 193 78 / 0.22);
-}
-.stage-input input {
-  flex: 1;
-  min-width: 0;
-  height: 3.25rem;
-  border: 0;
-  background: transparent;
-  padding-right: 0.75rem;
-  font-size: 1rem;
-  color: #f5f6ff;
-  outline: none;
 }
 .stage-input input::placeholder {
   color: #8f98c2;
@@ -330,38 +332,57 @@ html:has([data-scene='stage']) body {
   color: #8f98c2;
   cursor: not-allowed;
 }
-/* Keep browser autofill on the dark field instead of a white box. */
-.stage-input input:-webkit-autofill {
+/* Browser autofill: same field colour and text colour, no light or square box. */
+.stage-input input:-webkit-autofill,
+.stage-input input:-webkit-autofill:hover {
   -webkit-text-fill-color: #f5f6ff;
-  box-shadow: 0 0 0 100px #091442 inset;
   caret-color: #f5f6ff;
+  box-shadow: inset 0 0 0 100px #0a1646;
+  transition: background-color 100000s 0s;
+}
+.stage-input input:-webkit-autofill:focus {
+  -webkit-text-fill-color: #f5f6ff;
+  box-shadow:
+    inset 0 0 0 100px #0a1646,
+    0 0 0 3px rgb(242 193 78 / 0.22);
+}
+.stage-input input:autofill {
+  box-shadow: inset 0 0 0 100px #0a1646;
+  filter: none;
 }
 .stage-input-icon {
+  position: absolute;
+  top: 50%;
+  left: 0.95rem;
   display: flex;
-  padding: 0 0.7rem 0 0.95rem;
+  transform: translateY(-50%);
   color: #aeb8e6;
+  pointer-events: none;
 }
 .stage-input-toggle {
+  position: absolute;
+  top: 50%;
+  right: 0.3rem;
   display: flex;
   width: 2.75rem;
   height: 2.75rem;
-  flex-shrink: 0;
-  margin-right: 0.25rem;
   align-items: center;
   justify-content: center;
   border-radius: 999px;
+  transform: translateY(-50%);
   color: #aeb8e6;
 }
 .stage-input-toggle:hover {
   color: #fff;
 }
 .stage-cta {
-  position: relative;
   display: flex;
   width: 100%;
   min-height: 3.5rem;
   align-items: center;
   justify-content: center;
+  gap: 0.55rem;
+  padding: 0 1rem;
   border-radius: 0.85rem;
   background: linear-gradient(180deg, #ffe9a8 0%, #f4cb52 40%, #dba62d 74%, #bb841b 100%);
   color: #1b1f4d;
@@ -387,18 +408,6 @@ html:has([data-scene='stage']) body {
 .stage-cta:disabled {
   cursor: not-allowed;
   filter: saturate(0.35) brightness(0.75);
-}
-.stage-cta-chevron {
-  position: absolute;
-  right: 0.6rem;
-  display: flex;
-  width: 2.1rem;
-  height: 2.1rem;
-  align-items: center;
-  justify-content: center;
-  border-radius: 999px;
-  background: rgb(122 82 8 / 0.2);
-  box-shadow: inset 0 0 0 1px rgb(122 82 8 / 0.32);
 }
 /* The stage stands at the foot of the screen (or of the page, when the page is taller). */
 .stage-floor {
