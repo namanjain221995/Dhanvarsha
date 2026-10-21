@@ -96,13 +96,84 @@
   --gold-fill: linear-gradient(180deg, #ffe9a8 0%, #f4cb52 40%, #dba62d 74%, #bb841b 100%);
   --gold-ring: conic-gradient(from 210deg, #fff0b8, #dba62d, #8a6410, #f4cb52, #fff0b8);
   color: var(--color-plum);
+  /* The page itself is a soft blue with a brighter blue glow at the top; cards stay cream. */
   background:
-    radial-gradient(110% 55% at 50% -12%, #fbe6ad 0%, rgb(251 230 173 / 0) 62%),
-    var(--color-ivory);
+    radial-gradient(110% 55% at 50% -12%, #bcd2fa 0%, rgb(188 210 250 / 0) 62%),
+    #ecf2fd;
 }
 html:has([data-accent='gold']),
 html:has([data-accent='gold']) body {
-  background: #fbf6ea;
+  background: #ecf2fd;
+}
+/*
+ * The gold look's voting pages (after sign-in) stand on dark blue. On the blue the ink is
+ * light and links are gold; every cream surface inside (cards, rows, notices, the vote bar,
+ * the header) brings the navy ink back, in the components layer below so that text classes
+ * on the surface itself still win. Faded rows (upcoming rounds) become frosted glass.
+ */
+[data-accent='gold'][data-page='participant'] {
+  --color-plum: #f3f6ff;
+  --color-plum-soft: #c3cfee;
+  --color-plum-faint: #93a4d2;
+  --color-sand: rgb(255 255 255 / 0.16);
+  --color-sand-strong: rgb(255 255 255 / 0.3);
+  --color-ivory: rgb(255 255 255 / 0.07);
+  --color-gold-deep: #f6d26b;
+  --primary: #f6d26b;
+  --primary-deep: #ffe08a;
+  --primary-wash: rgb(255 255 255 / 0.1);
+  --primary-ring: rgb(246 210 107 / 0.5);
+  color: var(--color-plum);
+  background:
+    radial-gradient(110% 50% at 50% -10%, rgb(48 88 200 / 0.55) 0%, rgb(48 88 200 / 0) 62%),
+    linear-gradient(180deg, #0d1f5c 0%, #0a1849 50%, #071238 100%);
+}
+html:has([data-page='participant'][data-accent='gold']),
+html:has([data-page='participant'][data-accent='gold']) body {
+  background: #071238;
+}
+@layer components {
+  [data-accent='gold'][data-page='participant']
+    :is(
+      [class^='bg-paper']:not([class*='bg-paper/50']),
+      [class*=' bg-paper']:not([class*='bg-paper/50']),
+      [class*=' bg-white'],
+      [class^='bg-primary-wash'],
+      [class*=' bg-primary-wash'],
+      [class*=' bg-gold-wash'],
+      [class*=' bg-success-wash'],
+      [class*=' bg-danger-wash'],
+      .rules-box
+    ) {
+    --primary: #23339a;
+    --primary-deep: #18247a;
+    --primary-wash: #e9ecfb;
+    --primary-ring: rgb(35 51 154 / 0.38);
+    --color-plum: #18215c;
+    --color-plum-soft: #4b5384;
+    --color-plum-faint: #8a8fb3;
+    --color-sand: #efdfb8;
+    --color-sand-strong: #e0c98f;
+    --color-ivory: #fbf6ea;
+    --color-gold-deep: #8a6410;
+    color: var(--color-plum);
+  }
+}
+[data-accent='gold'][data-page='participant'] [class*='bg-paper/50'] {
+  border-color: rgb(255 255 255 / 0.14);
+  background-color: rgb(255 255 255 / 0.06);
+}
+[data-accent='gold'][data-page='participant'] [class*='bg-paper/70'] {
+  background-color: var(--color-paper);
+}
+[data-accent='gold'][data-page='participant'] .placeholder-bar {
+  background: repeating-linear-gradient(-45deg, rgb(255 255 255 / 0.1) 0 6px, rgb(255 255 255 / 0.05) 6px 12px);
+}
+[data-accent='gold'][data-page='participant'] .skeleton {
+  background: rgb(255 255 255 / 0.08);
+}
+[data-accent='gold'][data-page='participant'] .skeleton::after {
+  background: linear-gradient(90deg, transparent, rgb(255 255 255 / 0.12), transparent);
 }
 [data-accent='gold'] [data-variant='primary']:not(:disabled) {
   background: var(--gold-fill);

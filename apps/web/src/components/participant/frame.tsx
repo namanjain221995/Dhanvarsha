@@ -68,9 +68,9 @@ export function ParticipantFrame({ children }: { children: React.ReactNode }) {
 
   const s = p.snapshot
   return (
-    <div data-accent={s.programme.accent} className="relative isolate min-h-dvh">
+    <div data-accent={s.programme.accent} data-page="participant" className="relative isolate min-h-dvh">
       {s.programme.accent === 'gold' ? <CoinRain /> : null}
-      <PageColumn className="safe-top">
+      <PageColumn>
         <ParticipantHeader
           programme={s.programme}
           displayName={s.participant.display_name}
