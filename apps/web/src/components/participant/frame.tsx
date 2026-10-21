@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button'
 import { Notice } from '@/components/ui/misc'
 import { ConnectionBanner, PageColumn, ParticipantHeader } from './bits'
 import { CoinRain } from './coin-rain'
+import { StarField } from './star-field'
 import { useParticipant } from './provider'
 
 export function ParticipantFrame({ children }: { children: React.ReactNode }) {
@@ -69,7 +70,12 @@ export function ParticipantFrame({ children }: { children: React.ReactNode }) {
   const s = p.snapshot
   return (
     <div data-accent={s.programme.accent} data-page="participant" className="relative isolate min-h-dvh">
-      {s.programme.accent === 'gold' ? <CoinRain /> : null}
+      {s.programme.accent === 'gold' ? (
+        <>
+          <StarField />
+          <CoinRain />
+        </>
+      ) : null}
       <PageColumn>
         <ParticipantHeader
           programme={s.programme}

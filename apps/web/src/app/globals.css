@@ -560,6 +560,78 @@ html:has([data-scene='stage']) body {
   }
 }
 
+/* Golden starlight behind the dark blue pages (components/participant/star-field.tsx).
+   Transform and opacity only: each sparkle is painted once, then flares on the graphics chip. */
+.star-field {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  overflow: hidden;
+  pointer-events: none;
+}
+.star-dust {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 2px;
+  height: 2px;
+  border-radius: 50%;
+  opacity: 0.3;
+  animation: sv-star-dust 3.9s ease-in-out infinite alternate;
+}
+.star-sparkle {
+  position: absolute;
+  width: var(--size);
+  height: var(--size);
+  margin: calc(var(--size) / -2) 0 0 calc(var(--size) / -2);
+  opacity: 0;
+  animation: sv-star-flare var(--cycle) ease-in-out var(--delay) infinite;
+}
+/* The halo of light around the star. */
+.star-sparkle::before {
+  content: '';
+  position: absolute;
+  inset: -35%;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgb(255 222 130 / 0.7) 0%, rgb(255 212 112 / 0.2) 22%, rgb(255 212 112 / 0) 52%);
+}
+/* The four-point star: a white-hot centre fading to gold along thin rays. */
+.star-sparkle::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(closest-side, #fff 0%, #fffbe8 18%, #ffd96e 45%, rgb(248 211 106 / 0) 100%);
+  /* Long, thin rays, like light catching on gold. */
+  clip-path: polygon(50% 0, 53.5% 46.5%, 100% 50%, 53.5% 53.5%, 50% 100%, 46.5% 53.5%, 0 50%, 46.5% 46.5%);
+}
+@keyframes sv-star-flare {
+  0% {
+    transform: scale(0.1) rotate(-20deg);
+    opacity: 0;
+  }
+  14% {
+    transform: scale(1) rotate(10deg);
+    opacity: 1;
+  }
+  26% {
+    transform: scale(0.6) rotate(30deg);
+    opacity: 0.7;
+  }
+  40%,
+  100% {
+    transform: scale(0.1) rotate(45deg);
+    opacity: 0;
+  }
+}
+@keyframes sv-star-dust {
+  from {
+    opacity: 0.15;
+  }
+  to {
+    opacity: 0.95;
+  }
+}
+
 /* The coin rain (components/participant/coin-rain.tsx). Transforms only. */
 .coin-rain {
   position: fixed;
@@ -1016,6 +1088,15 @@ html:has([data-scene='stage']) body {
   }
   .coin-rain .coin {
     display: none;
+  }
+  .star-sparkle {
+    animation: none !important;
+    opacity: 0.6;
+    transform: scale(0.6);
+  }
+  .star-dust {
+    animation: none !important;
+    opacity: 0.5;
   }
   .coin-rain .coin-still {
     display: block;
