@@ -99,7 +99,7 @@ Load test (isolated stack on port 3190, synthetic accounts only):
 ```sh
 # API stress test: 500 signed-in users share 10,000 API calls, sent as fast as the server answers
 tests/load/run.sh --yes-synthetic-load --users 500 --requests 10000
-# Live event simulation: voting rounds with WebSockets, retries and lost responses
+# Live event simulation: phones open the pages, then vote in rounds with WebSockets, retries and lost responses
 tests/load/run.sh --yes-synthetic-load --voters 500 --rounds 3 --burst 10
 # See the HTML reports (verdict, charts, every API call, server CPU/memory)
 tests/load/serve.sh        # then open http://localhost:8099/

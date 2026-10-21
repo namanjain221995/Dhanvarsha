@@ -3,10 +3,14 @@
 // Run it only through tests/load/run.sh, which starts an isolated Compose project with
 // synthetic accounts and refuses any other target. What it does:
 //
-//   participants  VOTERS virtual users. Each signs in (spread over LOGIN_RAMP_SECONDS),
-//                 loads its snapshot, and holds a live WebSocket like a phone would. On every
+//   participants  VOTERS virtual users. Each opens the sign-in page like a phone (the page,
+//                 then every script, stylesheet and font it names), signs in (spread over
+//                 LOGIN_RAMP_SECONDS), opens the lobby page, loads its snapshot, and holds a
+//                 live WebSocket like a phone would. Files already downloaded are not fetched
+//                 again (browsers keep them: they are cached for a year). On every
 //                 "state" signal it refetches the snapshot (with the client's jitter) and,
-//                 when a new round is live, votes once per ballot within BURST_SECONDS.
+//                 when a new round is live, opens that round's page and votes once per ballot
+//                 within BURST_SECONDS.
 //                 About 10% send the same request twice at once (duplicate retry) and about
 //                 5% lose the response (short client timeout), then recover by reading the
 //                 receipt and, if none exists, retrying with the SAME idempotency key.
@@ -67,6 +71,7 @@ export const options = {
     receipt_mismatches: ['count==0'],
     vote_latency: ['p(95)<1000'],
     state_propagation: ['p(95)<2000'],
+    page_load: ['p(95)<2000'],
   },
 }
 
@@ -78,6 +83,8 @@ const statePropagation = new Trend('state_propagation', true)
 const snapshotLatency = new Trend('snapshot_latency', true)
 const loginLatency = new Trend('login_latency', true)
 const transitionLatency = new Trend('transition_latency', true)
+const pageLoad = new Trend('page_load', true)
+const pagesLoaded = new Counter('pages_loaded')
 const ballotsConfirmed = new Counter('ballots_confirmed')
 const votesCreated = new Counter('votes_created_201')
 const votesReplayed = new Counter('votes_replayed_200')
@@ -115,6 +122,29 @@ function json(res) {
   }
 }
 
+// Scripts, stylesheets and fonts a page names (fonts are preloaded from the page itself).
+const ASSET = /\/_next\/static\/[^"'\s)]+\.(?:js|css|woff2)/g
+
+/** A phone opening a page: the HTML, then each file it names that this phone does not have yet. */
+async function openPage(path, name, cache) {
+  const started = Date.now()
+  const page = await http.asyncRequest('GET', `${TARGET}${path}`, null, { headers: { Accept: 'text/html' }, tags: { name } })
+  if (page.status !== 200) {
+    unexpected(name, page)
+    return
+  }
+  const files = [...new Set(String(page.body).match(ASSET) || [])].filter((url) => !cache.has(url))
+  const results = await Promise.all(
+    files.map((url) => http.asyncRequest('GET', `${TARGET}${url}`, null, { tags: { name: 'static file' }, responseType: 'none' })),
+  )
+  results.forEach((res, i) => {
+    if (res.status === 200) cache.add(files[i])
+    else unexpected(`static file ${files[i]}`, res)
+  })
+  pageLoad.add(Date.now() - started)
+  pagesLoaded.add(1)
+}
+
 export async function participant() {
   // Unique per participant VU (vu.idInTest also counts the host scenario).
   const index = exec.scenario.iterationInTest
@@ -122,7 +152,15 @@ export async function participant() {
   const behaviour = index % 20 === 0 ? 'lossy' : index % 10 === 1 ? 'duplicate' : 'normal'
   const headers = { Origin: ORIGIN, 'Content-Type': 'application/json' }
 
+  const browserCache = new Set()
+
   await new Promise((resolve) => setTimeout(resolve, Math.random() * LOGIN_RAMP_SECONDS * 1000))
+  // The sign-in page and the two requests it makes on load.
+  await openPage('/', 'page: sign-in', browserCache)
+  await Promise.all([
+    http.asyncRequest('GET', `${TARGET}/api/v1/public/programme`, null, { tags: { name: 'public programme' } }),
+    http.asyncRequest('GET', `${TARGET}/api/v1/auth/session`, null, { tags: { name: 'session check' } }),
+  ])
   const login = await http.asyncRequest('POST', `${TARGET}/api/v1/auth/login`, JSON.stringify({ user_id: userId, password: PASSWORD }), {
     headers,
     tags: { name: 'login' },
@@ -224,6 +262,7 @@ export async function participant() {
   }
 
   async function vote(eventId) {
+    await openPage(`/event/${eventId}`, 'page: round', browserCache)
     const res = await http.asyncRequest('GET', `${TARGET}/api/v1/me/events/${eventId}`, null, { headers, tags: { name: 'event' } })
     if (res.status !== 200) {
       unexpected('event', res)
@@ -277,6 +316,7 @@ export async function participant() {
     await vote(live.id)
   }
 
+  await openPage('/lobby', 'page: lobby', browserCache)
   const first = await snapshot()
   if (!first) return
   await onState(first)

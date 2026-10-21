@@ -141,6 +141,39 @@ Earlier runs of the same scenario reconciled exactly as well (`20261019T201309Z`
 two virtual users shared an account and the server correctly answered
 `SESSION_ACTIVE_ELSEWHERE`).
 
+### Pages and phone animation (2026-10-21, run `20261021T150114Z`)
+
+The main scenario now also loads pages the way a phone does. Each virtual participant opens the
+sign-in page (the HTML, then every script, stylesheet and font it names), the lobby after
+signing in, and each round's page when the round opens. Files it already has are not fetched
+again, as in a browser. Same settings as above, with 8 API processes as on the production server.
+
+| Measure | Result |
+|---|---|
+| Duration | 216 s, 18,300 HTTP requests, 2,500 page opens, 8,000 static files, 500 WebSocket sessions |
+| Votes acknowledged / stored | **1,500 / 1,500 (match)**, 0 unexpected errors |
+| Full page open (HTML and every new file) | p50 12 ms, **p95 33 ms**, p99 45 ms, max 132 ms (target: p95 < 2 s) |
+| Page HTML | sign-in p95 19 ms, lobby p95 23 ms, round p95 21 ms |
+| Static files | p95 17 ms, 0 failed |
+| Peak CPU / RAM | web 91% of one core / 115 MiB, api 223% / 831 MiB, db 71% / 170 MiB, proxy 41% / 105 MiB |
+
+In production, Cloudflare caches the scripts, styles and fonts (`cache-control: public,
+max-age=31536000, immutable`; `cf-cache-status: HIT` on repeat requests). The server's web process
+therefore serves mostly the small HTML pages, a quarter of the requests measured here.
+
+**Phone animation cost**, measured with Chrome traces on a 390 px phone at 3x pixel density,
+with the CPU slowed 4x, 6x and 10x to stand in for mid-range and low-end phones:
+
+- The "Live now" lamp animated `box-shadow`, which repainted the card it sits on on every frame:
+  about 180 repaints a second and 150 ms of paint per second on the lobby. It now pulses a ring
+  with `transform` and `opacity` only. Repaints fell to 2 a second, and main-thread work on the
+  lobby fell about 4.5x (paint 147 to 1 ms per second, raster 19 to 0.3 ms per second).
+- The coin rain and the stage sign-in cause no repaints. They cost style work only.
+- Frame rate with the CPU slowed 6x: sign-in, lobby and round pages hold 60 fps with no slow
+  frames. Slowed 10x: sign-in 60 fps, lobby 56 fps, round 54 fps (one frame over 34 ms in 6 s).
+- Tapping a team on the round page shows the choice on the next frame within 23–34 ms at full
+  speed, 28–60 ms slowed 6x, and 59–72 ms slowed 10x.
+
 ### Cutoff-race scenario: votes straddling transitions (`20261019T202527Z`)
 
 `tests/load/run.sh --yes-synthetic-load --voters 300 --rounds 3 --round-seconds 15 --burst 25 --login-ramp 20`.

@@ -125,19 +125,8 @@ html:has([data-accent='gold']) body {
   box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.6), 0 0 0 1px rgb(187 132 27 / 0.35);
 }
 [data-accent='gold'] [data-chip='live'] .live-lamp {
+  --lamp-ring: rgb(27 31 77 / 0.45);
   background: var(--gold-ink);
-  animation-name: sv-lamp-ink;
-}
-@keyframes sv-lamp-ink {
-  0% {
-    box-shadow: 0 0 0 0 rgb(27 31 77 / 0.45);
-  }
-  70% {
-    box-shadow: 0 0 0 8px rgb(27 31 77 / 0);
-  }
-  100% {
-    box-shadow: 0 0 0 0 rgb(27 31 77 / 0);
-  }
 }
 [data-accent='gold'] [data-checked='true'] {
   border-color: #dba62d;
@@ -822,24 +811,34 @@ html:has([data-scene='stage']) body {
   }
 }
 
-/* The live lamp: the only ambient motion in the participant app. */
+/* The live lamp. Its pulse is a ring that grows and fades (transform and opacity only), so it
+   runs on the graphics chip: animating box-shadow instead repainted the card it sits on on
+   every frame, about 180 repaints a second on the lobby. */
 .live-lamp {
+  --lamp-ring: rgb(184 137 43 / 0.55);
+  position: relative;
   width: 0.625rem;
   height: 0.625rem;
   border-radius: 999px;
   background: var(--color-gold);
-  box-shadow: 0 0 0 0 rgb(184 137 43 / 0.55);
+}
+.live-lamp::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: var(--lamp-ring);
   animation: sv-lamp 2.2s var(--ease-soft) infinite;
 }
 @keyframes sv-lamp {
   0% {
-    box-shadow: 0 0 0 0 rgb(184 137 43 / 0.55);
+    transform: scale(1);
+    opacity: 1;
   }
-  70% {
-    box-shadow: 0 0 0 9px rgb(184 137 43 / 0);
-  }
+  70%,
   100% {
-    box-shadow: 0 0 0 0 rgb(184 137 43 / 0);
+    transform: scale(2.8);
+    opacity: 0;
   }
 }
 
@@ -939,8 +938,10 @@ html:has([data-scene='stage']) body {
     stroke-dashoffset: 0;
   }
   .live-lamp {
-    animation: none;
     box-shadow: 0 0 0 3px rgb(184 137 43 / 0.25);
+  }
+  .live-lamp::after {
+    display: none;
   }
   .coin-rain .coin {
     display: none;
