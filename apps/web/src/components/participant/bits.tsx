@@ -188,9 +188,10 @@ export function ParticipantHeader({
     }
   }, [open])
   return (
-    <header className="flex items-center gap-3 py-3">
+    // A rounded card, so the header stands apart from the page (and the coin rain) behind it.
+    <header className="mt-2 flex items-center gap-3 rounded-[1.35rem] border border-sand bg-paper px-3.5 py-2.5 shadow-[var(--shadow-card)]">
       <Link href="/lobby" className="flex min-w-0 flex-1 items-center gap-3 rounded-xl">
-        <ProgrammeLogo src={programme.logo_url} name={programme.name} height={40} />
+        <ProgrammeLogo src={programme.logo_url} name={programme.name} height={44} />
         <span className="min-w-0">
           <span className="type-condensed block truncate text-[1.02rem] font-bold leading-tight">{programme.name}</span>
           <ConnectionDot connection={connection} />
@@ -212,7 +213,7 @@ export function ParticipantHeader({
         {open ? (
           <div
             role="menu"
-            className="enter-fade absolute right-0 top-12 z-30 w-64 rounded-2xl border border-sand bg-paper p-2 shadow-[var(--shadow-lift)]"
+            className="enter-fade absolute -right-2 top-[3.6rem] z-30 w-64 rounded-2xl border border-sand bg-paper p-2 shadow-[var(--shadow-lift)]"
           >
             <div className="px-3 py-2">
               <p className="truncate font-semibold">{displayName || 'Participant'}</p>
