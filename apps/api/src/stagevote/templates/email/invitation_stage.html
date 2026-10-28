@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<meta name="supported-color-schemes" content="dark">
+<title>{{ subject }}</title>
+<style>
+  /* Mail apps that load web fonts (Apple Mail, iOS Mail) show the title in Cinzel, as on the
+     sign-in page; the others fall back to Georgia. Gmail ignores this block. */
+  @font-face { font-family: 'Cinzel'; font-weight: 400 900; src: url('{{ asset_base }}/email/cinzel.woff2') format('woff2'); }
+</style>
+</head>
+{#- The gold look ("Dhanvarsha"): night blue and gold, like the sign-in page. The animated
+    banner (coins and stars) is an image because mail apps do not run CSS animation. #}
+<body style="margin:0;padding:0;background:#071238;color:#dfe3ff;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+<div style="display:none;max-height:0;overflow:hidden;mso-hide:all;">{{ preheader }}</div>
+<table role="presentation" width="100%" cellspacing="0" cellpadding="0" bgcolor="#071238" style="background:#071238;">
+  <tr>
+    <td align="center" style="padding:24px 12px;">
+      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" bgcolor="#0b1849" style="max-width:600px;background:#0b1849;border:1px solid #24346f;border-radius:24px;border-collapse:separate;overflow:hidden;">
+        {% if banner_src %}
+        <tr>
+          <td style="padding:0;font-size:0;line-height:0;">
+            <img src="{{ banner_src }}" width="600" height="220" alt="" style="display:block;width:100%;max-width:600px;height:auto;border:0;outline:none;text-decoration:none;">
+          </td>
+        </tr>
+        {% endif %}
+        <tr>
+          <td align="center" style="padding:{% if banner_src %}8px{% else %}34px{% endif %} 28px 0 28px;text-align:center;">
+            <div style="font-family:'Cinzel',Georgia,'Times New Roman',serif;font-size:34px;line-height:1.12;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#f6d26b;">{{ title_main }}</div>
+            {% if title_year %}<div style="margin-top:6px;padding-left:0.55em;font-family:'Cinzel',Georgia,'Times New Roman',serif;font-size:16px;line-height:1.2;font-weight:700;letter-spacing:0.55em;color:#e3b84a;">{{ title_year }}</div>{% endif %}
+            {% if tagline %}<p style="margin:14px 0 0 0;font-size:15px;line-height:1.5;color:#dfe3ff;">{{ tagline }}</p>{% endif %}
+            <div style="margin:20px auto 0 auto;width:56px;height:3px;line-height:3px;font-size:0;border-radius:3px;background:#f2c14e;">&nbsp;</div>
+          </td>
+        </tr>
+        <tr>
+          <td align="center" style="padding:22px 30px 10px 30px;text-align:center;font-size:16px;line-height:1.6;color:#dfe3ff;">
+            {% if preview %}
+            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border:1px solid #f2c14e;border-radius:14px;margin:0 0 20px 0;">
+              <tr><td style="padding:12px 16px;font-size:14px;line-height:1.5;color:#fff3c4;text-align:center;">
+                <strong>Preview.</strong> This is how participants see their invitation. The button below is an example and does not work: every participant gets their own personal link.
+              </td></tr>
+            </table>
+            {% endif %}
+            <h1 style="margin:0 0 14px 0;font-size:24px;line-height:1.25;font-weight:700;color:#fff3c4;">{{ heading }}</h1>
+            {{ intro_html }}
+          </td>
+        </tr>
+        <tr>
+          <td align="center" style="padding:6px 30px 0 30px;">
+            <table role="presentation" align="center" cellspacing="0" cellpadding="0" style="margin:0 auto;">
+              <tr>
+                <td align="center" bgcolor="#f4cb52" style="border-radius:999px;background:#f4cb52;background-image:linear-gradient(180deg,#ffe9a8 0%,#f4cb52 42%,#dba62d 78%,#bb841b 100%);">
+                  <a href="{{ link }}" style="display:inline-block;padding:16px 38px;border-radius:999px;color:#1b1f4d;text-decoration:none;font-size:15px;line-height:1.2;font-weight:800;letter-spacing:0.14em;text-transform:uppercase;">{{ button_label }}</a>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+        <tr>
+          <td align="center" style="padding:16px 34px 4px 34px;text-align:center;font-size:13px;line-height:1.55;color:#aeb8e6;">
+            This button is your personal pass. It signs you in on the first phone or computer you open it on, and again on that same device whenever you come back. On any other device it will not open, so please don't forward this email.
+          </td>
+        </tr>
+        <tr>
+          <td align="center" style="padding:16px 30px 6px 30px;text-align:center;font-size:15px;line-height:1.6;color:#dfe3ff;">
+            {% if opens_at %}<p style="margin:0 0 14px 0;">Sign-in opens <strong style="color:#f6d26b;">{{ opens_at }}</strong> ({{ timezone }}).</p>{% endif %}
+            <div style="color:#c8d0f0;">{{ closing_html }}</div>
+          </td>
+        </tr>
+        <tr>
+          <td align="center" style="padding:6px 30px 26px 30px;text-align:center;font-size:12px;line-height:1.55;color:#93a4d2;">
+            Button not working? Copy this link into the browser on the phone you will use:<br>
+            <a href="{{ link }}" style="color:#f6d26b;word-break:break-all;">{{ link }}</a>
+          </td>
+        </tr>
+        <tr>
+          <td align="center" bgcolor="#071238" style="padding:20px 28px 24px 28px;background:#071238;border-top:1px solid #24346f;text-align:center;font-size:12px;line-height:1.6;color:#8f9bc6;">
+            {% if logo_src %}<img src="{{ logo_src }}" width="{{ (logo_width * 36 / logo_height)|round|int }}" height="36" alt="{{ programme_name }}" style="display:block;margin:0 auto 10px auto;width:{{ (logo_width * 36 / logo_height)|round|int }}px;height:36px;border:0;outline:none;text-decoration:none;">{% endif %}
+            {% if help_contact %}Need help? Contact {{ help_contact }}.<br>{% endif %}
+            {% if preview %}An organiser of {{ programme_name }} sent you this preview.{% else %}You received this because you were invited to {{ programme_name }}.{% endif %}
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+</table>
+</body>
+</html>

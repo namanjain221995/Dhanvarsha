@@ -325,6 +325,10 @@ async def participant_detail(
             "activated_at": p.activated_at,
             "disabled_at": p.disabled_at,
             "invited_at": p.last_invited_at,
+            # The sign-in link: when the latest one was issued, and since when it is bound
+            # to a browser (None while nobody has entered with it). Never the hashes.
+            "link_issued_at": p.link_issued_at,
+            "link_bound_at": p.link_bound_at,
             "created_at": p.created_at,
         },
         "email_jobs": [
@@ -395,8 +399,9 @@ async def invite_one(
     ctx: AdminContext = Depends(current_admin),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
-    """Send the invitation (email address + new password). Re-sending replaces the
-    password, so the previous one stops working, and signs out any open session."""
+    """Send the invitation with a new personal sign-in link. Re-sending replaces the link,
+    so the previous one stops working, releases the browser it was bound to and signs out
+    every open session."""
     no_store(response)
     async with db.begin():
         p = await _participant(db, participant_id)
@@ -472,7 +477,9 @@ async def reset_session(
     ctx: AdminContext = Depends(current_admin),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
-    """Sign the participant out on every device."""
+    """Sign the participant out on every device. The link stays bound to its browser, so
+    that browser can come back with the link from the invitation email; only a new
+    invitation releases it."""
     no_store(response)
     async with db.begin():
         p = await _participant(db, participant_id)
@@ -542,7 +549,7 @@ async def send_invitations(
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     """Queue invitations. `not_activated` re-sends to everyone invited who has not signed in
-    yet: each gets a new password and the previous one stops working."""
+    yet: each gets a new link and the previous one stops working."""
     no_store(response)
     async with db.begin():
         programme = await active_programme(db)
@@ -585,9 +592,9 @@ async def send_to(
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     """Invite people by email address in one step. Addresses not on the list yet become
-    participants, and everyone listed gets a real invitation with their own password.
-    Someone invited before gets a new password (the old one stops working). All or
-    nothing: one invalid address sends nothing."""
+    participants, and everyone listed gets a real invitation with their own sign-in link.
+    Someone invited before gets a new link (the old one stops working). All or nothing:
+    one invalid address sends nothing."""
     no_store(response)
     async with db.begin():
         programme = await active_programme(db)

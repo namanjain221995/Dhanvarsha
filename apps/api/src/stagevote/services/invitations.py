@@ -1,18 +1,17 @@
-"""Invitation emails: the organiser's invitation creates the participant's sign-in.
+"""Invitation emails: the organiser's invitation creates the participant's sign-in link.
 
-Each invitation generates a random password, stores only its Argon2id hash as the
-participant's password, and encrypts the plaintext into the email job so a delivery retry
-sends the same password. The participant signs in with their email address and that
-password; there is no activation step, sign-up or self-service reset. The worker purges
-the ciphertext once the job is accepted, superseded or past `INVITATION_RETRY_HOURS`.
+Each invitation generates a random link token (256 bits), stores only its SHA-256 on the
+participant, and encrypts the plaintext into the email job so a delivery retry sends the
+same link. The participant signs in by opening that link and tapping the button; there is
+no password, activation step, sign-up or self-service reset. The worker purges the
+ciphertext once the job is accepted, superseded or past `INVITATION_RETRY_HOURS`.
 
-Sending a new invitation replaces the password (the previous one stops working) and
-signs the participant out of any open browser session.
+Sending a new invitation replaces the link (the previous one stops working), releases the
+browser the old link was bound to and signs the participant out of every open session.
 """
 
 from __future__ import annotations
 
-import asyncio
 import uuid
 from datetime import datetime, timedelta
 
@@ -22,8 +21,19 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..config import get_settings
 from ..errors import conflict
 from ..models import EmailJob, Participant, ParticipantSession
-from ..security import encrypt_payload, hash_password, new_invitation_password
+from ..security import encrypt_payload, new_token, token_hash
 from ..state import Actor, audit, emit
+
+# Key of the link token in an invitation job's encrypted payload. Jobs created before
+# sign-in links carry {"password": ...} instead, and delivery refuses to send them.
+LINK_TOKEN_KEY = "link_token"  # noqa: S105 - a dictionary key, not a credential
+
+
+def sign_in_link(base_url: str, token: str) -> str:
+    """The personal link in an invitation email. The token is in the URL fragment, which
+    browsers never send to a server or put in a Referer header; only the sign-in page's
+    script reads it, and posts it when the participant taps the button."""
+    return f"{base_url}/enter#token={token}"
 
 
 def _message_id(job_id: uuid.UUID) -> str:
@@ -31,7 +41,7 @@ def _message_id(job_id: uuid.UUID) -> str:
 
 
 async def supersede_jobs(db: AsyncSession, participant_id: uuid.UUID, kinds: tuple[str, ...]) -> int:
-    """Stop pending emails that would carry an outdated password."""
+    """Stop pending emails that would carry an outdated sign-in link."""
     result = await db.execute(
         update(EmailJob)
         .where(
@@ -72,49 +82,61 @@ async def revoke_participant_sessions(
     return len(ids)
 
 
+async def replace_link(db: AsyncSession, participant: Participant, now: datetime) -> tuple[str, int]:
+    """Give the participant a new sign-in link token: returns (token, sessions signed out).
+
+    The caller holds the participant lock. The previous link stops working at once, the
+    browser it was bound to is released, pending emails that carry it are superseded and
+    every open session ends (each one named in the live signal).
+    """
+    await supersede_jobs(db, participant.id, ("invitation",))
+    signed_out = await revoke_participant_sessions(db, participant, "credentials_reissued", now)
+    token = new_token()
+    participant.link_token_hash = token_hash(token)
+    participant.link_issued_at = now
+    participant.link_device_hash = None
+    participant.link_bound_at = None
+    participant.credential_version += 1
+    participant.current_invitation_id = uuid.uuid4()
+    return token, signed_out
+
+
 async def issue_invitations(
     db: AsyncSession,
     participants: list[Participant],
     actor: Actor,
     now: datetime,
 ) -> list[EmailJob]:
-    """Give each participant a new password and queue the invitation that carries it.
+    """Give each participant a new sign-in link and queue the invitation that carries it.
 
     Callers must hold FOR UPDATE locks on the participant rows. Disabled accounts are
-    refused. For someone invited before, the previous password stops working, pending
-    invitation emails with the old password are superseded, and open sessions end.
+    refused. For someone invited before, the previous link stops working and its device is
+    released, pending invitation emails with the old link are superseded, and open
+    sessions end.
     """
     settings = get_settings()
     for participant in participants:
         if participant.disabled_at is not None:
             raise conflict("ACCOUNT_DISABLED", "Enable this account before inviting it.")
-    passwords = [new_invitation_password() for _ in participants]
-    hashes = await asyncio.gather(*(hash_password(p) for p in passwords))
     retry_until = now + timedelta(hours=settings.invitation_retry_hours)
     jobs: list[EmailJob] = []
     signed_out = 0
-    for participant, password, hashed in zip(participants, passwords, hashes, strict=True):
-        await supersede_jobs(db, participant.id, ("invitation",))
-        if participant.password_hash is not None:
-            # The password is being replaced: any session opened with the old one ends.
-            signed_out += await revoke_participant_sessions(db, participant, "credentials_reissued", now)
-        invitation_id = uuid.uuid4()
-        participant.password_hash = hashed
-        participant.credential_version += 1
-        participant.current_invitation_id = invitation_id
+    for participant in participants:
+        token, ended = await replace_link(db, participant, now)
+        signed_out += ended
         participant.last_invited_at = now
         job_id = uuid.uuid4()
         job = EmailJob(
             id=job_id,
             programme_id=participant.programme_id,
             participant_id=participant.id,
-            invitation_id=invitation_id,
+            invitation_id=participant.current_invitation_id,
             kind="invitation",
             recipient=participant.email,
             status="queued",
             max_attempts=settings.email_max_attempts,
             message_id=_message_id(job_id),
-            secret_ciphertext=encrypt_payload({"password": password}),
+            secret_ciphertext=encrypt_payload({LINK_TOKEN_KEY: token}),
             secret_expires_at=retry_until,
             created_by_admin_id=actor.id if actor.type == "admin" else None,
         )

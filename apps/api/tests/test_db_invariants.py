@@ -19,6 +19,7 @@ from stagevote.db import sessionmaker
 INSUFFICIENT_PRIVILEGE = "42501"
 UNIQUE_VIOLATION = "23505"
 FOREIGN_KEY_VIOLATION = "23503"
+CHECK_VIOLATION = "23514"
 VOTES_IMMUTABLE = "SV001"
 
 
@@ -108,6 +109,31 @@ async def test_several_live_sessions_per_participant_but_tokens_stay_unique(
             insert, id=uuid.uuid4(), p=voter.info.id, prog=world.programme_id, h=second_hash
         )
     assert pg_error(caught.value).sqlstate == UNIQUE_VIOLATION
+
+
+async def test_sign_in_links_are_unique_and_activation_needs_a_credential(
+    world: World, factory: Factory
+) -> None:
+    first = await world.participant(login=False)
+    second = await world.participant(login=False)
+    # Two participants can never hold the same link.
+    with pytest.raises(IntegrityError) as caught:
+        await factory.execute(
+            "UPDATE participants SET link_token_hash = (SELECT link_token_hash FROM participants "
+            "WHERE id = :a) WHERE id = :b",
+            a=first.info.id,
+            b=second.info.id,
+        )
+    error = pg_error(caught.value)
+    assert (error.sqlstate, error.constraint_name) == (UNIQUE_VIOLATION, "uq_participants_link_token_hash")
+    # Activated means signed in once, which needs a link (or a password from before links).
+    with pytest.raises(IntegrityError) as caught:
+        await factory.execute(
+            "UPDATE participants SET link_token_hash = NULL, password_hash = NULL WHERE id = :p",
+            p=first.info.id,
+        )
+    error = pg_error(caught.value)
+    assert (error.sqlstate, error.constraint_name) == (CHECK_VIOLATION, "ck_participants_activation")
 
 
 async def test_vote_rows_must_be_internally_consistent(world: World, factory: Factory) -> None:

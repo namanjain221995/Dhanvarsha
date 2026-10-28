@@ -20,14 +20,14 @@ from ..mailer.providers import make_provider
 from ..mailer.templates import (
     DEFAULT_INVITATION,
     PLACEHOLDERS,
-    PREVIEW_PASSWORD,
+    PREVIEW_LINK_TOKEN,
     Wording,
     render_invitation,
     unknown_placeholders,
 )
 from ..models import EmailAttempt, EmailJob, EmailTemplate
 from ..services.email_templates import invitation_template, programme_context, wording_of
-from ..services.invitations import queue_test_email
+from ..services.invitations import queue_test_email, sign_in_link
 from ..services.participants import normalize_email
 from ..services.programmes import active_programme
 from ..state import audit, emit
@@ -241,12 +241,16 @@ async def preview_invitation(
     """Render (unsaved) wording for an example participant. Nothing is stored or sent."""
     no_store(response)
     wording = _checked(body)
+    settings = get_settings()
     async with db.begin():
         programme = await active_programme(db)
-        context, logo_key = await programme_context(db, programme, get_settings())
+        context, logo_key = await programme_context(db, programme, settings)
     if logo_key:
         context["logo_src"] = f"/media/{logo_key}"
-    context |= {"display_name": "Asha Rao", "user_id": "asha.rao@example.com", "password": PREVIEW_PASSWORD}
+    if context["theme"] == "stage":
+        context["banner_src"] = "/api/v1/public/email-banner.gif"
+    # The example link signs nobody in, like the one in preview emails.
+    context |= {"display_name": "Asha Rao", "link": sign_in_link(settings.app_base_url, PREVIEW_LINK_TOKEN)}
     subject, body_text, body_html = render_invitation(context, wording)
     return {"subject": subject, "text": body_text, "html": body_html}
 
@@ -286,7 +290,7 @@ async def send_test(
     ctx: AdminContext = Depends(current_admin),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
-    """Email a preview of the invitation (saved wording, example password) to each address.
+    """Email a preview of the invitation (saved wording, example link) to each address.
 
     It goes through the same queue and provider as real invitations, one message per
     recipient, so it also proves that the provider accepts mail.
@@ -432,7 +436,7 @@ async def retry_job(
         if job.kind == "invitation" and job.secret_ciphertext is None:
             raise conflict(
                 "CREDENTIAL_GONE",
-                "This email's password copy has expired or been replaced. Send a new invitation instead.",
+                "This email's sign-in link copy has expired or been replaced. Send a new invitation instead.",
             )
         job.status = "queued"
         job.next_attempt_at = func.now()

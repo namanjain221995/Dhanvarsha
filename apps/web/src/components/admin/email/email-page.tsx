@@ -120,7 +120,7 @@ export function EmailPage() {
         tone: 'success',
         message: result.requeued
           ? `${plural(result.requeued, 'failed email')} queued again.`
-          : 'Nothing was queued. The failed emails no longer have their password copy; send the invitations again instead.',
+          : 'Nothing was queued. The failed emails no longer have their sign-in link copy; send the invitations again instead.',
       })
       refresh()
     } catch (error) {
@@ -168,7 +168,7 @@ export function EmailPage() {
         onInvited={(result) => {
           const parts = [`Invitations queued for ${result.recipients.join(', ')}.`]
           if (result.created) parts.push(`${plural(result.created, 'new participant')} added.`)
-          if (result.resent) parts.push(`${plural(result.resent, 'person', 'people')} invited before got a new password.`)
+          if (result.resent) parts.push(`${plural(result.resent, 'person', 'people')} invited before got a new link.`)
           if (result.disabled.length) parts.push(`Not sent to disabled accounts: ${result.disabled.join(', ')}.`)
           flash.show({ tone: result.disabled.length ? 'warning' : 'success', message: parts.join(' ') })
           refresh()
@@ -321,7 +321,7 @@ export function EmailPage() {
           key={dialog.key}
           open
           title="Retry all failed emails?"
-          description={`${plural(failedCount, 'failed email')} will be queued again where possible. Emails whose password copy expired or was replaced are skipped; send those people a new invitation. Emails with an unknown outcome are never retried in bulk.`}
+          description={`${plural(failedCount, 'failed email')} will be queued again where possible. Emails whose sign-in link copy expired or was replaced are skipped; send those people a new invitation. Emails with an unknown outcome are never retried in bulk.`}
           confirmLabel="Retry failed emails"
           busy={busy === 'all'}
           error={dialogError}
@@ -536,7 +536,7 @@ function JobStatus({ job, timeZone }: { job: EmailJob; timeZone: string }) {
         </p>
       ) : null}
       {retryable && credentialGone ? (
-        <p className="mt-0.5 text-sm text-gold-deep">The password copy for this email expired or was replaced. Send the invitation again instead.</p>
+        <p className="mt-0.5 text-sm text-gold-deep">The sign-in link copy for this email expired or was replaced. Send the invitation again instead.</p>
       ) : null}
     </>
   )

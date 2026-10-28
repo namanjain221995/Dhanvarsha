@@ -247,7 +247,7 @@ async def test_receipts_survive_close_logout_and_new_login(world: World) -> None
 
     assert (await voter.logout()).status_code == 200
     assert_error(await voter.receipt(first.id), 401, "UNAUTHENTICATED")
-    resp = await voter.login()
+    resp = await voter.enter()  # the same browser opens the invitation link again
     assert resp.status_code == 200 and resp.json()["reused_session"] is False
     assert (await voter.receipt(first.id)).json() == {"receipt": receipt}
     replay = await voter.vote(first.id, first.nominee_ids[1], key="before-close")

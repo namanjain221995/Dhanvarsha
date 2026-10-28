@@ -1,38 +1,59 @@
 """Participant and admin authentication.
 
-Participants sign in with their email address (or user code) and the password from their
-latest invitation email. There is no activation step and no self-service reset: an
-organiser re-sends the invitation, which replaces the password.
+Participants sign in with the personal link from their latest invitation email: there is
+no password, activation step or self-service reset. The link carries a 256-bit token of
+which only the SHA-256 is stored. Opening the link only shows the sign-in page (and asks
+`check_link` what to offer); the participant's tap on the button posts the token to
+`enter_with_link`, so mail scanners that merely open links use nothing up.
 
-Single active session (invariant 6): login locks the participant row FOR UPDATE, so
-concurrent logins for one account run one after another. The second sees the first's
-session and is rejected. A partial unique index on non-revoked sessions backs this up.
+One browser per link: the first browser that enters with a link is bound to it, by the
+SHA-256 of that browser's long-lived device cookie, and only that browser can enter with
+the link again (after signing out, or once its session has expired). Any other browser is
+refused with LINK_IN_USE. An organiser re-sends the invitation to replace the link, which
+releases the binding and signs the participant out everywhere. The device cookie on its
+own grants nothing: requests and WebSockets are authenticated by the session cookie alone.
+
+Entering locks the participant row FOR UPDATE, so two browsers tapping the same link at
+once run one after another: the first is bound, the second is refused.
 """
 
 from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta
 
-from sqlalchemy import or_, select, text, update
+from sqlalchemy import func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import get_settings
 from ..errors import AppError
 from ..models import AdminSession, AdminUser, Participant, ParticipantSession, Programme
 from ..ratelimit import Limit, clear, enforce, hit
-from ..security import new_token, token_hash, verify_password
+from ..security import is_token_shaped, new_token, token_hash, verify_password
 from ..state import Actor, audit, emit
-from .participants import normalize_email
-from .programmes import active_programme, login_phase, server_now
+from .invitations import revoke_participant_sessions
+from .programmes import login_phase, server_now
+
+TOO_MANY_ATTEMPTS = "Too many unsuccessful attempts. Wait a few minutes and try again."
 
 
-def invalid_credentials() -> AppError:
+def link_invalid() -> AppError:
     return AppError(
-        "INVALID_CREDENTIALS",
-        "That user ID or password is not right. Check your invitation email and try again.",
+        "LINK_INVALID",
+        "This sign-in link is not valid any more. Open the newest invitation email, or ask the "
+        "help desk to send you a new one.",
         401,
+    )
+
+
+def link_in_use() -> AppError:
+    return AppError(
+        "LINK_IN_USE",
+        "This link is already in use on another phone or browser. If that was you in another app "
+        "(for example inside your email app), open the link there. Otherwise ask the help desk to "
+        "send you a new invitation.",
+        403,
     )
 
 
@@ -50,95 +71,107 @@ async def lock_participant(db: AsyncSession, participant_id: uuid.UUID) -> Parti
 
 @dataclass
 class LoginResult:
-    token: str | None
+    token: str | None  # the new session token; None when this browser's session was reused
     session_id: uuid.UUID
-    participant: Participant
+    expires_at: datetime
     reused: bool
+    device_token: str | None  # a new device cookie for a browser that sent none
 
 
-def _limits(identifier: str, ip: str) -> tuple[Limit, Limit]:
-    """Per-identifier and per-IP limits.
-
-    The identifier key is the canonical typed identifier, the same whether or not an
-    account exists, so a lockout reveals nothing. The per-IP limit only counts failures
-    and is generous, because a whole venue may share one public address.
-    """
+def _ip_limit(ip: str) -> Limit:
+    """Unknown links per client address. Only failures count, and the limit is generous,
+    because a whole venue may share one public address. A refusal on another device is
+    not a failure here: it is the link's owner (or someone they shared it with)."""
     s = get_settings()
-    canonical = identifier.strip().lower()[:200]
-    return (
-        Limit(f"login:id:{canonical}", s.login_failures_per_account, s.login_failure_window_seconds),
-        Limit(f"login_fail:ip:{ip}", s.login_failures_per_ip, s.login_ip_window_seconds),
-    )
+    return Limit(f"login_fail:ip:{ip}", s.login_failures_per_ip, s.login_ip_window_seconds)
 
 
-async def _find_participant(db: AsyncSession, programme: Programme, identifier: str) -> Participant | None:
-    ident = identifier.strip()
-    if not ident:
+async def _linked_participant(db: AsyncSession, token: str) -> Participant | None:
+    """The participant whose current link carries this token, in the active programme."""
+    if not is_token_shaped(token):
         return None
-    conditions = [Participant.user_code == ident.upper()]
-    if "@" in ident:
-        try:
-            _, key = normalize_email(ident)
-            conditions.append(Participant.email_normalized == key)
-        except ValueError:
-            pass
-    stmt = select(Participant).where(Participant.programme_id == programme.id, or_(*conditions)).limit(1)
-    return (await db.execute(stmt)).scalar_one_or_none()
-
-
-async def _record_failure(db: AsyncSession, limits: tuple[Limit, Limit]) -> None:
-    """The identifier counter was already incremented up front; count the IP failure."""
-    async with db.begin():
-        await hit(db, limits[1])
-
-
-async def _reserve_attempt(db: AsyncSession, limits: tuple[Limit, Limit], message: str) -> None:
-    """Atomically count this attempt against the identifier before checking the password,
-    so parallel guesses cannot all slip past the limit. A success clears the counter."""
-    identifier_limit, ip_limit = limits
-    await enforce(db, ip_limit, message=message)
-    count = await hit(db, identifier_limit)
-    if count > identifier_limit.limit:
-        raise AppError(
-            "RATE_LIMITED",
-            message,
-            429,
-            {"retry_after_seconds": identifier_limit.window_seconds},
-            headers={"Retry-After": str(identifier_limit.window_seconds)},
+    return (
+        await db.execute(
+            select(Participant)
+            .join(Programme, Programme.id == Participant.programme_id)
+            .where(Participant.link_token_hash == token_hash(token), Programme.is_active.is_(True))
         )
+    ).scalar_one_or_none()
 
 
-async def participant_login(
-    db: AsyncSession, identifier: str, password: str, *, presented_token: str | None, ip: str, user_agent: str
+async def check_link(
+    db: AsyncSession, token: str, *, presented_session: str | None, presented_device: str | None, ip: str
+) -> str:
+    """What the sign-in page should offer for this link: ready | signed_in | in_use |
+    invalid | disabled.
+
+    It never binds a browser, opens a session or writes to the audit log; an unknown link
+    only counts against the client address.
+    """
+    limit = _ip_limit(ip)
+    async with db.begin():
+        await enforce(db, limit, message=TOO_MANY_ATTEMPTS)
+        participant = await _linked_participant(db, token)
+        if participant is None:
+            await hit(db, limit)
+            return "invalid"
+        if participant.disabled_at is not None:
+            return "disabled"
+        if presented_session is not None:
+            live = (
+                await db.execute(
+                    select(ParticipantSession.id).where(
+                        ParticipantSession.token_hash == token_hash(presented_session),
+                        ParticipantSession.participant_id == participant.id,
+                        ParticipantSession.revoked_at.is_(None),
+                        ParticipantSession.expires_at > func.clock_timestamp(),
+                    )
+                )
+            ).scalar_one_or_none()
+            if live is not None:
+                return "signed_in"
+        bound = participant.link_device_hash
+        if bound is not None and (presented_device is None or bound != token_hash(presented_device)):
+            return "in_use"
+        return "ready"
+
+
+async def enter_with_link(
+    db: AsyncSession,
+    token: str,
+    *,
+    presented_session: str | None,
+    presented_device: str | None,
+    ip: str,
+    user_agent: str,
 ) -> LoginResult:
-    settings = get_settings()
-    limits = _limits(identifier, ip)
+    """Sign in with a personal link ("Enter the arena").
+
+    The first browser to enter is bound to the link. Coming back from that browser reuses
+    its live session or opens a new one; any other browser is refused with LINK_IN_USE.
+    Outside the login window nothing is bound, so an early tap never uses the link up.
+    """
+    limit = _ip_limit(ip)
     async with db.begin():
-        programme = await active_programme(db)
-        participant = await _find_participant(db, programme, identifier)
-        await _reserve_attempt(
-            db, limits, "Too many unsuccessful attempts. Wait a few minutes and try again."
-        )
-
+        await enforce(db, limit, message=TOO_MANY_ATTEMPTS)
+        participant = await _linked_participant(db, token)
+        if participant is None:
+            await hit(db, limit)  # committed with this transaction
     if participant is None:
-        await verify_password(None, password)  # equalise timing for unknown accounts
-        await _record_failure(db, limits)
-        raise invalid_credentials()
+        raise link_invalid()
 
-    verified_version = participant.credential_version
-    if not await verify_password(participant.password_hash, password):
-        await _record_failure(db, limits)
-        raise invalid_credentials()
-
+    # A browser that sent no device cookie gets one now; it is bound only if entry succeeds.
+    device_token = presented_device or new_token()
+    result: LoginResult | None = None
     async with db.begin():
         locked = await lock_participant(db, participant.id)
-        if locked.credential_version != verified_version:
-            raise invalid_credentials()
+        if locked.link_token_hash != token_hash(token):
+            raise link_invalid()  # a newer invitation replaced the link meanwhile
         if locked.disabled_at is not None:
             raise AppError(
                 "ACCOUNT_DISABLED", "This account has been disabled. Contact the organisers for help.", 403
             )
-        programme_row = (
+        programme = (
             await db.execute(
                 select(Programme)
                 .where(Programme.id == locked.programme_id)
@@ -146,69 +179,118 @@ async def participant_login(
             )
         ).scalar_one()
         now = await server_now(db)
-        phase = login_phase(programme_row, now)
+        phase = login_phase(programme, now)
         if phase == "before_open":
             raise AppError(
                 "LOGIN_NOT_OPEN",
                 "Sign-in has not opened yet.",
                 403,
-                {
-                    "opens_at": programme_row.login_opens_at.isoformat()
-                    if programme_row.login_opens_at
-                    else None
-                },
+                {"opens_at": programme.login_opens_at.isoformat() if programme.login_opens_at else None},
             )
         if phase == "closed":
             raise AppError("LOGIN_CLOSED", "Sign-in for this programme has closed.", 403)
 
-        # A voter may be signed in on several devices at once. Votes stay one per ballot per
-        # participant, whichever device sends them. Sessions that have expired are revoked here.
-        active = (
-            (
-                await db.execute(
-                    select(ParticipantSession).where(
-                        ParticipantSession.participant_id == locked.id,
-                        ParticipantSession.revoked_at.is_(None),
-                    )
+        actor = Actor("participant", locked.id, locked.user_code, ip)
+        device_hash = token_hash(device_token)
+        if locked.link_device_hash is not None and locked.link_device_hash != device_hash:
+            # Recorded for the help desk, then refused once this transaction has committed.
+            # Never counted against the client address.
+            await audit(
+                db,
+                actor,
+                "participant.link_refused",
+                programme_id=locked.programme_id,
+                target_type="participant",
+                target_id=locked.id,
+                details={"reason": "other_device"},
+            )
+        else:
+            if locked.link_device_hash is None:
+                # The first browser to enter with this link keeps it.
+                locked.link_device_hash = device_hash
+                locked.link_bound_at = now
+                await audit(
+                    db,
+                    actor,
+                    "participant.link_bound",
+                    programme_id=locked.programme_id,
+                    target_type="participant",
+                    target_id=locked.id,
+                    details={"user_agent": user_agent[:200]},
+                )
+            result = await _open_session(
+                db, locked, actor, presented_session=presented_session, now=now, user_agent=user_agent
+            )
+            if presented_device is None:
+                result.device_token = device_token
+    if result is None:
+        raise link_in_use()
+    return result
+
+
+async def _open_session(
+    db: AsyncSession,
+    locked: Participant,
+    actor: Actor,
+    *,
+    presented_session: str | None,
+    now: datetime,
+    user_agent: str,
+) -> LoginResult:
+    """Reuse the browser's live session, or end every other one and open a new one.
+    The caller holds the participant lock."""
+    settings = get_settings()
+    active = (
+        (
+            await db.execute(
+                select(ParticipantSession).where(
+                    ParticipantSession.participant_id == locked.id,
+                    ParticipantSession.revoked_at.is_(None),
                 )
             )
-            .scalars()
-            .all()
         )
-        presented_hash = token_hash(presented_token) if presented_token else None
-        for existing in active:
-            if existing.expires_at <= now:
-                existing.revoked_at = now
-                existing.revoke_reason = "expired"
-            elif presented_hash is not None and existing.token_hash == presented_hash:
-                # The same browser signing in again keeps its session.
-                await clear(db, limits[0].key)
-                return LoginResult(None, existing.id, locked, reused=True)
-        await db.flush()
+        .scalars()
+        .all()
+    )
+    presented_hash = token_hash(presented_session) if presented_session else None
+    reused: ParticipantSession | None = None
+    for existing in active:
+        if existing.expires_at <= now:
+            existing.revoked_at = now
+            existing.revoke_reason = "expired"
+        elif presented_hash is not None and existing.token_hash == presented_hash:
+            reused = existing
+    await db.flush()
+    if reused is not None:
+        # The same browser entering again keeps its session.
+        return LoginResult(None, reused.id, reused.expires_at, reused=True, device_token=None)
 
-        token = new_token()
-        session = ParticipantSession(
-            id=uuid.uuid4(),
-            participant_id=locked.id,
-            programme_id=locked.programme_id,
-            token_hash=token_hash(token),
-            expires_at=now + timedelta(hours=settings.session_ttl_hours),
-            user_agent=user_agent[:200],
-        )
-        db.add(session)
-        await db.flush()
-        if locked.activated_at is None:
-            locked.activated_at = now  # first sign-in
-        await clear(db, limits[0].key)
-        await audit(
-            db,
-            Actor("participant", locked.id, locked.user_code, ip),
-            "participant.login",
-            programme_id=locked.programme_id,
-            target_type="session",
-            target_id=session.id,
-        )
-        return LoginResult(token, session.id, locked, reused=False)
+    # A link has one browser, so any other live session (for example one whose response
+    # never reached the browser) ends here; the live signal names exactly those sessions.
+    await revoke_participant_sessions(db, locked, "replaced", now)
+    token = new_token()
+    session = ParticipantSession(
+        id=uuid.uuid4(),
+        participant_id=locked.id,
+        programme_id=locked.programme_id,
+        token_hash=token_hash(token),
+        expires_at=now + timedelta(hours=settings.session_ttl_hours),
+        user_agent=user_agent[:200],
+    )
+    db.add(session)
+    await db.flush()
+    if locked.activated_at is None:
+        locked.activated_at = now  # first sign-in
+    await audit(
+        db,
+        actor,
+        "participant.login",
+        programme_id=locked.programme_id,
+        target_type="session",
+        target_id=session.id,
+        details={"via": "link"},
+    )
+    return LoginResult(token, session.id, session.expires_at, reused=False, device_token=None)
 
 
 async def participant_logout(db: AsyncSession, token: str | None) -> None:
@@ -236,6 +318,12 @@ async def participant_logout(db: AsyncSession, token: str | None) -> None:
 
 
 # ---- admins -------------------------------------------------------------------
+
+
+async def _record_failure(db: AsyncSession, limits: tuple[Limit, Limit]) -> None:
+    """Count a failed organiser sign-in against the client address."""
+    async with db.begin():
+        await hit(db, limits[1])
 
 
 async def admin_login(

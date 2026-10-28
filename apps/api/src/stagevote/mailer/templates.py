@@ -3,8 +3,8 @@
 Organisers can edit the invitation's wording (subject, heading, opening message, closing
 note and button text). Their text is never treated as a template: it is HTML-escaped and
 only the placeholders in PLACEHOLDERS are substituted, so it cannot inject markup or reach
-Jinja. The sign-in details, the button link and the footer always come from the fixed
-template, so an edit cannot remove them.
+Jinja. The button's personal sign-in link, the note about that link and the footer always
+come from the fixed template, so an edit cannot remove them.
 """
 
 from __future__ import annotations
@@ -46,9 +46,15 @@ PLACEHOLDERS: dict[str, str] = {
 }
 _TOKEN = re.compile(r"\{([^{}\s]{1,40})\}")
 
-# Shown in previews instead of a real password. It never works for signing in.
-PREVIEW_PASSWORD = "XXXX-XXXX-XXXX"  # noqa: S105 - a visible example, not a credential
+# Previews link to /enter#token=example instead of a personal link. It is not a token at
+# all, so it never signs anyone in; the sign-in page says it comes from a preview email.
+PREVIEW_LINK_TOKEN = "example"  # noqa: S105 - a visible example, not a credential
 LOGO_CID = "programme-logo@stagevote"
+# The gold look's animated banner: night sky, the ticket emblem, falling coins and twinkling
+# stars (made by scripts/make-email-banner.py). Mail apps do not run CSS animation, so the
+# motion is a GIF; Outlook on Windows shows its first frame, which is a full picture.
+STAGE_BANNER_CID = "stage-banner@stagevote"
+_YEAR = re.compile(r"^(.*\S)\s+((?:19|20)\d{2})$")
 # The logo keeps its own shape: this height, and a width up to LOGO_MAX_WIDTH.
 LOGO_HEIGHT = 56
 LOGO_MAX_WIDTH = 200
@@ -71,15 +77,15 @@ DEFAULT_INVITATION = Wording(
     heading="You're invited to vote",
     intro=(
         "Hi {name},\n\n"
-        "You're invited to vote at {programme}. Your account is ready: sign in with the details below."
+        "You're invited to vote at {programme}. Tap the button below to enter. No password needed."
     ),
     closing=(
-        "Keep this email: you need the password to sign in on the day. You can sign in on more "
-        "than one device, and you vote once per round.\n\n"
-        "If you lose this email or get stuck, ask the organisers to send it again. The new email has a "
-        "new password and the old one stops working."
+        "Keep this email: the button signs you in, and it works again on the same phone whenever "
+        "you come back.\n\n"
+        "If you change phone or get stuck, ask {help_contact} to send you a new invitation. The old "
+        "link then stops working."
     ),
-    button_label="Open the voting page",
+    button_label="Enter the arena",
 )
 
 
@@ -153,9 +159,28 @@ def render_invitation(
         "preview": preview,
     }
     full.setdefault("logo_src", None)
+    full.setdefault("banner_src", None)
     text = _text.get_template("invitation.txt").render(full)
-    html = _html.get_template("invitation.html").render(full)
+    # The gold look has its own night-blue design; every other accent uses the light one.
+    page = "invitation_stage.html" if full.get("theme") == "stage" else "invitation.html"
+    html = _html.get_template(page).render(full)
     return subject, text, html
+
+
+def split_title(name: str) -> tuple[str, str | None]:
+    """'Dhanvarsha 2026' -> ('Dhanvarsha', '2026'): the year is shown on its own line."""
+    match = _YEAR.match(name.strip())
+    return (match.group(1), match.group(2)) if match else (name, None)
+
+
+_banner: bytes | None = None
+
+
+def stage_banner_gif() -> bytes:
+    global _banner
+    if _banner is None:
+        _banner = (_DIR / "stage-banner.gif").read_bytes()
+    return _banner
 
 
 _logo_cache: dict[str, bytes] = {}

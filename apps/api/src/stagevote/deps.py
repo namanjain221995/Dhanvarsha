@@ -79,19 +79,29 @@ class AdminContext:
         return Actor("admin", self.admin_id, self.email, self.ip)
 
 
+# Voters see these word for word. Participants sign in only with the button in their
+# invitation email, so the text never mentions a password or a user ID.
+NOT_SIGNED_IN = "Open your invitation email and tap the button to sign in."
+SIGNED_OUT = "You were signed out. Open your invitation email and tap the button to come back."
 REVOKE_MESSAGES = {
-    "logout": "You signed out. Sign in again to continue.",
-    "admin_reset": "Your session was reset by the organisers. Sign in again to continue.",
-    "credentials_reissued": "The organisers sent you a new invitation. Sign in with the password from that email.",
-    "password_reset": "Your password was changed. Sign in with your new password.",
+    "logout": "You signed out. To come back, open your invitation email on this device and tap the button.",
+    "admin_reset": "The organisers signed you out. To come back, open your invitation email on this device and tap the button.",
+    "credentials_reissued": "The organisers sent you a new invitation. Open the newest invitation email and tap the button.",
+    "replaced": "You signed in again on this device, so this older sign-in ended.",
+    # From the retired password flow; kept for sessions that ended that way.
+    "password_reset": SIGNED_OUT,
     "disabled": "This account has been disabled. Contact the organisers for help.",
-    "expired": "Your session expired. Sign in again to continue.",
+    "expired": "Your sign-in has ended. Open your invitation email on this device and tap the button to come back.",
 }
+
+
+def revoke_message(reason: str) -> str:
+    return REVOKE_MESSAGES.get(reason, SIGNED_OUT)
 
 
 async def load_participant_session(db: AsyncSession, token: str | None, ip: str) -> ParticipantContext:
     if not token:
-        raise unauthenticated()
+        raise unauthenticated(NOT_SIGNED_IN)
     row = (
         await db.execute(
             text(
@@ -108,18 +118,16 @@ async def load_participant_session(db: AsyncSession, token: str | None, ip: str)
         )
     ).first()
     if row is None:
-        raise unauthenticated()
+        raise unauthenticated(NOT_SIGNED_IN)
     if row.revoked_at is not None:
         reason = row.revoke_reason or "logout"
-        raise AppError(
-            "SESSION_REVOKED", REVOKE_MESSAGES.get(reason, REVOKE_MESSAGES["logout"]), 401, {"reason": reason}
-        )
+        raise AppError("SESSION_REVOKED", revoke_message(reason), 401, {"reason": reason})
     if row.expired:
         raise AppError("SESSION_EXPIRED", REVOKE_MESSAGES["expired"], 401)
     if row.disabled_at is not None:
         raise AppError("ACCOUNT_DISABLED", REVOKE_MESSAGES["disabled"], 403)
     if row.activated_at is None:
-        raise unauthenticated()
+        raise unauthenticated(NOT_SIGNED_IN)
     if row.stale_seen:
         await db.execute(
             text(

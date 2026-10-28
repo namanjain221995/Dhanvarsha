@@ -6,7 +6,10 @@ import uuid
 
 from helpers import (
     ADMIN_API,
+    ADMIN_COOKIE,
     API,
+    DEVICE_COOKIE,
+    PARTICIPANT_COOKIE,
     ParticipantClient,
     World,
     assert_error,
@@ -115,7 +118,8 @@ async def test_cross_site_requests_are_refused(world: World) -> None:
         attacker = browser(origin)
         assert_error(await attacker.vote(ballot.id, ballot.nominee_ids[0]), 403, "BAD_ORIGIN")
         assert_error(await attacker.logout(), 403, "BAD_ORIGIN")
-    assert_error(await browser("https://evil.example").login(), 403, "BAD_ORIGIN")
+        assert_error(await attacker.enter(), 403, "BAD_ORIGIN")
+        assert_error(await attacker.check(), 403, "BAD_ORIGIN")
     admin = await world.admin()
     resp = await admin.http.post(
         f"{ADMIN_API}/live/close",
@@ -129,6 +133,37 @@ async def test_cross_site_requests_are_refused(world: World) -> None:
     # Without an Origin header, a same-site Referer is accepted (older browsers).
     same_site = browser(None, referer="http://testserver/rounds/1")
     assert (await same_site.vote(ballot.id, ballot.nominee_ids[0])).status_code == 201
+
+
+async def test_a_cross_site_tap_is_refused_and_binds_nothing(world: World) -> None:
+    person = await world.participant(login=False)
+    hostile = world.browser(person.info, origin="https://evil.example")
+    assert_error(await hostile.enter(), 403, "BAD_ORIGIN")
+    assert hostile.token is None and hostile.device is None
+    assert (
+        await world.factory.fetchval(
+            "SELECT link_device_hash FROM participants WHERE id = :p", p=person.info.id
+        )
+        is None
+    )
+    assert (await person.enter()).status_code == 200  # the real browser is still the first
+
+
+async def test_the_device_cookie_alone_signs_nobody_in(world: World) -> None:
+    voter = await world.participant()
+    device = voter.device
+    assert device is not None
+    for name in (DEVICE_COOKIE, PARTICIPANT_COOKIE, ADMIN_COOKIE):
+        forged = world.http()
+        forged.cookies.set(name, device)
+        assert_error(await forged.get(f"{API}/me/snapshot"), 401, "UNAUTHENTICATED")
+        assert_error(await forged.get(f"{ADMIN_API}/me"), 401, "UNAUTHENTICATED")
+        assert (await forged.get(f"{API}/auth/session")).json()["signed_in"] is False
+    # With the device cookie but without the link, there is nothing to enter with.
+    keeper = world.http()
+    keeper.cookies.set(DEVICE_COOKIE, device)
+    resp = await keeper.post(f"{API}/auth/link", json={"token": device})
+    assert_error(resp, 401, "LINK_INVALID")
 
 
 async def test_missing_or_wrong_csrf_token_is_refused(world: World) -> None:

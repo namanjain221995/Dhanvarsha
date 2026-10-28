@@ -1,19 +1,26 @@
-"""Organiser-edited invitation wording, previews by email and the embedded programme logo."""
+"""Organiser-edited invitation wording, previews by email and the embedded programme logo.
+
+Every email is rendered from one of three contexts (a real invitation, a preview email
+and the console preview); each is rendered here, since the templates refuse undefined
+variables.
+"""
 
 from __future__ import annotations
 
 import hashlib
 import io
+import re
 import uuid
 from typing import Any
 
 from PIL import Image
 
-from helpers import World, assert_error, drain, secret_of
+from helpers import API, World, assert_error, drain, secret_of
 from stagevote.config import get_settings
 from stagevote.mailer.providers import OutgoingEmail, RecordingProvider, build_mime
-from stagevote.mailer.templates import LOGO_CID, PREVIEW_PASSWORD
+from stagevote.mailer.templates import LOGO_CID, PREVIEW_LINK_TOKEN, STAGE_BANNER_CID, split_title
 from stagevote.services.assets import store_generated_image
+from stagevote.services.invitations import sign_in_link
 from stagevote.worker.runner import Worker
 
 TEMPLATE = "/email/templates/invitation"
@@ -26,9 +33,38 @@ WORDING: dict[str, Any] = {
 }
 
 
+# Fixed under the button in every invitation; organisers cannot edit or remove it.
+NOTE = (
+    "This button is your personal pass. It signs you in on the first phone or computer you open it "
+    "on, and again on that same device whenever you come back. On any other device it will not "
+    "open, so please don't forward this email."
+)
+FALLBACK = "Button not working? Copy this link into the browser on the phone you will use:"
+
+
 async def tick(worker: Worker) -> None:
     await worker.email_tick()
     await drain(worker)
+
+
+def link_of(token: str) -> str:
+    return sign_in_link(get_settings().app_base_url, token)
+
+
+def tokens_in(*parts: str) -> set[str]:
+    """Every sign-in link token that appears in the given text or HTML."""
+    return {m for part in parts for m in re.findall(r"/enter#token=([A-Za-z0-9_-]+)", part)}
+
+
+def assert_sign_in_block(text: str, html: str, link: str) -> None:
+    """The fixed part of every invitation: the button with its link, the note and the
+    fallback, and no user ID or password card."""
+    assert f"Enter the arena: {link}" in text
+    assert f'<a href="{link}"' in html and f">{link}</a>" in html
+    assert NOTE in text and NOTE in html
+    assert FALLBACK in html
+    for part in (text, html):
+        assert "User ID" not in part and "Password:" not in part and ">Password<" not in part
 
 
 async def programme_row(world: World) -> Any:
@@ -47,10 +83,10 @@ async def invite_and_send(
         "SELECT secret_ciphertext FROM email_jobs WHERE participant_id = :p AND status = 'queued'",
         p=person.info.id,
     )
-    password = secret_of(job.secret_ciphertext, "password")
+    token = secret_of(job.secret_ciphertext)
     await tick(worker)
     [message] = [m for m in provider.sent if m.to == person.info.email]
-    return person, password, message
+    return person, token, message
 
 
 async def test_built_in_wording_is_used_until_an_organiser_saves_their_own(
@@ -66,17 +102,22 @@ async def test_built_in_wording_is_used_until_an_organiser_saves_their_own(
         "{help_contact}",
     }
 
+    assert current["defaults"]["button_label"] == "Enter the arena"
+
     programme = await programme_row(world)
-    person, password, message = await invite_and_send(world, worker, provider)
+    _, token, message = await invite_and_send(world, worker, provider)
     assert message.subject == f"Your invitation to vote at {programme.name}"
     assert "Hi Test Participant," in message.text
-    for expected in (person.info.email, password, f"{get_settings().app_base_url}/"):
-        assert expected in message.text and expected in message.html
+    assert "Tap the button below to enter. No password needed." in message.text
+    assert_sign_in_block(message.text, message.html, link_of(token))
+    assert ">Enter the arena</a>" in message.html
+    assert tokens_in(message.text, message.html) == {token}
+    assert "more than one device" not in message.text
     assert "test message" not in (message.text + message.html).lower()
     assert "Preview" not in message.subject and "example and does not work" not in message.text
 
 
-async def test_saved_wording_reaches_invitations_but_never_removes_the_sign_in_details(
+async def test_saved_wording_reaches_invitations_but_never_removes_the_sign_in_link(
     world: World, worker: Worker, provider: RecordingProvider
 ) -> None:
     admin = await world.admin()
@@ -87,21 +128,17 @@ async def test_saved_wording_reaches_invitations_but_never_removes_the_sign_in_d
     assert saved["wording"]["intro"] == "Dear {name},\n\nBring your phone. <b>bold</b> & ask {help_contact}."
 
     programme = await programme_row(world)
-    person, password, message = await invite_and_send(world, worker, provider)
+    _, token, message = await invite_and_send(world, worker, provider)
     assert message.subject == f"{programme.name}: your voting pass"
     assert "Dear Test Participant," in message.text and "Cheers,\nThe crew" in message.text
     assert "See you on stage, Test Participant" in message.html
     assert f"ask {programme.help_contact or 'the organisers'}." in message.text
     # Organiser text is escaped, never markup.
     assert "<b>bold</b>" not in message.html and "&lt;b&gt;bold&lt;/b&gt; &amp; ask" in message.html
-    assert ">Start voting</a>" in message.html
-    for expected in (
-        person.info.email,
-        password,
-        f"{get_settings().app_base_url}/",
-        "User ID (your email address)",
-    ):
-        assert expected in message.text and expected in message.html
+    # The organiser's button text labels the button; the link, the note and the text
+    # part's fixed "Enter the arena:" line stay.
+    assert ">Start voting</a>" in message.html and ">Enter the arena</a>" not in message.html
+    assert_sign_in_block(message.text, message.html, link_of(token))
 
     audit = await world.factory.fetchrow(
         "SELECT count(*) AS n FROM audit_log WHERE action = 'email.template_saved' AND programme_id = :p",
@@ -142,7 +179,13 @@ async def test_preview_renders_unsaved_wording_without_storing_or_sending(world:
     preview = resp.json()
     programme = await programme_row(world)
     assert preview["subject"] == f"{programme.name}: your voting pass"
-    assert PREVIEW_PASSWORD in preview["html"] and "Dear Asha Rao," in preview["text"]
+    assert "Dear Asha Rao," in preview["text"]
+    # Only the example link, which signs nobody in (the sign-in page explains it).
+    assert_sign_in_block(preview["text"], preview["html"], link_of(PREVIEW_LINK_TOKEN))
+    assert tokens_in(preview["text"], preview["html"]) == {PREVIEW_LINK_TOKEN}
+    assert_error(
+        await world.http().post(f"{API}/auth/link", json={"token": PREVIEW_LINK_TOKEN}), 401, "LINK_INVALID"
+    )
     assert (await admin.get(TEMPLATE)).json()["customised"] is False
     jobs = await world.factory.fetchrow(
         "SELECT count(*) AS n FROM email_jobs WHERE programme_id = :p", p=world.programme_id
@@ -164,10 +207,11 @@ async def test_preview_email_goes_separately_to_each_address(
 
     sent = {m.to: m for m in provider.sent if tag in m.to}
     assert set(sent) == set(body["recipients"])
-    for address, message in sent.items():
+    for message in sent.values():
         assert message.subject.startswith("[Preview] ")
-        assert PREVIEW_PASSWORD in message.text and PREVIEW_PASSWORD in message.html
-        assert address in message.text and "example and does not work" in message.text
+        assert_sign_in_block(message.text, message.html, link_of(PREVIEW_LINK_TOKEN))
+        assert tokens_in(message.text, message.html) == {PREVIEW_LINK_TOKEN}
+        assert "example and does not work" in message.text and "example and does not work" in message.html
         assert "test message" not in (message.text + message.html).lower()
     rows = await world.factory.fetch(
         "SELECT kind, status FROM email_jobs WHERE recipient LIKE :t", t=f"%{tag}%"
@@ -230,9 +274,9 @@ async def test_a_missing_logo_file_sends_the_email_without_an_image(
     world: World, worker: Worker, provider: RecordingProvider
 ) -> None:
     await _set_logo(world, f"{uuid.uuid4().hex}.webp")
-    _, password, message = await invite_and_send(world, worker, provider)
+    _, token, message = await invite_and_send(world, worker, provider)
     assert message.inline_images == [] and "<img" not in message.html
-    assert password in message.text
+    assert link_of(token) in message.text
 
 
 async def _upload(world: World, kind: str, img: Image.Image) -> dict[str, Any]:
@@ -276,3 +320,49 @@ async def test_programme_logo_upload_trims_transparent_margins_and_keeps_its_sha
     width = round(56 * logo["width"] / logo["height"])
     assert f'width="{width}" height="56"' in message.html
     assert "border-radius:14px" not in message.html
+
+
+def test_a_trailing_year_goes_on_its_own_line() -> None:
+    assert split_title("Dhanvarsha 2026") == ("Dhanvarsha", "2026")
+    assert split_title("Dhanvarsha Live") == ("Dhanvarsha Live", None)
+    assert split_title("Event  1999 ") == ("Event", "1999")
+    assert split_title("2026") == ("2026", None)
+
+
+async def test_gold_look_sends_the_night_blue_design_with_the_animated_banner(
+    world: World, worker: Worker, provider: RecordingProvider
+) -> None:
+    await world.factory.execute(
+        "UPDATE programmes SET accent = 'gold', name = 'Dhanvarsha 2026', "
+        "description = 'Your voice. The spotlight.' WHERE id = :p",
+        p=world.programme_id,
+    )
+    _, token, message = await invite_and_send(world, worker, provider)
+    assert_sign_in_block(message.text, message.html, link_of(token))
+    assert tokens_in(message.text, message.html) == {token}
+    # The animated banner travels with the email as an inline GIF.
+    [banner] = [image for image in message.inline_images if image.cid == STAGE_BANNER_CID]
+    assert banner.subtype == "gif" and banner.data.startswith(b"GIF89a")
+    assert f'src="cid:{STAGE_BANNER_CID}"' in message.html
+    # Night blue and gold, with the year on its own line under the name.
+    assert 'bgcolor="#071238"' in message.html
+    assert ">Dhanvarsha</div>" in message.html and ">2026</div>" in message.html
+    assert "Your voice. The spotlight." in message.html
+    assert ">Enter the arena</a>" in message.html
+
+    mime = build_mime(get_settings(), message)
+    [part] = [p for p in mime.walk() if p.get("Content-ID") == f"<{STAGE_BANNER_CID}>"]
+    assert part.get_content_type() == "image/gif" and part.get_content_disposition() == "inline"
+
+
+async def test_console_preview_of_the_gold_look_shows_the_banner(world: World) -> None:
+    await world.factory.execute("UPDATE programmes SET accent = 'gold' WHERE id = :p", p=world.programme_id)
+    admin = await world.admin()
+    resp = await admin.post(f"{TEMPLATE}/preview", WORDING)
+    assert resp.status_code == 200, resp.text
+    html = resp.json()["html"]
+    assert 'src="/api/v1/public/email-banner.gif"' in html
+    assert_sign_in_block(resp.json()["text"], html, link_of(PREVIEW_LINK_TOKEN))
+    gif = await world.http().get(f"{API}/public/email-banner.gif")
+    assert gif.status_code == 200 and gif.headers["content-type"] == "image/gif"
+    assert gif.content.startswith(b"GIF89a")

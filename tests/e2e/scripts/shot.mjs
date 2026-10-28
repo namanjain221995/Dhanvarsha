@@ -1,7 +1,11 @@
 // Capture a screenshot of a StageVote page for visual review (synthetic data only).
 // Usage (inside the Playwright container, host network):
 //   node scripts/shot.mjs --url http://localhost:3101/admin --out /work/shots/admin.png \
-//     [--width 390] [--height 844] [--admin] [--participant SV-XXXX:password] [--full] [--wait 800]
+//     [--width 390] [--height 844] [--admin] [--link 'http://localhost:3101/enter#token=…'] [--full] [--wait 800]
+// --link signs a participant in with their personal link, as its button does. Make one for a
+// test participant of a local stack with `stagevote sign-in-link --email ADDRESS` (it replaces
+// their previous link); never pass a real voter's link. A link works only in the first browser
+// that uses it, so keep that browser's cookies with --storage to use the link again.
 import { existsSync } from 'node:fs'
 import { chromium } from '@playwright/test'
 
@@ -32,10 +36,11 @@ if (args.admin) {
   })
   if (!res.ok()) throw new Error(`admin login failed: ${res.status()} ${await res.text()}`)
 }
-if (args.participant) {
-  const [user, password] = String(args.participant).split(':')
-  const res = await page.request.post(`${base}/api/v1/auth/login`, { headers: { Origin: base }, data: { user_id: user, password } })
-  if (!res.ok()) console.error(`participant login: ${res.status()} ${await res.text()}`)
+if (args.link) {
+  // The token is in the link's #fragment; the page's button posts it the same way.
+  const token = new URLSearchParams(new URL(String(args.link)).hash.slice(1)).get('token') ?? ''
+  const res = await page.request.post(`${base}/api/v1/auth/link`, { headers: { Origin: base }, data: { token } })
+  if (!res.ok()) console.error(`participant sign-in: ${res.status()} ${await res.text()}`)
 }
 await page.goto(args.url, { waitUntil: 'networkidle' })
 await page.waitForTimeout(Number(args.wait ?? 800))

@@ -12,6 +12,7 @@ from typing import Any
 
 import httpx
 import pytest
+from jinja2 import UndefinedError
 
 from helpers import (
     API,
@@ -27,6 +28,7 @@ from helpers import (
 from stagevote.config import get_settings
 from stagevote.db import sessionmaker
 from stagevote.logging import JsonFormatter
+from stagevote.mailer import delivery
 from stagevote.mailer.delivery import lease_jobs, process_job
 from stagevote.mailer.providers import (
     Check,
@@ -36,10 +38,13 @@ from stagevote.mailer.providers import (
     SmtpProvider,
     make_provider,
 )
+from stagevote.security import encrypt_payload
+from stagevote.services.invitations import sign_in_link
 from stagevote.worker.runner import Worker
 
 
 async def invite(world: World, person: ParticipantClient) -> tuple[uuid.UUID, str]:
+    """Send the invitation; returns (job id, the link token it carries)."""
     resp = await (await world.admin()).post(f"/participants/{person.info.id}/invite")
     assert resp.status_code == 200, resp.text
     job = await world.factory.fetchrow(
@@ -47,13 +52,17 @@ async def invite(world: World, person: ParticipantClient) -> tuple[uuid.UUID, st
         "AND kind = 'invitation'",
         p=person.info.id,
     )
-    return job.id, secret_of(job.secret_ciphertext, "password")
+    return job.id, secret_of(job.secret_ciphertext)
 
 
 async def invited(world: World, **kwargs: Any) -> tuple[ParticipantClient, uuid.UUID, str]:
     person = await world.participant(login=False, activated=False, **kwargs)
-    job_id, temporary = await invite(world, person)
-    return person, job_id, temporary
+    job_id, token = await invite(world, person)
+    return person, job_id, token
+
+
+def link_of(token: str) -> str:
+    return sign_in_link(get_settings().app_base_url, token)
 
 
 async def job(world: World, job_id: uuid.UUID) -> Any:
@@ -83,7 +92,7 @@ async def test_transient_error_requeues_with_backoff_and_records_the_attempt(
     provider.script = [
         SendResult("transient_error", error_code="smtp_421", error_detail="rcpt: 421 try later")
     ]
-    person, job_id, temporary = await invited(world)
+    person, job_id, token = await invited(world)
 
     await tick(worker)
     queued = await job(world, job_id)
@@ -110,7 +119,7 @@ async def test_transient_error_requeues_with_backoff_and_records_the_attempt(
     assert [a.outcome for a in await attempts(world, job_id)] == ["transient_error", "accepted"]
     [message] = provider.sent
     assert message.to == person.info.email
-    assert temporary in message.text and person.info.email in message.text
+    assert f"Enter the arena: {link_of(token)}" in message.text
 
 
 async def test_permanent_error_fails_without_a_retry_loop(
@@ -176,7 +185,7 @@ async def test_unknown_outcome_is_never_retried_without_admin_confirmation(
     provider.script = [
         SendResult("unknown", error_code="smtp_data_interrupted", error_detail="data: TimeoutError")
     ]
-    _, job_id, temporary = await invited(world)
+    _, job_id, token = await invited(world)
     await tick(worker)
     for _ in range(2):
         await make_due(world, job_id)
@@ -200,9 +209,9 @@ async def test_unknown_outcome_is_never_retried_without_admin_confirmation(
     await tick(worker)
     done = await job(world, job_id)
     assert (done.status, done.attempts) == ("accepted", 2)
-    # The possible duplicate is the *same* message: same Message-ID, same credential.
+    # The possible duplicate is the *same* message: same Message-ID, same link.
     assert [m.message_id for m in provider.sent] == [done.message_id, done.message_id]
-    assert all(temporary in m.text for m in provider.sent)
+    assert all(link_of(token) in m.text for m in provider.sent)
     assert (
         await world.factory.fetchval(
             "SELECT details->>'previous_status' FROM audit_log WHERE action = 'email.retried' AND target_id = :j",
@@ -310,33 +319,70 @@ async def test_credential_is_purged_after_acceptance_and_never_logged(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     caplog.set_level(logging.DEBUG)
-    person, job_id, temporary = await invited(world)
+    person, job_id, token = await invited(world)
     await tick(worker)
     accepted = await job(world, job_id)
     assert accepted.status == "accepted" and accepted.accepted_at is not None
     assert accepted.secret_ciphertext is None and accepted.secret_purged_at is not None
     [message] = provider.sent
-    assert temporary in message.text and temporary in message.html  # the email itself carries it
+    link = link_of(token)
+    assert link in message.text and f'href="{link}"' in message.html  # the email itself carries it
 
-    # Requests carrying the password, including rejected ones, never echo it back.
-    wrong = await person.http.post(
-        f"{API}/auth/login", json={"user_id": person.info.email, "password": temporary + "x"}
-    )
-    assert_error(wrong, 401, "INVALID_CREDENTIALS")
-    malformed = await person.http.post(
-        f"{API}/auth/login",
-        json={"user_id": person.info.email, "password": temporary, "note": temporary},
-    )
+    # Requests carrying the token, including rejected ones, never echo it back.
+    near_miss = token[:-1] + ("A" if token[-1] != "A" else "B")
+    wrong = await person.http.post(f"{API}/auth/link", json={"token": near_miss})
+    assert_error(wrong, 401, "LINK_INVALID")
+    malformed = await person.http.post(f"{API}/auth/link", json={"token": token, "note": token})
     assert_error(malformed, 422, "VALIDATION_FAILED")
-    assert temporary not in wrong.text + malformed.text
-    assert (await person.login(temporary, user_id=person.info.email)).status_code == 200
+    checked = await person.http.post(f"{API}/auth/link/check", json={"token": token, "note": token})
+    assert_error(checked, 422, "VALIDATION_FAILED")
+    assert token not in wrong.text + malformed.text + checked.text
+    assert (await person.enter(token)).status_code == 200
 
     # Rendered exactly as the production JSON log handler would write them.
     formatter = JsonFormatter()
     logged = "\n".join(formatter.format(r) + r.getMessage() for r in caplog.records)
     assert caplog.records, "expected request and worker logs"
-    assert temporary not in logged
-    assert temporary not in await world.factory.programme_text(world.programme_id)
+    assert person.device and person.device not in logged
+    assert token not in logged
+    assert token not in await world.factory.programme_text(world.programme_id)
+
+
+async def test_an_invitation_queued_with_a_password_is_never_sent(
+    world: World, worker: Worker, provider: RecordingProvider
+) -> None:
+    """Invitations queued by the release before sign-in links carry a password, which can
+    no longer sign anyone in: they fail visibly instead of going out."""
+    _, job_id, _ = await invited(world)
+    await world.factory.execute(
+        "UPDATE email_jobs SET secret_ciphertext = :c WHERE id = :j",
+        c=encrypt_payload({"password": "ABCD-EFGH-JKLM"}),
+        j=job_id,
+    )
+    await tick(worker)
+    failed = await job(world, job_id)
+    assert (failed.status, failed.last_error_code) == ("failed", "retired_payload")
+    assert provider.sent == [] and await attempts(world, job_id) == []
+
+
+async def test_a_template_error_fails_the_job_instead_of_looping(
+    world: World, worker: Worker, provider: RecordingProvider, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _, job_id, _ = await invited(world)
+
+    def broken(*args: Any, **kwargs: Any) -> Any:
+        raise UndefinedError("'link' is undefined")
+
+    monkeypatch.setattr(delivery, "render_invitation", broken)
+    await tick(worker)
+    failed = await job(world, job_id)
+    assert (failed.status, failed.last_error_code, failed.last_error) == (
+        "failed",
+        "template_error",
+        "The email could not be built from its template (UndefinedError); report this to the developers",
+    )
+    assert failed.secret_ciphertext is not None  # kept: the organiser can retry once it is fixed
+    assert provider.sent == [] and await attempts(world, job_id) == []
 
 
 async def test_superseded_invitations_are_never_sent(
@@ -366,17 +412,17 @@ async def test_superseded_invitations_are_never_sent(
         p=late.info.id,
     )
 
-    # Leased job replaced by a newer invitation: only the newest credential is sent.
-    again, old_job, old_temp = await invited(world)
+    # Leased job replaced by a newer invitation: only the newest link is sent.
+    again, old_job, old_token = await invited(world)
     async with sessionmaker()() as db:
         assert set(await lease_jobs(db, worker.worker_id, 10)) == {old_job}
-    new_job, new_temp = await invite(world, again)
+    new_job, new_token = await invite(world, again)
     assert await process_job(sessionmaker(), old_job, worker.worker_id, provider, get_settings()) is None
     assert (await job(world, old_job)).status == "superseded"
     await tick(worker)
     assert (await job(world, new_job)).status == "accepted"
     [message] = provider.sent
-    assert new_temp in message.text and old_temp not in message.text
+    assert link_of(new_token) in message.text and old_token not in message.text + message.html
     for job_id in (queued_job, leased_job, old_job):
         assert await attempts(world, job_id) == []
 
@@ -447,7 +493,7 @@ async def test_invitation_over_real_smtp_arrives_in_mailpit(world: World) -> Non
     provider = make_provider(settings)
     assert isinstance(provider, SmtpProvider) and settings.smtp_host == "127.0.0.1"
     address = f"mailpit-{uuid.uuid4().hex[:12]}@example.com"
-    _, job_id, temporary = await invited(world, email=address)
+    _, job_id, token = await invited(world, email=address)
     smtp_worker = Worker(settings, provider=provider)
     for _ in range(3):  # a transient local hiccup is requeued by the worker; retry it promptly
         await tick(smtp_worker)
@@ -473,10 +519,13 @@ async def test_invitation_over_real_smtp_arrives_in_mailpit(world: World) -> Non
             assert message["MessageID"] == sent.message_id.strip("<>")
             text_part = message["Text"]
             assert text_part.strip(), "a plain-text part is required"
-            link = f"{settings.app_base_url}/"
-            for expected in (address, temporary, link, "User ID (your email address)"):
-                assert expected in text_part
-                assert expected in message["HTML"]
+            # Compared in the decoded parts: quoted-printable turns "=" into "=3D" on the wire.
+            link = link_of(token)
+            assert f"Enter the arena: {link}" in text_part
+            assert f'href="{link}"' in message["HTML"]
+            for part in (text_part, message["HTML"]):
+                assert "This button is your personal pass." in part
+                assert "User ID" not in part and "Password:" not in part
         finally:
             if found:
                 await mailpit.request("DELETE", "/messages", json={"IDs": found})

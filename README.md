@@ -3,16 +3,19 @@
 Live voting for a programme of sequential rounds. Participants vote from their phones as
 each round goes live; organisers run the programme from a live control dashboard.
 
-- Participant app: invitation email with user ID (their email address) and password,
-  countdown and sign-in, a programme lobby that updates itself, per-round ballots with a
-  receipt for every vote. No self-service sign-up or password reset: organisers re-send
-  invitations.
+- Participant app: an invitation email with a personal sign-in link (no user ID or
+  password), a one-tap sign-in page with a countdown (*Enter the arena* on the gold look),
+  a programme lobby that updates itself, per-round ballots with a receipt for every vote.
+  Each link works on one device: the first phone or browser that taps it. No self-service
+  sign-up or recovery: the help desk re-sends the invitation, which replaces the link.
 - Admin dashboard: programme settings, rounds and nominees, participant import and
   invitations, live control (open, close, start next, deadlines, schedule override),
   results with CSV export and publication, email delivery status, audit log.
 - Safety: one vote per participant per ballot enforced by PostgreSQL, a precise voting
-  cutoff, idempotent submissions with receipts, sign-in on several devices per
-  participant, durable email and schedule jobs, live updates across API processes.
+  cutoff, idempotent submissions with receipts, one device per sign-in link (the first
+  browser that taps the button keeps the link; a copy opened anywhere else after that is
+  refused), durable email and schedule jobs, live
+  updates across API processes.
 
 Read [docs/architecture.md](docs/architecture.md) for how it works,
 [docs/operations.md](docs/operations.md) for event-day operation,
@@ -45,10 +48,18 @@ that admin only if it does not exist; rerunning never resets an existing admin's
 To add an admin interactively: `docker compose run --rm migrate stagevote create-admin --email you@example.com`.
 
 **Try the participant flow**: with the demo seed, open *Admin › Participants*, invite a
-few `guestNNN@example.com` participants, open the invitation in Mailpit, sign in with the
-email address and password it contains, then open a round from *Admin › Live control*. A sample import file is in
+few `guestNNN@example.com` participants, open the invitation in Mailpit, tap its button,
+tap the one button on the page that opens (*Sign in*, or *Enter the arena* with the gold
+accent), then open a round from *Admin › Live control*. A sample import file is in
 `scripts/sample-participants.csv` (synthetic addresses, including one invalid row and one
 duplicate to show the import preview).
+
+A link stays with the first browser that taps it, so to be signed in as several
+participants at once, use one browser profile per participant. To get a link without
+sending an email, run `docker compose run --rm migrate stagevote sign-in-link --email guest001@example.com`:
+it replaces that participant's link exactly as a new invitation would (the old link stops
+working and their sessions end) and prints the new one. `seed-demo --activate-sample N`
+prints links for the first N demo participants. Both are refused when `APP_ENV=production`.
 
 To test from phones on your network, set `STAGEVOTE_BIND=0.0.0.0` and
 `APP_BASE_URL=http://<your-lan-ip>:<port>` in `.env`, then `docker compose up -d`.
@@ -75,7 +86,7 @@ Backend (from `apps/api`, against the Compose database; `. ../../scripts/host-en
 uv sync
 uv run pytest -q                 # integration tests on real PostgreSQL (creates a temporary database)
 uv run ruff check src tests && uv run mypy
-uv run stagevote --help          # bootstrap, migrate, create-admin, worker, seed-demo, seed-loadtest, reconcile, check-privileges
+uv run stagevote --help          # bootstrap, migrate, create-admin, worker, seed-demo, seed-loadtest, sign-in-link, reconcile, check-privileges
 ```
 
 Frontend (from `apps/web`):

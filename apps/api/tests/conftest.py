@@ -17,29 +17,36 @@ import os
 import secrets
 import subprocess
 import tempfile
-from collections.abc import AsyncIterator, Callable, Iterator
-from concurrent.futures import ThreadPoolExecutor
+from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass
 from typing import Any
 
-import asyncpg
 import pytest
 from cryptography.fernet import Fernet
 from fastapi import FastAPI
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
-from helpers import API_DIR, REPO_ROOT, DatabaseInfo, Factory, World
+from helpers import (
+    APP_ROLE,
+    OWNER_ROLE,
+    REPO_ROOT,
+    TEST_DB_PREFIX,
+    DatabaseInfo,
+    Factory,
+    World,
+    create_database,
+    drop_database,
+    in_thread,
+    migrate,
+)
 from stagevote.config import get_settings
-from stagevote.db import asyncpg_dsn, build_engine, dispose_engine, set_engine
+from stagevote.db import build_engine, dispose_engine, set_engine
 from stagevote.mailer.providers import RecordingProvider
 from stagevote.main import create_app
 from stagevote.worker.runner import Worker
 
-TEST_DB_PREFIX = "stagevote_test_"
 TEST_DB_NAME = f"{TEST_DB_PREFIX}{secrets.token_hex(6)}"
-APP_ROLE = "stagevote_app"
-OWNER_ROLE = "stagevote_owner"
 
 
 def _load_host_env() -> None:
@@ -117,9 +124,10 @@ TEST_ENV = {
     "EMAIL_CONCURRENCY": "4",
     "EMAIL_MAX_PER_MINUTE": "1000",
     "SESSION_TTL_HOURS": "12",
+    "DEVICE_COOKIE_DAYS": "180",
     "INVITATION_RETRY_HOURS": "72",
-    "LOGIN_FAILURES_PER_ACCOUNT": "8",
     "LOGIN_FAILURES_PER_IP": "300",
+    "LOGIN_IP_WINDOW_SECONDS": "600",
     "PROGRAMME_TIMEZONE": "Asia/Kolkata",
     "MEDIA_ROOT": tempfile.mkdtemp(prefix="stagevote-test-media-"),
     "LOG_LEVEL": "INFO",
@@ -132,50 +140,6 @@ get_settings.cache_clear()
 # ---- database lifecycle -----------------------------------------------------------
 
 
-def _in_thread[T](fn: Callable[..., T], *args: Any) -> T:
-    """Run blocking/asyncio.run code outside pytest-asyncio's event loop."""
-    with ThreadPoolExecutor(max_workers=1) as pool:
-        return pool.submit(fn, *args).result()
-
-
-async def _create_database(db: DatabaseInfo) -> None:
-    conn = await asyncpg.connect(asyncpg_dsn(db.super_admin_url))
-    try:
-        await conn.execute(f'CREATE DATABASE "{db.name}" OWNER {OWNER_ROLE}')
-    finally:
-        await conn.close()
-    conn = await asyncpg.connect(asyncpg_dsn(db.super_url))
-    try:
-        # Same schema preparation as infra/postgres/init/10-stagevote-roles.sh.
-        await conn.execute(
-            f"ALTER SCHEMA public OWNER TO {OWNER_ROLE}; "
-            "REVOKE ALL ON SCHEMA public FROM PUBLIC; "
-            f"GRANT USAGE ON SCHEMA public TO {APP_ROLE};"
-        )
-    finally:
-        await conn.close()
-
-
-async def _drop_database(db: DatabaseInfo) -> None:
-    assert db.name.startswith(TEST_DB_PREFIX) and db.name != "stagevote"
-    conn = await asyncpg.connect(asyncpg_dsn(db.super_admin_url))
-    try:
-        await conn.execute(f'DROP DATABASE IF EXISTS "{db.name}" WITH (FORCE)')
-    finally:
-        await conn.close()
-
-
-def _migrate(owner_url: str) -> None:
-    from alembic import command
-    from alembic.config import Config
-
-    cfg = Config(str(API_DIR / "alembic.ini"))
-    cfg.attributes["url"] = owner_url
-    cfg.attributes["app_role"] = APP_ROLE
-    cfg.attributes["skip_logging_config"] = True  # keep pytest's logging intact
-    command.upgrade(cfg, "head")
-
-
 @pytest.fixture(scope="session")
 def database() -> Iterator[DatabaseInfo]:
     if DB is None:
@@ -184,12 +148,12 @@ def database() -> Iterator[DatabaseInfo]:
             "root (it exports TEST_SUPERUSER_URL, DB_OWNER_PASSWORD and DB_APP_PASSWORD)."
         )
     assert TEST_DB_NAME in get_settings().database_url, "refusing to run against a non-test database"
-    _in_thread(asyncio.run, _create_database(DB))
+    in_thread(asyncio.run, create_database(DB))
     try:
-        _in_thread(_migrate, DB.owner_url)
+        in_thread(migrate, DB.owner_url)
         yield DB
     finally:
-        _in_thread(asyncio.run, _drop_database(DB))
+        in_thread(asyncio.run, drop_database(DB))
 
 
 @dataclass

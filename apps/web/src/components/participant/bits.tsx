@@ -218,9 +218,6 @@ export function ParticipantHeader({
           >
             <div className="px-3 py-2">
               <p className="truncate font-semibold">{displayName || 'Participant'}</p>
-              <p className="text-sm text-plum-soft">
-                User ID <span className="tabular font-semibold text-plum">{userCode}</span>
-              </p>
             </div>
             <button
               type="button"

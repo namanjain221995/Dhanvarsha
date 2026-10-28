@@ -102,7 +102,7 @@ def build_mime(settings: Settings, message: OutgoingEmail) -> EmailMessage:
                 subtype=image.subtype,
                 cid=f"<{image.cid}>",
                 disposition="inline",
-                filename=f"logo.{image.subtype}",
+                filename=f"{image.cid.split('@')[0]}.{image.subtype}",
             )
     return mime
 

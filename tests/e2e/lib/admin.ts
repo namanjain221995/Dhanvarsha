@@ -109,6 +109,13 @@ export class Admin {
     return found
   }
 
+  /** One participant as the console's dialog shows them, including the state of their link. */
+  participant(participantId: string) {
+    return this.call<{
+      participant: { id: string; email: string; link_issued_at: string | null; link_bound_at: string | null }
+    }>('get', `/participants/${participantId}`)
+  }
+
   invite(participantId: string) {
     return this.call('post', `/participants/${participantId}/invite`)
   }

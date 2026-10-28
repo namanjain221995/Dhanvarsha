@@ -232,11 +232,11 @@ html:has([data-page='participant'][data-accent='gold']) body {
 /*
  * The stage sign-in of the gold look (components/participant/stage-sign-in.tsx): a night-blue
  * arena, gold light and a lit stage. One load sequence (the ring draws, the ticket appears,
- * the title and form rise); afterwards only the spotlights breathe.
+ * the title and the button rise); afterwards only the spotlights breathe.
  */
 [data-accent='gold'][data-scene='stage'],
 [data-scene='stage'] {
-  /* Room at the foot for the lit stage, so the form never sits on the platform. */
+  /* Room at the foot for the lit stage, so the button never sits on the platform. */
   padding-bottom: clamp(120px, 27vw, 190px);
   color: #eef0ff;
   background:
@@ -312,6 +312,17 @@ html:has([data-scene='stage']) body {
   color: transparent;
   filter: drop-shadow(0 2px 12px rgb(242 193 78 / 0.25));
 }
+/* The year under the name ("Dhanvarsha" / "2026"): smaller, widely spaced, the same gold. */
+.stage-title-year {
+  display: block;
+  margin-top: 0.3em;
+  font-size: 0.46em;
+  letter-spacing: 0.55em;
+  /* Letter spacing also follows the last digit; this keeps the year visually centred. */
+  margin-right: -0.55em;
+  margin-bottom: 0.45em;
+  line-height: 1;
+}
 .stage-tagline {
   font-size: 1.05rem;
   line-height: 1.45;
@@ -356,84 +367,6 @@ html:has([data-scene='stage']) body {
   color: #f6d26b;
   text-decoration: underline;
   text-underline-offset: 3px;
-}
-/* The input is the whole rounded field; the icon and the eye button sit on top of it. The
-   field is one solid colour, so browser autofill can be painted the same colour exactly. */
-.stage-input {
-  position: relative;
-}
-.stage-input input {
-  display: block;
-  width: 100%;
-  height: 3.25rem;
-  border-radius: 0.8rem;
-  border: 1px solid rgb(170 185 255 / 0.3);
-  background-color: #0a1646;
-  padding: 0 0.9rem 0 2.9rem;
-  font-size: 1rem;
-  color: #f5f6ff;
-  outline: none;
-  text-overflow: ellipsis;
-  transition:
-    border-color 150ms,
-    box-shadow 150ms;
-}
-.stage-input-password input {
-  padding-right: 3.25rem;
-}
-.stage-input input:focus {
-  border-color: #f2c14e;
-  box-shadow: 0 0 0 3px rgb(242 193 78 / 0.22);
-}
-.stage-input input::placeholder {
-  color: #8f98c2;
-}
-.stage-input input:disabled {
-  color: #8f98c2;
-  cursor: not-allowed;
-}
-/* Browser autofill: same field colour and text colour, no light or square box. */
-.stage-input input:-webkit-autofill,
-.stage-input input:-webkit-autofill:hover {
-  -webkit-text-fill-color: #f5f6ff;
-  caret-color: #f5f6ff;
-  box-shadow: inset 0 0 0 100px #0a1646;
-  transition: background-color 100000s 0s;
-}
-.stage-input input:-webkit-autofill:focus {
-  -webkit-text-fill-color: #f5f6ff;
-  box-shadow:
-    inset 0 0 0 100px #0a1646,
-    0 0 0 3px rgb(242 193 78 / 0.22);
-}
-.stage-input input:autofill {
-  box-shadow: inset 0 0 0 100px #0a1646;
-  filter: none;
-}
-.stage-input-icon {
-  position: absolute;
-  top: 50%;
-  left: 0.95rem;
-  display: flex;
-  transform: translateY(-50%);
-  color: #aeb8e6;
-  pointer-events: none;
-}
-.stage-input-toggle {
-  position: absolute;
-  top: 50%;
-  right: 0.3rem;
-  display: flex;
-  width: 2.75rem;
-  height: 2.75rem;
-  align-items: center;
-  justify-content: center;
-  border-radius: 999px;
-  transform: translateY(-50%);
-  color: #aeb8e6;
-}
-.stage-input-toggle:hover {
-  color: #fff;
 }
 .stage-cta {
   display: flex;
@@ -629,6 +562,22 @@ html:has([data-scene='stage']) body {
   }
   to {
     opacity: 0.95;
+  }
+}
+
+/* The bar that empties while a finished round waits to go back to the programme. */
+.auto-back-bar {
+  transform-origin: left center;
+  animation-name: sv-auto-back;
+  animation-timing-function: linear;
+  animation-fill-mode: forwards;
+}
+@keyframes sv-auto-back {
+  from {
+    transform: scaleX(1);
+  }
+  to {
+    transform: scaleX(0);
   }
 }
 

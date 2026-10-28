@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test'
 import { Admin } from '../lib/admin'
 import { readInvitation } from '../lib/mailpit'
-import { noHorizontalOverflow, uniqueEmail } from '../lib/participants'
+import { entryButton, noHorizontalOverflow, openLink, uniqueEmail } from '../lib/participants'
 
 test.describe('participant journey', () => {
   test.beforeEach(({}, info) => test.skip(info.project.name === 'desktop-chromium', 'covered on phones'))
@@ -18,18 +18,24 @@ test.describe('participant journey', () => {
     const participant = await admin.findParticipant(email)
     await admin.invite(participant.id)
     const invitation = await readInvitation(email)
-    // The user ID is the email address; the password arrives in the same email.
-    expect(invitation.userId).toBe(email)
-    expect(invitation.html).toContain(email)
-    expect(invitation.html).toContain(invitation.password)
-    expect(invitation.link).not.toContain(invitation.password) // never in a URL
+    // The email carries a personal link behind its button, and no user ID or password. The
+    // token rides in the #fragment, which browsers never send to a server.
+    const link = new URL(invitation.link)
+    expect(`${link.origin}${link.pathname}`).toBe(`${baseURL}/enter`)
+    expect(link.search).toBe('')
+    expect(link.hash).toBe(`#token=${invitation.token}`)
+    expect(invitation.html).toContain(invitation.link)
+    expect(invitation.text).not.toContain('User ID')
+    expect(invitation.text).not.toContain('Password:')
 
-    // No sign-up, activation or password reset: the sign-in page offers none of them.
-    await page.goto(invitation.link)
+    // No sign-up, activation or password reset, and nothing to type: one button enters.
+    await openLink(page, invitation.link)
+    const enter = entryButton(page)
+    await expect(enter).toBeEnabled()
+    await expect(page).toHaveURL(/\/enter$/) // the token left the address bar
     await expect(page.getByRole('link', { name: /forgot|set up|sign up|reset/i })).toHaveCount(0)
-    await page.getByLabel('Email address').fill(invitation.userId)
-    await page.getByLabel('Password', { exact: true }).fill(invitation.password)
-    await page.getByRole('button', { name: 'Sign in' }).click()
+    await expect(page.locator('input:not([type="hidden"])')).toHaveCount(0)
+    await enter.click()
     await expect(page).toHaveURL(/\/lobby$/)
     await expect(page.getByRole('heading', { name: 'The next round opens soon' })).toBeVisible()
     await noHorizontalOverflow(page)
@@ -71,6 +77,10 @@ test.describe('participant journey', () => {
     await page.getByText('Echo', { exact: true }).click()
     await page.getByRole('button', { name: 'Submit vote' }).click()
     await expect(page.getByRole('region', { name: /Receipt for/ })).toContainText('Echo')
+    // The round is fully voted, so the page shows the receipt for a few seconds and then goes
+    // back to the programme by itself.
+    await expect(page.getByText('Going back to the programme…')).toBeVisible()
+    await expect(page).toHaveURL(/\/lobby$/, { timeout: 8_000 })
 
     // Completion.
     await admin.closeCurrent()

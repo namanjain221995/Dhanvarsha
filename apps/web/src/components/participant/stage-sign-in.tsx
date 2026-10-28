@@ -1,16 +1,16 @@
 'use client'
 
-import { Eye, EyeOff, LoaderCircle, LockKeyhole, UserRound } from 'lucide-react'
-import { useEffect, useId, useState, useSyncExternalStore } from 'react'
+import { LoaderCircle } from 'lucide-react'
+import { useEffect, useSyncExternalStore } from 'react'
 import { formatInZone, zoneAbbreviation } from '@/lib/time'
 import type { Accent, PublicProgramme } from '@/lib/types'
 import { OpeningCountdown } from './opening-countdown'
-import type { SignInForm } from './sign-in'
+import type { LinkSignIn } from './sign-in'
 
 /*
  * The gold look's sign-in: a night-blue arena with gold light, a ticket emblem, and a lit
  * stage at the foot of the page. The scene is decoration only (hidden from assistive
- * technology); the form keeps exactly the classic page's behaviour.
+ * technology); the button keeps exactly the classic page's behaviour.
  */
 
 const ACCENT_KEY = 'sv:accent'
@@ -103,6 +103,22 @@ function titleSize(name: string): string | undefined {
   return undefined
 }
 
+/** "Dhanvarsha 2026" is shown as the name with the year on its own line beneath it. */
+export function splitTitle(name: string): { title: string; year: string | null } {
+  const match = /^(.*\S)\s+((?:19|20)\d{2})$/.exec(name.trim())
+  return match?.[1] && match[2] ? { title: match[1], year: match[2] } : { title: name, year: null }
+}
+
+function StageTitle({ name }: { name: string }) {
+  const { title, year } = splitTitle(name)
+  return (
+    <h1 className="stage-title stage-rise mt-5" style={{ animationDelay: '0.25s', fontSize: titleSize(title) }}>
+      {title}
+      {year ? <span className="stage-title-year">{year}</span> : null}
+    </h1>
+  )
+}
+
 const BEAMS = [-62, -44, -27, -12, 0, 12, 27, 44, 62]
 const DUST = Array.from({ length: 12 }, (_, i) => ({
   left: 12 + ((i * 37) % 76),
@@ -190,52 +206,11 @@ function Stage() {
   )
 }
 
-function StageInput({
-  label,
-  icon,
-  password = false,
-  ...rest
-}: React.InputHTMLAttributes<HTMLInputElement> & { label: string; icon: React.ReactNode; password?: boolean }) {
-  const id = useId()
-  const [visible, setVisible] = useState(false)
-  return (
-    <div>
-      <label htmlFor={id} className="mb-1.5 block text-[0.92rem] font-semibold text-[#eef0ff]">
-        {label}
-      </label>
-      {/* The input is the whole field (icon and eye button sit on top of it), so browser
-          autofill colours one rounded box instead of a square inside the field. */}
-      <div className={`stage-input${password ? ' stage-input-password' : ''}`}>
-        <span aria-hidden className="stage-input-icon">
-          {icon}
-        </span>
-        <input
-          id={id}
-          type={password && !visible ? 'password' : password ? 'text' : rest.type}
-          {...(password ? { autoCapitalize: 'none', autoCorrect: 'off', spellCheck: false } : {})}
-          {...rest}
-        />
-        {password ? (
-          <button
-            type="button"
-            onClick={() => setVisible((v) => !v)}
-            aria-label={visible ? 'Hide password' : 'Show password'}
-            aria-pressed={visible}
-            className="stage-input-toggle"
-          >
-            {visible ? <EyeOff aria-hidden className="size-5" /> : <Eye aria-hidden className="size-5" />}
-          </button>
-        ) : null}
-      </div>
-    </div>
-  )
-}
-
 export function StageLoading({ error, onRetry }: { error: string | null; onRetry: () => void }) {
   return (
     <div data-scene="stage" className="stage-page relative isolate flex min-h-dvh flex-col">
       <StageArcs />
-      <div className="mx-auto w-full max-w-[420px] px-6 pt-16 text-center" aria-busy={!error}>
+      <div className="mx-auto flex w-full max-w-[420px] flex-1 flex-col justify-center px-6 py-10 text-center" aria-busy={!error}>
         {error ? (
           <div className="stage-note stage-note-danger" role="alert">
             <p className="font-semibold">We could not load the programme</p>
@@ -253,12 +228,11 @@ export function StageLoading({ error, onRetry }: { error: string | null; onRetry
   )
 }
 
-export function StageSignIn({ programme, form }: { programme: PublicProgramme; form: SignInForm }) {
-  const { userId, setUserId, password, setPassword, busy, formError, checkingSession, notice, submit, reload } = form
+export function StageSignIn({ programme, signIn }: { programme: PublicProgramme; signIn: LinkSignIn }) {
+  const { link, busy, error, notice, enter, retry, reload } = signIn
   const tz = programme.timezone
   const phase = programme.login_phase
   const open = phase === 'open'
-  const disabled = !open || checkingSession
   const opensAt = programme.login_opens_at
     ? `${formatInZone(programme.login_opens_at, tz, { weekday: 'short', hour: 'numeric', minute: '2-digit' })} ${zoneAbbreviation(tz, programme.login_opens_at)}`
     : null
@@ -266,14 +240,14 @@ export function StageSignIn({ programme, form }: { programme: PublicProgramme; f
   return (
     <div data-accent="gold" data-scene="stage" className="stage-page relative isolate flex min-h-dvh flex-col">
       <StageArcs />
-      <main className="relative mx-auto w-full max-w-[420px] px-6 pt-[max(2.75rem,env(safe-area-inset-top))]">
+      {/* The page (app/page.tsx, app/enter/page.tsx) provides the main landmark. The column
+          fills the space above the stage and centres its content in it. */}
+      <div className="relative mx-auto flex w-full max-w-[420px] flex-1 flex-col justify-center px-6 pb-6 pt-[max(2.75rem,env(safe-area-inset-top))]">
         <header className="text-center">
           <div className="stage-emblem-wrap">
             <TicketEmblem />
           </div>
-          <h1 className="stage-title stage-rise mt-5" style={{ animationDelay: '0.25s', fontSize: titleSize(programme.name) }}>
-            {programme.name}
-          </h1>
+          <StageTitle name={programme.name} />
           {programme.description ? (
             <p className="stage-tagline stage-rise mt-2" style={{ animationDelay: '0.35s' }}>
               {programme.description}
@@ -289,66 +263,67 @@ export function StageSignIn({ programme, form }: { programme: PublicProgramme; f
           <h2 id="signin-title" className="sr-only">
             Sign in to vote
           </h2>
-          {notice === 'signed_out' ? (
-            <p className="stage-note mb-4" role="status">
-              You signed out. Sign in again whenever you are ready.
-            </p>
-          ) : null}
           {phase === 'before_open' ? (
             <p className="stage-note mb-4">
-              Sign-in opens {opensAt ? `at ${opensAt}` : 'at a time the organisers will announce'}. Keep your invitation email: it
-              has your password.
+              Sign-in opens {opensAt ? `at ${opensAt}` : 'at a time the organisers will announce'}. Keep your invitation email: its
+              button signs you in.
             </p>
           ) : null}
           {phase === 'closed' ? (
             <p className="stage-note mb-4">Sign-in has closed. Voting for this programme has finished. Thank you for taking part.</p>
           ) : null}
 
-          <form className="space-y-4" onSubmit={submit} noValidate>
-            <StageInput
-              label="Email ID"
-              icon={<UserRound className="size-[1.15rem]" />}
-              name="username"
-              type="email"
-              inputMode="email"
-              autoComplete="username"
-              autoCapitalize="none"
-              spellCheck={false}
-              placeholder="Enter your email address"
-              value={userId}
-              onChange={(e) => setUserId(e.target.value)}
-              disabled={disabled}
-            />
-            <StageInput
-              label="Password"
-              icon={<LockKeyhole className="size-[1.15rem]" />}
-              password
-              name="password"
-              autoComplete="current-password"
-              placeholder="Enter your password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              disabled={disabled}
-            />
-            <div aria-live="polite">
-              {formError ? (
-                <p className="stage-note stage-note-danger" role="alert">
-                  {formError.message}
-                </p>
+          {link.kind === 'ready' ? (
+            <>
+              <div aria-live="polite">
+                {error ? (
+                  <p className="stage-note stage-note-danger mb-4" role="alert">
+                    {error}
+                  </p>
+                ) : null}
+              </div>
+              <button
+                type="button"
+                className="stage-cta"
+                disabled={!open || busy}
+                aria-busy={busy || undefined}
+                aria-describedby="signin-hint"
+                onClick={() => void enter()}
+              >
+                {busy ? <LoaderCircle aria-hidden className="size-[1.1rem] animate-spin" /> : null}
+                {busy ? 'Entering…' : open ? 'Enter the arena' : phase === 'before_open' ? 'Opens soon' : 'Sign-in closed'}
+              </button>
+              <p id="signin-hint" className="stage-hint mt-4 text-balance text-center text-[0.85rem] text-[#b4bbdc]">
+                This button signs you in on this device only.
+              </p>
+            </>
+          ) : link.kind === 'checking' ? (
+            <p role="status" className="stage-hint flex min-h-14 items-center justify-center gap-2 text-[0.92rem] text-[#b4bbdc]">
+              <LoaderCircle aria-hidden className="size-[1.1rem] animate-spin" />
+              One moment…
+            </p>
+          ) : link.kind === 'no_link' ? (
+            <p role="status" className="stage-note text-balance text-center">
+              {notice ?? 'To enter, open your invitation email on this phone and tap “Enter the arena”.'}
+            </p>
+          ) : (
+            <div role="alert" className="stage-note stage-note-danger">
+              <p>{link.message}</p>
+              {link.kind === 'unreachable' ? (
+                <button type="button" onClick={retry} className="stage-link mt-3">
+                  Try again
+                </button>
               ) : null}
             </div>
-            <button type="submit" className="stage-cta" disabled={disabled || busy} aria-busy={busy || undefined}>
-              {busy ? <LoaderCircle aria-hidden className="size-[1.1rem] animate-spin" /> : null}
-              {busy ? 'Entering…' : open ? 'Enter the arena' : phase === 'before_open' ? 'Opens soon' : 'Sign-in closed'}
-            </button>
-          </form>
+          )}
 
-          <p className="stage-hint mt-4 text-balance text-center text-[0.85rem] text-[#b4bbdc]">Use the email and password from your invitation.</p>
           {programme.help_contact ? (
-            <p className="stage-hint mt-1 text-balance text-center text-[0.85rem] text-[#b4bbdc]">Need help? Ask {programme.help_contact}.</p>
+            <p className={`stage-hint ${link.kind === 'ready' ? 'mt-1' : 'mt-4'} text-balance text-center text-[0.85rem] text-[#b4bbdc]`}>
+              Need help? Ask {programme.help_contact}.
+            </p>
           ) : null}
         </section>
-      </main>
+      </div>
       <Stage />
     </div>
   )

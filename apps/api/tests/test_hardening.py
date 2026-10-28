@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import io
 import uuid
 from typing import Any
@@ -10,60 +9,54 @@ from typing import Any
 import pytest
 from PIL import Image
 
-from helpers import API, PARTICIPANT_PASSWORD, World, assert_error
+from helpers import API, World, assert_error
+from stagevote.config import get_settings
 from stagevote.errors import AppError
 from stagevote.live.hub import Connection, LiveHub
+from stagevote.security import new_token
 from stagevote.services.assets import _process
 
 
-async def test_parallel_guesses_cannot_exceed_the_per_identifier_limit(world: World) -> None:
-    """The attempt is counted before the password check, so a burst cannot slip past."""
-    person = await world.participant(login=False)
-    clients = [world.http() for _ in range(20)]
-
-    async def guess(i: int) -> int:
-        resp = await clients[i].post(
-            f"{API}/auth/login", json={"user_id": person.info.email, "password": f"wrong-{i}"}
+async def failures(world: World) -> int:
+    return int(
+        await world.factory.fetchval(
+            "SELECT coalesce(sum(count), 0) FROM rate_limit_buckets WHERE key = :k",
+            k=f"login_fail:ip:{world.ip}",
         )
-        return resp.status_code
-
-    statuses = await asyncio.gather(*(guess(i) for i in range(20)))
-    assert statuses.count(401) <= 8  # LOGIN_FAILURES_PER_ACCOUNT
-    assert statuses.count(429) >= 12
-    # Even the right password is refused while the identifier is locked.
-    assert_error(
-        await world.browser(person.info).login(PARTICIPANT_PASSWORD, user_id=person.info.email),
-        429,
-        "RATE_LIMITED",
     )
 
 
-async def test_lockout_does_not_reveal_whether_an_account_exists(world: World) -> None:
-    person = await world.participant(login=False)
-    unknown = f"nobody-{uuid.uuid4().hex[:8]}@example.com"
-    http = world.http()
+async def test_unknown_links_are_limited_per_address_but_refusals_elsewhere_are_not(
+    world: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A 256-bit link cannot be guessed; the per-address limit only stops noise. The
+    owner's link opened on a second phone is refused every time but never counted, so
+    one shared link cannot pause sign-in for a whole venue behind one address."""
+    monkeypatch.setattr(get_settings(), "login_failures_per_ip", 5)
+    owner = await world.participant()
+    elsewhere = world.browser(owner.info)
+    for _ in range(8):
+        assert_error(await elsewhere.enter(), 403, "LINK_IN_USE")
+        assert (await elsewhere.check()).json() == {"state": "in_use"}
+    assert await failures(world) == 0
 
-    async def lock(identifier: str) -> list[int]:
-        return [
-            (await http.post(f"{API}/auth/login", json={"user_id": identifier, "password": "x"})).status_code
-            for _ in range(10)
-        ]
-
-    assert await lock(person.info.email) == await lock(unknown)
-
-
-async def test_successful_login_clears_the_identifier_counter(world: World) -> None:
-    person = await world.participant(login=False)
-    http = world.http()
-    for _ in range(5):
-        resp = await http.post(f"{API}/auth/login", json={"user_id": person.info.email, "password": "nope"})
-        assert resp.status_code == 401
-    browser = world.browser(person.info)
-    assert (await browser.login(user_id=person.info.email)).status_code == 200
-    assert (await browser.logout()).status_code == 200
-    for _ in range(7):
-        resp = await http.post(f"{API}/auth/login", json={"user_id": person.info.email, "password": "nope"})
-        assert resp.status_code == 401  # the earlier failures no longer count
+    guesser = world.http()
+    for i in range(5):
+        if i % 2:
+            resp = await guesser.post(f"{API}/auth/link/check", json={"token": new_token()})
+            assert resp.json() == {"state": "invalid"}
+        else:
+            assert_error(
+                await guesser.post(f"{API}/auth/link", json={"token": new_token()}), 401, "LINK_INVALID"
+            )
+    assert await failures(world) == 5
+    for path in ("/auth/link", "/auth/link/check"):
+        error = assert_error(
+            await guesser.post(f"{API}{path}", json={"token": new_token()}), 429, "RATE_LIMITED"
+        )
+        assert error["details"]["retry_after_seconds"] > 0
+    # The pause covers the whole address, a real link included, until the window ends.
+    assert_error(await world.browser(owner.info).enter(), 429, "RATE_LIMITED")
 
 
 async def test_frozen_nominee_cannot_be_renamed_into_a_sibling(world: World) -> None:

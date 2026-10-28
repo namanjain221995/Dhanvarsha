@@ -280,8 +280,10 @@ class Participant(Base):
     __table_args__ = (
         UniqueConstraint("programme_id", "email_normalized", name="uq_participants_programme_email"),
         UniqueConstraint("programme_id", "id", name="uq_participants_programme_id_id"),
+        UniqueConstraint("link_token_hash", name="uq_participants_link_token_hash"),
         CheckConstraint(
-            "activated_at IS NULL OR password_hash IS NOT NULL", name="ck_participants_activation"
+            "activated_at IS NULL OR password_hash IS NOT NULL OR link_token_hash IS NOT NULL",
+            name="ck_participants_activation",
         ),
         Index("ix_participants_programme_name", "programme_id", "display_name"),
     )
@@ -293,15 +295,24 @@ class Participant(Base):
     email: Mapped[str] = mapped_column(String(320), nullable=False)
     email_normalized: Mapped[str] = mapped_column(String(320), nullable=False)
     display_name: Mapped[str] = mapped_column(String(120), nullable=False, default="")
-    # Invariant 1: readable login ID, unique across the installation.
+    # Invariant 1: unique across the installation. Nobody types it any more: it labels the
+    # participant in the audit log and the organiser console.
     user_code: Mapped[str] = mapped_column(String(16), nullable=False, unique=True)
-    # Argon2id hash of the password from the latest invitation email. Each new invitation
-    # replaces it; there is no self-service sign-up or password reset.
+    # Retired with password sign-in: the Argon2id hash of the password from an invitation
+    # sent before sign-in links. Unused, kept so a rollback finds the data it expects.
     password_hash: Mapped[str | None] = mapped_column(String(255))
     # Retired: the earlier activation flow stored a temporary password here. Unused, kept
     # so existing databases need no destructive migration.
     temp_password_hash: Mapped[str | None] = mapped_column(String(255))
     temp_password_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # The personal sign-in link from the latest invitation: only the SHA-256 of its token is
+    # stored. The first browser that enters with it is bound to it (the SHA-256 of that
+    # browser's device cookie), and only that browser can enter with it again. A new
+    # invitation replaces the token and clears the binding.
+    link_token_hash: Mapped[bytes | None] = mapped_column(LargeBinary(32))
+    link_issued_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    link_device_hash: Mapped[bytes | None] = mapped_column(LargeBinary(32))
+    link_bound_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     current_invitation_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
     credential_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     # First successful sign-in (the column keeps its original name).
@@ -470,7 +481,7 @@ class EmailJob(Base):
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_error_code: Mapped[str | None] = mapped_column(String(64))
     last_error: Mapped[str | None] = mapped_column(String(500))
-    # Restricted payload (temporary password or reset token) encrypted with
+    # Restricted payload (an invitation's sign-in link token) encrypted with
     # INVITATION_ENCRYPTION_KEY. Purged once the job is accepted, superseded or expired.
     secret_ciphertext: Mapped[bytes | None] = mapped_column(LargeBinary)
     secret_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -485,8 +496,8 @@ class EmailJob(Base):
 class EmailTemplate(Base):
     """Organiser-edited wording for one email kind. No row means the built-in wording.
 
-    Only the wording is editable: the sign-in details, button link and footer are always
-    added by the template, so an edit cannot remove them.
+    Only the wording is editable: the button with the personal sign-in link, the note
+    under it and the footer are always added by the template, so an edit cannot remove them.
     """
 
     __tablename__ = "email_templates"

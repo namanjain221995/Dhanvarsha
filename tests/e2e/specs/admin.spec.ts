@@ -3,8 +3,8 @@ import { readFile } from 'node:fs/promises'
 import zlib from 'node:zlib'
 import { type Page, expect, request, test } from '@playwright/test'
 import { Admin } from '../lib/admin'
-import { readInvitation, waitForMessage } from '../lib/mailpit'
-import { invitedParticipant, noHorizontalOverflow, uniqueEmail } from '../lib/participants'
+import { readInvitation } from '../lib/mailpit'
+import { invitedParticipant, linkToken, noHorizontalOverflow, uniqueEmail } from '../lib/participants'
 
 /*
  * Organiser console checks. Live state is shared by every spec, so each test creates its
@@ -95,11 +95,14 @@ function tinyPng(rgb: [number, number, number] = [91, 52, 196]): Buffer {
   ])
 }
 
-/** Sign a participant in through the API and vote for `nomineeName` on the first ballot. */
-async function voteAs(baseURL: string, person: { userId: string; password: string }, eventId: string, nomineeName: string) {
+/**
+ * Sign a participant in through the API with their link (as its button does; the request
+ * context keeps the session and device cookies) and vote for `nomineeName` on the first ballot.
+ */
+async function voteAs(baseURL: string, person: { link: string }, eventId: string, nomineeName: string) {
   const api = await request.newContext({ baseURL, extraHTTPHeaders: { Origin: baseURL } })
-  const login = await api.post('/api/v1/auth/login', { data: { user_id: person.userId, password: person.password } })
-  expect(login.status(), await login.text()).toBe(200)
+  const enter = await api.post('/api/v1/auth/link', { data: { token: linkToken(person.link) } })
+  expect(enter.status(), await enter.text()).toBe(200)
   const snapshot = await (await api.get('/api/v1/me/snapshot')).json()
   const detail = await (await api.get(`/api/v1/me/events/${eventId}`)).json()
   const ballot = detail.ballots[0] as { id: string; nominees: { id: string; name: string }[] }
@@ -235,13 +238,16 @@ test.describe('organiser console', () => {
 
     const dialog = page.getByRole('dialog', { name: 'Import Alpha' })
     await dialog.getByRole('button', { name: 'Send invitation…' }).click()
-    await expect(dialog.getByText(/user ID \(their email address\) and a new password/)).toBeVisible()
+    await expect(dialog.getByText(/Emails a new personal sign-in link/)).toBeVisible()
     await dialog.getByRole('button', { name: 'Send invitation', exact: true }).click()
     await expect(dialog.getByText('Invitation queued for Import Alpha.')).toBeVisible()
 
-    const message = await waitForMessage(first, 'invitation')
-    expect(message.text).toContain(`User ID (your email address): ${first}`)
-    expect(message.text).toMatch(/Password:\s+[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}/)
+    // The email carries their personal link (readInvitation accepts only a real token) and no
+    // user ID or password.
+    const invitation = await readInvitation(first)
+    expect(invitation.link).toBe(`${baseURL}/enter#token=${invitation.token}`)
+    expect(invitation.text).not.toContain('User ID')
+    expect(invitation.text).not.toContain('Password:')
     await dialog.getByRole('button', { name: 'Done' }).click()
     await expect(page.getByRole('row', { name: /Import Alpha/ })).toContainText(/Invit/)
     await admin.dispose()
@@ -412,7 +418,7 @@ test.describe('organiser console', () => {
     expect(rows).toHaveLength(3)
     expect(rows.find((row) => row.includes(',Ruby,'))).toMatch(/,1,50\.0,2,\d+,yes,yes$/)
     expect(rows.find((row) => row.includes(',Topaz,'))).toMatch(/,0,0\.0,2,\d+,no,yes$/)
-    for (const secret of [alice.email, bob.email, alice.userId, bob.userId, '@']) expect(csv).not.toContain(secret)
+    for (const secret of [alice.email, bob.email, linkToken(alice.link), linkToken(bob.link), '@']) expect(csv).not.toContain(secret)
 
     // Not published yet: participants see no results.
     const hidden = await (await aliceApi.get(`/api/v1/me/events/${eventId}`)).json()
@@ -462,9 +468,9 @@ test.describe('organiser console', () => {
     await confirm.getByRole('button', { name: 'Send invitations' }).click()
     await flash(page, '2 new participants added.')
     for (const to of [first, second]) {
+      // Each one carries a real personal link, never the preview's example link.
       const invitation = await readInvitation(to)
-      expect(invitation.userId).toBe(to)
-      expect(invitation.password).not.toBe('XXXX-XXXX-XXXX')
+      expect(invitation.link).not.toContain('#token=example')
       expect(invitation.text).toContain('Welcome to the e2e night.')
       expect(invitation.text).not.toContain('Preview')
       expect(invitation.html).not.toContain('<b>No markup</b>')

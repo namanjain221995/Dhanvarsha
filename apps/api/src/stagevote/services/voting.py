@@ -30,7 +30,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import get_settings
-from ..deps import REVOKE_MESSAGES, ParticipantContext
+from ..deps import REVOKE_MESSAGES, ParticipantContext, revoke_message
 from ..errors import AppError, not_found
 from ..security import new_receipt_code, request_hash
 from ..state import emit, lock_live_shared
@@ -140,8 +140,8 @@ async def submit_vote(
         await db.execute(text(f"SET LOCAL lock_timeout = '{int(settings.vote_lock_timeout_ms)}ms'"))
         # 1. Programme live lock, shared: votes never block each other.
         await lock_live_shared(db, ctx.programme_id)
-        # 2+3. Participant and session rows, shared: revocation, disabling and password
-        # resets take conflicting locks, so they are ordered against this vote.
+        # 2+3. Participant and session rows, shared: revocation, disabling and new
+        # invitations take conflicting locks, so they are ordered against this vote.
         # Two statements keep the documented order (participant, then session).
         person = (
             await db.execute(
@@ -160,12 +160,7 @@ async def submit_vote(
         ).one()
         if session.revoked_at is not None:
             reason = session.revoke_reason or "logout"
-            raise AppError(
-                "SESSION_REVOKED",
-                REVOKE_MESSAGES.get(reason, REVOKE_MESSAGES["logout"]),
-                401,
-                {"reason": reason},
-            )
+            raise AppError("SESSION_REVOKED", revoke_message(reason), 401, {"reason": reason})
         if session.expired:
             raise AppError("SESSION_EXPIRED", REVOKE_MESSAGES["expired"], 401)
         if person.disabled_at is not None or person.activated_at is None:

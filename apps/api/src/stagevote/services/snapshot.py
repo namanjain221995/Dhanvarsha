@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..deps import ParticipantContext
 from ..errors import AppError, not_found
 from ..models import Asset, Ballot, Event, Nominee, Programme
+from .participants import name_from_email
 from .programmes import login_phase, public_programme, server_now
 from .results import ballot_results
 from .voting import list_receipts
@@ -246,7 +247,11 @@ async def participant_snapshot(db: AsyncSession, ctx: ParticipantContext) -> dic
         "state_version": programme.state_version,
         "phase": phase,
         "programme": public_programme(programme, structure.urls, now),
-        "participant": {"user_code": ctx.user_code, "display_name": ctx.display_name},
+        # Voters invited without a name are greeted by the name in their address.
+        "participant": {
+            "user_code": ctx.user_code,
+            "display_name": ctx.display_name or name_from_email(ctx.email),
+        },
         "session_expires_at": ctx.expires_at,
         "csrf_token": ctx.csrf_token,
         "event_count": total,

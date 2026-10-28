@@ -300,7 +300,9 @@ export type ParticipantDetail = {
     activated_at: string | null
     disabled_at: string | null
     invited_at: string | null
-    temp_password_expires_at: string | null
+    /** When the newest invitation link was made, and when a device first used it (null until then). */
+    link_issued_at: string | null
+    link_bound_at: string | null
     created_at: string
   }
   email_jobs: {

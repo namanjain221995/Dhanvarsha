@@ -21,6 +21,12 @@ export type PublicProgramme = {
   instructions?: string
 }
 
+/** POST /auth/link/check: what the personal link in an invitation can do in this browser. Never signs in. */
+export type LinkCheck = { state: 'ready' | 'signed_in' | 'in_use' | 'invalid' | 'disabled' }
+
+/** POST /auth/link: the tap on the button. reused_session is true when this browser was already signed in. */
+export type LinkEntry = { ok: boolean; reused_session: boolean }
+
 export type EventStatus = 'live' | 'upcoming' | 'closed'
 
 export type BallotSummary = { id: string; title: string; voted: boolean }

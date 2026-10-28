@@ -276,7 +276,7 @@ export function ParticipantsPage() {
           key={dialog.key}
           open
           title="Invite everyone not yet invited?"
-          description={`${plural(counts?.not_invited ?? 0, 'participant')} will get an email with their user ID (their email address) and a password. Disabled accounts are skipped.`}
+          description={`${plural(counts?.not_invited ?? 0, 'participant')} will get an email with their own sign-in link. Disabled accounts are skipped.`}
           confirmLabel={`Send ${plural(counts?.not_invited ?? 0, 'invitation')}`}
           busy={inviteBusy}
           error={inviteError}

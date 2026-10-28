@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import hmac
 import json
+import re
 import secrets
 import uuid
 from typing import Any
@@ -60,6 +61,15 @@ def new_token() -> str:
     return secrets.token_urlsafe(32)
 
 
+# What new_token() returns: 32 random bytes as 43 url-safe base64 characters.
+_TOKEN_SHAPE = re.compile(r"[A-Za-z0-9_-]{43}")
+
+
+def is_token_shaped(value: str) -> bool:
+    """Whether `value` could be a token from new_token() (says nothing about its validity)."""
+    return _TOKEN_SHAPE.fullmatch(value) is not None
+
+
 def token_hash(token: str) -> bytes:
     return hashlib.sha256(token.encode()).digest()
 
@@ -86,11 +96,6 @@ def new_user_code() -> str:
 
 def new_receipt_code() -> str:
     return f"R-{random_code(4)}-{random_code(4)}"
-
-
-def new_invitation_password() -> str:
-    # Three groups of four from a 31-symbol alphabet: about 59 bits of entropy.
-    return "-".join(random_code(4) for _ in range(3))
 
 
 def request_hash(*parts: str) -> str:

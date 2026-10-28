@@ -1,7 +1,5 @@
 'use client'
 
-import { LogIn } from 'lucide-react'
-import Link from 'next/link'
 import { Button } from '@/components/ui/button'
 import { Notice } from '@/components/ui/misc'
 import { ConnectionBanner, PageColumn, ParticipantHeader } from './bits'
@@ -13,22 +11,26 @@ export function ParticipantFrame({ children }: { children: React.ReactNode }) {
   const p = useParticipant()
 
   if (p.status === 'signed_out') {
+    // Voters come back only through the link in their invitation email, and a disabled
+    // account cannot come back at all, so its page does not suggest it. Most server
+    // messages already say how to come back; the line below is only added when one doesn't.
+    const canReturn =
+      p.signedOutCode !== 'ACCOUNT_DISABLED' &&
+      p.signedOutReason !== 'disabled' &&
+      !(p.signedOutMessage ?? '').includes('invitation email')
     return (
       <main>
         <PageColumn className="pt-16">
           <section className="rounded-[var(--radius-hero)] border border-sand bg-paper p-6 shadow-[var(--shadow-card)]">
             <h1 className="type-display text-[1.9rem]">You are signed out</h1>
-            <p className="mt-2 text-plum-soft" role="status">
-              {p.signedOutMessage ?? 'Sign in again to continue.'}
-            </p>
-            <Link
-              href="/"
-              data-variant="primary"
-              className="mt-6 inline-flex min-h-12 items-center gap-2 rounded-full bg-primary px-6 font-semibold text-white hover:bg-primary-deep"
-            >
-              <LogIn aria-hidden className="size-4" />
-              Sign in
-            </Link>
+            {p.signedOutMessage ? (
+              <p className="mt-2 text-plum-soft" role="status">
+                {p.signedOutMessage}
+              </p>
+            ) : null}
+            {canReturn ? (
+              <p className="mt-4 font-semibold text-plum">Open your invitation email on this device and tap the button to come back.</p>
+            ) : null}
           </section>
         </PageColumn>
       </main>

@@ -8,7 +8,7 @@ Lock ordering (documented in docs/architecture.md and followed everywhere):
    ballot and nominee editor take it EXCLUSIVE before touching rows.
 2. programme row        - FOR UPDATE, only inside live transitions and settings edits.
 3. event / ballot rows  - FOR UPDATE inside transitions and editors.
-4. participant row      - FOR SHARE in votes, FOR UPDATE in login, invitations,
+4. participant row      - FOR SHARE in votes, FOR UPDATE in link sign-in, invitations,
    disable and session reset.
 5. session row          - FOR SHARE in votes, UPDATE in revocation.
 

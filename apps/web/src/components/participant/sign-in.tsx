@@ -1,13 +1,13 @@
 'use client'
 
+import { LoaderCircle } from 'lucide-react'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
-import { PasswordField, TextField } from '@/components/ui/field'
 import { Notice } from '@/components/ui/misc'
 import { ApiError, participantApi } from '@/lib/api'
 import { formatInZone, localEquivalent, serverClock, zoneAbbreviation } from '@/lib/time'
-import type { PublicProgramme } from '@/lib/types'
+import type { LinkCheck, LinkEntry, PublicProgramme } from '@/lib/types'
 import { PageColumn } from './bits'
 import { OpeningCountdown } from './opening-countdown'
 import { ProgrammeLogo } from './programme-logo'
@@ -69,84 +69,225 @@ export function ProgrammeMasthead({ programme, compact = false }: { programme: P
   )
 }
 
-export type SignInForm = ReturnType<typeof useSignInForm>
+/*
+ * Voters sign in with the personal link in their invitation email, /enter#token=…. The token
+ * sits in the fragment, so it never reaches a server, a log or a Referer header. The page reads
+ * it once, keeps it in this tab's storage (so a reload still works) and removes it from the
+ * address bar, so the browser cannot copy or share a working link. Opening the page only checks
+ * the link: it is used only when the voter taps the button, so email scanners that open links
+ * cannot take it. The first browser that taps the button keeps the link.
+ */
 
-/** Everything the sign-in pages share: the programme, the form state and the submit action. */
-export function useSignInForm() {
+/** This tab's copy of the token. Not an 'sv:' key: clearVotingStorage() removes those. */
+const LINK_TOKEN_KEY = 'svlink:token'
+const TOKEN_SHAPE = /^[A-Za-z0-9_-]{43}$/
+/** Preview and test emails link to this token instead of a working one. */
+const EXAMPLE_TOKEN = 'example'
+
+/** Shown word for word. invalid and inUse are the API's LINK_INVALID and LINK_IN_USE messages. */
+const MESSAGES = {
+  invalid: 'This sign-in link is not valid any more. Open the newest invitation email, or ask the help desk to send you a new one.',
+  inUse:
+    'This link is already in use on another phone or browser. If that was you in another app (for example inside your email app), open the link there. Otherwise ask the help desk to send you a new invitation.',
+  disabled: 'This account has been disabled. Contact the organisers for help.',
+  example: 'This is an example link from a preview email. It does not sign anyone in.',
+  signedOut: 'You signed out. To come back, open your invitation email on this device and tap the button.',
+  network: 'Could not reach the server. Check your connection and try again.',
+  rateLimited: 'Too many attempts from this network. Wait a minute and try again.',
+}
+
+/** A tap refused for one of these reasons is refused again on every tap, so the button goes away. */
+const FINAL_REFUSALS = new Set(['LINK_IN_USE', 'LINK_INVALID', 'ACCOUNT_DISABLED'])
+
+/** The API refuses a token far too long to be a link (422) instead of answering "invalid". */
+function isMalformedLink(error: unknown): boolean {
+  return error instanceof ApiError && error.status === 422
+}
+
+export type LinkState =
+  /** Looking at the link (or, without one, at the session). */
+  | { kind: 'checking' }
+  /** The link can sign in on this device: the button is shown. */
+  | { kind: 'ready' }
+  /** No link on this page or in this tab, and not signed in. */
+  | { kind: 'no_link' }
+  /** The link cannot sign anyone in here: in use elsewhere, replaced, disabled, or an example. */
+  | { kind: 'refused'; message: string }
+  /** The link could not be checked; "Try again" checks it again. */
+  | { kind: 'unreachable'; message: string }
+
+/** The token in the address: the emailed link's fragment (#token=), or ?token= as a fallback. */
+function tokenInAddress(): string | null {
+  const fromFragment = new URLSearchParams(window.location.hash.slice(1)).get('token')?.trim()
+  const fromQuery = new URLSearchParams(window.location.search).get('token')?.trim()
+  return fromFragment || fromQuery || null
+}
+
+function storedToken(): string | null {
+  try {
+    return window.sessionStorage.getItem(LINK_TOKEN_KEY)
+  } catch {
+    return null
+  }
+}
+
+function storeToken(token: string | null) {
+  try {
+    if (token) window.sessionStorage.setItem(LINK_TOKEN_KEY, token)
+    else window.sessionStorage.removeItem(LINK_TOKEN_KEY)
+  } catch {
+    /* storage unavailable: the page keeps the token in memory */
+  }
+}
+
+function failureMessage(error: unknown): string {
+  if (!(error instanceof ApiError)) return 'Something went wrong. Try again.'
+  if (error.isNetwork) return MESSAGES.network
+  if (error.code === 'RATE_LIMITED') return MESSAGES.rateLimited
+  return error.message
+}
+
+// Link checks still on their way. A check may set this browser's device cookie, so a tap waits
+// for every check to finish first: otherwise a late reply could replace the cookie the tap
+// just tied the link to, and lock the owner out of their own link.
+const pendingChecks = new Set<Promise<unknown>>()
+
+function trackCheck<T>(request: Promise<T>): Promise<T> {
+  pendingChecks.add(request)
+  void request.catch(() => undefined).finally(() => pendingChecks.delete(request))
+  return request
+}
+
+/** What this page can offer. Read-only: it never uses the link and never starts a session. */
+async function inspect(token: string | null): Promise<LinkState | { kind: 'signed_in' }> {
+  if (!token) {
+    try {
+      const session = await participantApi<{ signed_in: boolean }>('/auth/session', { timeoutMs: 8000 })
+      return session.signed_in ? { kind: 'signed_in' } : { kind: 'no_link' }
+    } catch {
+      return { kind: 'no_link' }
+    }
+  }
+  if (!TOKEN_SHAPE.test(token)) {
+    return { kind: 'refused', message: token === EXAMPLE_TOKEN ? MESSAGES.example : MESSAGES.invalid }
+  }
+  try {
+    const { state } = await trackCheck(
+      participantApi<LinkCheck>('/auth/link/check', { method: 'POST', body: { token }, timeoutMs: 10_000 }),
+    )
+    if (state === 'signed_in') return { kind: 'signed_in' }
+    if (state === 'ready') return { kind: 'ready' }
+    if (state === 'in_use') return { kind: 'refused', message: MESSAGES.inUse }
+    if (state === 'disabled') return { kind: 'refused', message: MESSAGES.disabled }
+    return { kind: 'refused', message: MESSAGES.invalid }
+  } catch (error) {
+    if (isMalformedLink(error)) return { kind: 'refused', message: MESSAGES.invalid }
+    return { kind: 'unreachable', message: failureMessage(error) }
+  }
+}
+
+export type LinkSignIn = ReturnType<typeof useLinkSignIn>
+
+/** Everything the sign-in pages share: the programme, what the link allows here, and the button's action. */
+export function useLinkSignIn() {
   const router = useRouter()
   const params = useSearchParams()
   const { programme, error: loadError, reload } = usePublicProgramme()
-  const [userId, setUserId] = useState(params.get('u') ?? '')
-  const [password, setPassword] = useState('')
+  const [link, setLink] = useState<LinkState>({ kind: 'checking' })
+  const [attempt, setAttempt] = useState(0)
   const [busy, setBusy] = useState(false)
-  const [formError, setFormError] = useState<{ message: string; code?: string } | null>(null)
-  const [checkingSession, setCheckingSession] = useState(true)
-  const notice = params.get('notice')
+  const [error, setError] = useState<string | null>(null)
+  const token = useRef<string | null>(null)
+  const notice = params.get('notice') === 'signed_out' ? MESSAGES.signedOut : null
 
-  // Already signed in on this browser: go straight to the programme.
   useEffect(() => {
     let cancelled = false
-    participantApi<{ signed_in: boolean }>('/auth/session', { timeoutMs: 8000 })
-      .then((result) => {
-        if (cancelled) return
-        if (result.signed_in) router.replace('/lobby')
-        else setCheckingSession(false)
-      })
-      .catch(() => {
-        if (!cancelled) setCheckingSession(false)
-      })
+    // Strict Mode runs this twice. The first run takes the token out of the address; the
+    // second finds it in this tab's storage, or in memory when storage is unavailable.
+    const fromAddress = tokenInAddress()
+    if (fromAddress) {
+      storeToken(fromAddress)
+      // The Next.js router sees this replaceState and keeps its own copy of the address in step.
+      window.history.replaceState(null, '', window.location.pathname)
+    }
+    const current = fromAddress ?? storedToken() ?? token.current
+    token.current = current
+    void inspect(current).then(async (outcome) => {
+      if (cancelled) return
+      if (outcome.kind === 'refused') {
+        // A link that cannot sign in here is not kept for later visits.
+        storeToken(null)
+        if (!fromAddress) {
+          // It was remembered from an earlier visit in this tab, not opened just now: forget it
+          // quietly and treat this visit as one without a link (a signed-in voter goes to the lobby).
+          token.current = null
+          outcome = await inspect(null)
+          if (cancelled) return
+        }
+      }
+      if (outcome.kind !== 'signed_in') {
+        setLink(outcome)
+        return
+      }
+      // Already signed in here. Arriving through the link counts as a fresh sign-in; a plain
+      // visit to the page keeps the drafts and pending votes of the session that is open.
+      if (current) {
+        storeToken(null)
+        clearVotingStorage()
+      }
+      router.replace('/lobby')
+    })
+    // A newer link opened in this tab changes only the fragment, which does not reload the page.
+    const onHashChange = () => {
+      if (!tokenInAddress()) return
+      setError(null)
+      setLink({ kind: 'checking' })
+      setAttempt((n) => n + 1)
+    }
+    window.addEventListener('hashchange', onHashChange)
     return () => {
       cancelled = true
+      window.removeEventListener('hashchange', onHashChange)
     }
-  }, [router])
+  }, [router, attempt])
 
-  const submit = async (event: React.FormEvent) => {
-    event.preventDefault()
-    if (busy) return
-    setFormError(null)
-    if (!userId.trim() || !password) {
-      setFormError({ message: 'Enter the email address and password from your invitation.' })
-      return
-    }
+  /** The button. Only a tap uses the link; the first device that taps keeps it. */
+  const enter = async () => {
+    const current = token.current
+    if (busy || !current) return
     setBusy(true)
+    setError(null)
     try {
-      await participantApi('/auth/login', { method: 'POST', body: { user_id: userId.trim(), password } })
+      await Promise.allSettled([...pendingChecks])
+      await participantApi<LinkEntry>('/auth/link', { method: 'POST', body: { token: current } })
+      storeToken(null)
       clearVotingStorage()
       router.replace('/lobby')
     } catch (err) {
       setBusy(false)
-      if (!(err instanceof ApiError)) {
-        setFormError({ message: 'Something went wrong. Try again.' })
-        return
+      if (err instanceof ApiError && (err.code === 'LOGIN_NOT_OPEN' || err.code === 'LOGIN_CLOSED')) void reload()
+      if (err instanceof ApiError && FINAL_REFUSALS.has(err.code)) {
+        storeToken(null)
+        setLink({ kind: 'refused', message: err.message })
       }
-      if (err.code === 'LOGIN_NOT_OPEN' || err.code === 'LOGIN_CLOSED') void reload()
-      if (err.isNetwork) {
-        setFormError({ message: 'Could not reach the server. Check your connection and try again.' })
-        return
-      }
-      setFormError({ message: err.message, code: err.code })
+      else if (isMalformedLink(err)) setLink({ kind: 'refused', message: MESSAGES.invalid })
+      else setError(failureMessage(err))
     }
   }
 
-  return {
-    programme,
-    loadError,
-    reload,
-    userId,
-    setUserId,
-    password,
-    setPassword,
-    busy,
-    formError,
-    checkingSession,
-    notice,
-    submit,
+  /** "Try again" after the link could not be checked. */
+  const retry = () => {
+    setError(null)
+    setLink({ kind: 'checking' })
+    setAttempt((n) => n + 1)
   }
+
+  return { programme, loadError, reload, link, busy, error, notice, enter, retry }
 }
 
 export function SignIn() {
-  const form = useSignInForm()
-  const { programme, loadError, reload, userId, setUserId, password, setPassword, busy, formError, checkingSession, notice, submit } = form
+  const signIn = useLinkSignIn()
+  const { programme, loadError, reload, link, busy, error, notice, enter, retry } = signIn
   const rememberedAccent = useRememberedAccent(programme?.accent)
 
   if (!programme && rememberedAccent === 'gold') return <StageLoading error={loadError} onRetry={() => void reload()} />
@@ -172,7 +313,7 @@ export function SignIn() {
   }
 
   // The gold look signs people in on its own stage.
-  if (programme.accent === 'gold') return <StageSignIn programme={programme} form={form} />
+  if (programme.accent === 'gold') return <StageSignIn programme={programme} signIn={signIn} />
 
   const tz = programme.timezone
   const phase = programme.login_phase
@@ -194,12 +335,9 @@ export function SignIn() {
           <h2 id="signin-title" className="type-display text-[1.7rem]">
             Sign in to vote
           </h2>
-          {notice === 'signed_out' ? (
-            <p className="mt-2 text-plum-soft">You signed out. Sign in again whenever you are ready.</p>
-          ) : null}
           {phase === 'before_open' ? (
             <Notice className="mt-4" tone="info" title="Sign-in has not opened yet">
-              It opens at {programme.login_opens_at ? `${formatInZone(programme.login_opens_at, tz, { hour: 'numeric', minute: '2-digit', weekday: 'short' })} ${zoneAbbreviation(tz, programme.login_opens_at)}` : 'a time the organisers will announce'}. Keep your invitation email: it has your password.
+              It opens at {programme.login_opens_at ? `${formatInZone(programme.login_opens_at, tz, { hour: 'numeric', minute: '2-digit', weekday: 'short' })} ${zoneAbbreviation(tz, programme.login_opens_at)}` : 'a time the organisers will announce'}. Keep your invitation email: its button signs you in.
             </Notice>
           ) : null}
           {phase === 'closed' ? (
@@ -208,42 +346,45 @@ export function SignIn() {
             </Notice>
           ) : null}
 
-          <form className="mt-5 space-y-4" onSubmit={submit} noValidate>
-            <TextField
-              label="Email address"
-              name="username"
-              type="email"
-              inputMode="email"
-              autoComplete="username"
-              autoCapitalize="none"
-              spellCheck={false}
-              value={userId}
-              onChange={(e) => setUserId(e.target.value)}
-              hint="Use the email address and password from your invitation email."
-              disabled={!open || checkingSession}
-            />
-            <PasswordField
-              label="Password"
-              name="password"
-              autoComplete="current-password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              disabled={!open || checkingSession}
-            />
-            <div aria-live="polite">
-              {formError ? (
-                <Notice tone="danger" role="alert">
-                  {formError.message}
-                </Notice>
-              ) : null}
-            </div>
-            <Button type="submit" size="lg" block busy={busy} disabled={!open || checkingSession}>
-              {busy ? 'Signing in…' : open ? 'Sign in' : phase === 'before_open' ? 'Sign-in opens soon' : 'Sign-in closed'}
-            </Button>
-          </form>
+          <div className="mt-5 space-y-4">
+            {link.kind === 'ready' ? (
+              <>
+                <div aria-live="polite" className="empty:hidden">
+                  {error ? (
+                    <Notice tone="danger" role="alert">
+                      {error}
+                    </Notice>
+                  ) : null}
+                </div>
+                <Button type="button" size="lg" block busy={busy} disabled={!open} aria-describedby="signin-hint" onClick={() => void enter()}>
+                  {busy ? 'Signing in…' : open ? 'Sign in' : phase === 'before_open' ? 'Sign-in opens soon' : 'Sign-in closed'}
+                </Button>
+                <p id="signin-hint" className="text-sm text-plum-soft">
+                  This button signs you in on this device only.
+                </p>
+              </>
+            ) : link.kind === 'checking' ? (
+              <p role="status" className="flex min-h-13 items-center gap-2 text-plum-soft">
+                <LoaderCircle aria-hidden className="size-4 animate-spin" />
+                One moment…
+              </p>
+            ) : link.kind === 'no_link' ? (
+              <p role="status" className="text-plum-soft">
+                {notice ?? 'To sign in, open your invitation email on this device and tap the button in it.'}
+              </p>
+            ) : (
+              <Notice
+                tone="danger"
+                role="alert"
+                action={link.kind === 'unreachable' ? <Button variant="secondary" onClick={retry}>Try again</Button> : undefined}
+              >
+                {link.message}
+              </Notice>
+            )}
+          </div>
 
           <p className="mt-5 border-t border-sand pt-4 text-sm text-plum-soft">
-            No invitation, or lost your password? Ask the organisers to send your invitation again.
+            No invitation, or the link stopped working? Ask the organisers to send your invitation again.
           </p>
         </section>
 

@@ -11,7 +11,6 @@ import hashlib
 import math
 import os
 import random
-import secrets
 from datetime import UTC, datetime, timedelta
 
 from PIL import Image, ImageDraw, ImageFont
@@ -21,8 +20,9 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from .config import get_settings
 from .db import build_engine
 from .models import Asset, Ballot, Event, Nominee, Participant, Programme
-from .security import hash_password, new_user_code
+from .security import new_token, new_user_code, token_hash
 from .services.assets import store_generated_image
+from .services.invitations import sign_in_link
 
 PALETTE = [
     ("#5b34c4", "#efe7ff"),
@@ -476,9 +476,7 @@ async def seed_demo(participants: int, activate_sample: int) -> None:
             "Sahil",
             "Tanvi",
         ]
-        sample_password = secrets.token_urlsafe(9) if activate_sample else None
-        sample_hash = await hash_password(sample_password) if sample_password else None
-        codes = []
+        links: list[tuple[str, str]] = []
         for i in range(1, participants + 1):
             name = f"{first_names[(i - 1) % len(first_names)]} Guest {i:03d}"
             p = Participant(
@@ -491,8 +489,10 @@ async def seed_demo(participants: int, activate_sample: int) -> None:
             )
             if i <= activate_sample:
                 # Ready to sign in without an emailed invitation (demo convenience only).
-                p.password_hash = sample_hash
-                codes.append(p.email)
+                token = new_token()
+                p.link_token_hash = token_hash(token)
+                p.link_issued_at = now
+                links.append((p.email, token))
             db.add(p)
         await db.execute(
             text("UPDATE programmes SET state_version = state_version + 1 WHERE id = :p"), {"p": programme.id}
@@ -500,14 +500,17 @@ async def seed_demo(participants: int, activate_sample: int) -> None:
     await engine.dispose()  # type: ignore[attr-defined]
     print(f"Demo programme ready: 14 rounds, {participants} synthetic participants (guestNNN@example.com).")
     print("Send invitations from Admin > Participants; they arrive in the local Mailpit inbox.")
-    if codes:
-        print(f"Sample accounts that can sign in now (password {sample_password}): {', '.join(codes)}")
+    if links:
+        base_url = get_settings().app_base_url
+        print("Sample accounts that can sign in now (each link opens on the first browser that uses it):")
+        for address, token in links:
+            print(f"  {address}  {sign_in_link(base_url, token)}")
 
 
 async def seed_loadtest(participants: int, events: int) -> None:
-    """Create and activate an isolated synthetic programme. Prints its credentials file."""
+    """Create and activate an isolated synthetic programme. Writes one sign-in link token
+    per synthetic account, one per line, to LOADTEST_ACCOUNTS_FILE."""
     _refuse_production()
-    password = os.environ.get("LOADTEST_PASSWORD") or secrets.token_urlsafe(12)
     maker, engine = _maker()
     stamp = datetime.now(UTC).strftime("%Y%m%d%H%M%S")
     slug = f"loadtest-{stamp}"
@@ -530,29 +533,30 @@ async def seed_loadtest(participants: int, events: int) -> None:
             for i in range(1, events + 1)
         ]
         await _build_rounds(db, programme, rounds, with_art=False)
-        hashed = await hash_password(password)
         lines = []
         for i in range(1, participants + 1):
-            code = new_user_code()
+            # Each account has its own link; the first browser that enters with it keeps it.
+            token = new_token()
             db.add(
                 Participant(
                     programme_id=programme.id,
                     email=f"load{i:04d}@loadtest.example.com",
                     email_normalized=f"load{i:04d}@loadtest.example.com",
                     display_name=f"Load {i:04d}",
-                    user_code=code,
-                    password_hash=hashed,
-                    activated_at=now,
+                    user_code=new_user_code(),
+                    link_token_hash=token_hash(token),
+                    link_issued_at=now,
                     synthetic=True,
                 )
             )
-            lines.append(code)
+            lines.append(token)
         count = (await db.execute(select(func.count()).select_from(Programme))).scalar_one()
     await engine.dispose()  # type: ignore[attr-defined]
     out = os.environ.get("LOADTEST_ACCOUNTS_FILE", "/tmp/loadtest-accounts.txt")  # noqa: S108 - synthetic data
     with open(out, "w", encoding="utf-8") as fh:  # noqa: ASYNC230 - one-off CLI write
         fh.write("\n".join(lines) + "\n")
     print(f"Load-test programme {slug} is now active ({count} programmes total).")
-    print(f"{participants} synthetic accounts written to {out}; shared password from LOADTEST_PASSWORD.")
-    if not os.environ.get("LOADTEST_PASSWORD"):
-        print(f"Generated password: {password}")
+    print(
+        f"{participants} synthetic sign-in link tokens written to {out}, one per line "
+        "(each token signs in one browser)."
+    )

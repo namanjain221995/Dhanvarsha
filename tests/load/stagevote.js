@@ -3,8 +3,9 @@
 // Run it only through tests/load/run.sh, which starts an isolated Compose project with
 // synthetic accounts and refuses any other target. What it does:
 //
-//   participants  VOTERS virtual users. Each opens the sign-in page like a phone (the page,
-//                 then every script, stylesheet and font it names), signs in (spread over
+//   participants  VOTERS virtual users, each with its own sign-in link. Each opens its link
+//                 like a phone (the /enter page, then every script, stylesheet and font it
+//                 names, then the link check the page makes), taps Enter the arena (spread over
 //                 LOGIN_RAMP_SECONDS), opens the lobby page, loads its snapshot, and holds a
 //                 live WebSocket like a phone would. Files already downloaded are not fetched
 //                 again (browsers keep them: they are cached for a year). On every
@@ -28,7 +29,6 @@ import { clearInterval, clearTimeout, setInterval, setTimeout } from 'k6/timers'
 
 const TARGET = __ENV.TARGET // e.g. http://proxy (inside the load project's Docker network)
 const ORIGIN = __ENV.ORIGIN // must equal the stack's APP_BASE_URL origin
-const PASSWORD = __ENV.LOADTEST_PASSWORD
 const VOTERS = Number(__ENV.VOTERS || 500)
 const LOGIN_RAMP_SECONDS = Number(__ENV.LOGIN_RAMP_SECONDS || 30)
 const BURST_SECONDS = Number(__ENV.BURST_SECONDS || 10)
@@ -37,16 +37,19 @@ const ROUNDS = Number(__ENV.ROUNDS || 3)
 const SETTLE_SECONDS = 20
 const HOLD_SECONDS = LOGIN_RAMP_SECONDS + 15 + ROUNDS * ROUND_SECONDS + SETTLE_SECONDS
 
-if (!TARGET || !ORIGIN || !PASSWORD || !__ENV.ACCOUNTS_FILE) {
-  throw new Error('TARGET, ORIGIN, LOADTEST_PASSWORD and ACCOUNTS_FILE are required (use tests/load/run.sh)')
+if (!TARGET || !ORIGIN || !__ENV.ACCOUNTS_FILE) {
+  throw new Error('TARGET, ORIGIN and ACCOUNTS_FILE are required (use tests/load/run.sh)')
 }
 
-const accounts = new SharedArray('accounts', () =>
+// One sign-in link token per line (written by seed-loadtest). A link works on one device only,
+// so every voter needs a token of their own: two voters sharing one would refuse each other.
+const tokens = new SharedArray('tokens', () =>
   open(__ENV.ACCOUNTS_FILE)
     .split('\n')
     .map((s) => s.trim())
     .filter(Boolean),
 )
+if (tokens.length < VOTERS) throw new Error(`ACCOUNTS_FILE holds ${tokens.length} sign-in links for ${VOTERS} voters`)
 
 export const options = {
   scenarios: {
@@ -148,26 +151,33 @@ async function openPage(path, name, cache) {
 export async function participant() {
   // Unique per participant VU (vu.idInTest also counts the host scenario).
   const index = exec.scenario.iterationInTest
-  const userId = accounts[index % accounts.length]
+  const token = tokens[index]
   const behaviour = index % 20 === 0 ? 'lossy' : index % 10 === 1 ? 'duplicate' : 'normal'
   const headers = { Origin: ORIGIN, 'Content-Type': 'application/json' }
 
   const browserCache = new Set()
 
   await new Promise((resolve) => setTimeout(resolve, Math.random() * LOGIN_RAMP_SECONDS * 1000))
-  // The sign-in page and the two requests it makes on load.
-  await openPage('/', 'page: sign-in', browserCache)
-  await Promise.all([
+  // The emailed link opens /enter (its #token=… part never leaves the phone), and the page makes
+  // two requests on load: the programme, and the link check, whose answer also gives this phone
+  // its device cookie. The tap on Enter the arena then signs in.
+  await openPage('/enter', 'page: enter', browserCache)
+  const [, check] = await Promise.all([
     http.asyncRequest('GET', `${TARGET}/api/v1/public/programme`, null, { tags: { name: 'public programme' } }),
-    http.asyncRequest('GET', `${TARGET}/api/v1/auth/session`, null, { tags: { name: 'session check' } }),
+    http.asyncRequest('POST', `${TARGET}/api/v1/auth/link/check`, JSON.stringify({ token }), { headers, tags: { name: 'link check' } }),
   ])
-  const login = await http.asyncRequest('POST', `${TARGET}/api/v1/auth/login`, JSON.stringify({ user_id: userId, password: PASSWORD }), {
+  const state = check.status === 200 ? (json(check) || {}).state : ''
+  if (state !== 'ready') {
+    unexpected(state ? `link check: ${state}` : 'link check', check)
+    return
+  }
+  const login = await http.asyncRequest('POST', `${TARGET}/api/v1/auth/link`, JSON.stringify({ token }), {
     headers,
-    tags: { name: 'login' },
+    tags: { name: 'link sign-in' },
   })
   loginLatency.add(login.timings.duration)
   if (login.status !== 200) {
-    unexpected('login', login)
+    unexpected('link sign-in', login)
     return
   }
 

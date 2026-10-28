@@ -10,7 +10,7 @@ test.describe('live changes and unreliable networks', () => {
     const person = await invitedParticipant(admin, baseURL!, 'lost')
     const round = await admin.createEvent(`Lost response ${Date.now().toString(36)}`, ['Juniper', 'Kestrel', 'Larch'])
     await admin.open(round)
-    await signIn(page, person.userId, person.password)
+    await signIn(page, person.link)
     await page.goto(`/event/${round}`)
 
     const keys: string[] = []
@@ -48,7 +48,7 @@ test.describe('live changes and unreliable networks', () => {
     const person = await invitedParticipant(admin, baseURL!, 'neverarrived')
     const round = await admin.createEvent(`Never arrived ${Date.now().toString(36)}`, ['Maple', 'Nutmeg'])
     await admin.open(round)
-    await signIn(page, person.userId, person.password)
+    await signIn(page, person.link)
     await page.goto(`/event/${round}`)
     const keys: string[] = []
     let attempt = 0
@@ -73,7 +73,7 @@ test.describe('live changes and unreliable networks', () => {
     const person = await invitedParticipant(admin, baseURL!, 'offline')
     const round = await admin.createEvent(`Offline ${Date.now().toString(36)}`, ['Oak', 'Pine'])
     await admin.open(round)
-    await signIn(page, person.userId, person.password)
+    await signIn(page, person.link)
     await page.goto(`/event/${round}`)
     await page.getByText('Pine', { exact: true }).click()
 
@@ -95,7 +95,7 @@ test.describe('live changes and unreliable networks', () => {
     const person = await invitedParticipant(admin, baseURL!, 'closing')
     const round = await admin.createEvent(`Closing ${Date.now().toString(36)}`, ['Quince', 'Rowan'])
     await admin.open(round)
-    await signIn(page, person.userId, person.password)
+    await signIn(page, person.link)
     await page.goto(`/event/${round}`)
     await page.getByText('Rowan', { exact: true }).click()
     await admin.closeCurrent()
@@ -113,7 +113,7 @@ test.describe('live changes and unreliable networks', () => {
     const first = await admin.createEvent(`Earlier ${stamp}`, ['Sage', 'Thyme'])
     const second = await admin.createEvent(`Later ${stamp}`, ['Umber', 'Violet'])
     await admin.open(first)
-    await signIn(page, person.userId, person.password)
+    await signIn(page, person.link)
     await page.goto(`/event/${first}`)
     await page.getByText('Thyme', { exact: true }).click()
     await admin.open(second)
@@ -132,7 +132,7 @@ test.describe('live changes and unreliable networks', () => {
     const admin = await Admin.login(baseURL!)
     const person = await invitedParticipant(admin, baseURL!, 'multi')
     await admin.closeCurrent()
-    await signIn(page, person.userId, person.password)
+    await signIn(page, person.link)
     const round = await admin.createEvent(`Two ballots ${Date.now().toString(36)}`, ['Wren', 'Yarrow'], 'team', 2)
     await admin.open(round)
     await expect(page.getByRole('link', { name: /Vote now/ })).toBeVisible({ timeout: 15_000 })
@@ -143,10 +143,17 @@ test.describe('live changes and unreliable networks', () => {
     await teams.getByText('Wren', { exact: true }).click()
     await page.getByRole('button', { name: 'Submit vote' }).click()
     await expect(page.getByRole('region', { name: 'Receipt for Best team' })).toBeVisible()
+    // One ballot is still open, so the page stays for it instead of going back.
+    await expect(page.getByText('Going back to the programme…')).toHaveCount(0)
     const members = page.getByRole('radiogroup', { name: 'Best member' })
     await members.getByText('Yarrow', { exact: true }).click()
     await page.getByRole('button', { name: 'Submit vote' }).click()
     await expect(page.getByRole('region', { name: 'Receipt for Best member' })).toBeVisible()
+    // Now the round is complete; "Stay on this page" stops the automatic return.
+    await expect(page.getByText('Going back to the programme…')).toBeVisible()
+    await page.getByRole('button', { name: 'Stay on this page' }).click()
+    await page.waitForTimeout(4_500)
+    await expect(page).toHaveURL(new RegExp(`/event/${round}$`))
     await admin.dispose()
   })
 })

@@ -21,13 +21,13 @@ def _client_claims(offset_seconds: float) -> dict[str, str]:
 
 async def test_login_refused_before_open_and_after_close_whatever_the_client_claims(world: World) -> None:
     person = await world.participant(login=False)
-    credentials = {"user_id": person.info.user_code, "password": person.info.password}
+    link = {"token": person.info.link_token}
 
     await world.set_window(timedelta(hours=1), timedelta(hours=5))
     opens_at = await world.factory.fetchval(
         "SELECT login_opens_at FROM programmes WHERE id = :p", p=world.programme_id
     )
-    resp = await person.http.post(f"{API}/auth/login", json=credentials, headers=_client_claims(2 * 3600))
+    resp = await person.http.post(f"{API}/auth/link", json=link, headers=_client_claims(2 * 3600))
     error = assert_error(resp, 403, "LOGIN_NOT_OPEN")
     assert datetime.fromisoformat(error["details"]["opens_at"]) == opens_at
     public = (await person.http.get(f"{API}/public/programme", headers=_client_claims(2 * 3600))).json()
@@ -36,7 +36,7 @@ async def test_login_refused_before_open_and_after_close_whatever_the_client_cla
     assert abs((server_time - await world.factory.now()).total_seconds()) < 5
 
     await world.set_window(timedelta(hours=-5), timedelta(hours=-1))
-    resp = await person.http.post(f"{API}/auth/login", json=credentials, headers=_client_claims(-2 * 3600))
+    resp = await person.http.post(f"{API}/auth/link", json=link, headers=_client_claims(-2 * 3600))
     assert_error(resp, 403, "LOGIN_CLOSED")
     assert (await person.http.get(f"{API}/public/programme")).json()["login_phase"] == "closed"
 
@@ -46,8 +46,15 @@ async def test_login_refused_before_open_and_after_close_whatever_the_client_cla
         )
         == 0
     )
+    # A refused tap binds nothing: once the window opens, another browser may still enter.
+    assert (
+        await world.factory.fetchval(
+            "SELECT link_device_hash FROM participants WHERE id = :p", p=person.info.id
+        )
+        is None
+    )
     await world.set_window(timedelta(hours=-1), timedelta(hours=1))
-    assert (await person.login()).status_code == 200
+    assert (await world.browser(person.info).enter()).status_code == 200
 
 
 async def test_login_window_boundary_follows_database_time(world: World) -> None:
@@ -57,9 +64,9 @@ async def test_login_window_boundary_follows_database_time(world: World) -> None
         "SELECT login_opens_at FROM programmes WHERE id = :p", p=world.programme_id
     )
 
-    assert_error(await person.login(), 403, "LOGIN_NOT_OPEN")
+    assert_error(await person.enter(), 403, "LOGIN_NOT_OPEN")
     await wait_until_db_time(world.factory, opens_at)
-    resp = await person.login()
+    resp = await person.enter()
     assert resp.status_code == 200, resp.text
 
 

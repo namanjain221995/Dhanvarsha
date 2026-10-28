@@ -46,8 +46,8 @@ if [ -z "$CONFIRM" ]; then
   exit 2
 fi
 case "$VOTERS$REQUESTS$THINK_MS$API_WORKERS" in *[!0-9]*) echo "numbers only for --users, --requests, --think-ms, --api-workers" >&2; exit 2 ;; esac
-if [ "$MODE" = api ] && [ "$REQUESTS" -lt "$VOTERS" ]; then
-  echo "--requests must be at least --users (every user signs in once)" >&2; exit 2
+if [ "$MODE" = api ] && [ "$REQUESTS" -lt $((VOTERS * 2)) ]; then
+  echo "--requests must be at least twice --users (every user checks their link and signs in once)" >&2; exit 2
 fi
 [ -f .env ] || { echo "Run scripts/bootstrap.sh first" >&2; exit 1; }
 
@@ -58,7 +58,8 @@ export APP_BASE_URL="http://localhost:${STAGEVOTE_HTTP_PORT}"
 # the main stack (a real provider must never receive synthetic test addresses).
 export EMAIL_PROVIDER=mailpit SMTP_HOST=mailpit SMTP_PORT=1025 SMTP_TLS_MODE=none SMTP_USERNAME= SMTP_PASSWORD= \
   GOOGLE_SERVICE_ACCOUNT_FILE= GOOGLE_WORKSPACE_SENDER= MAIL_FROM="StageVote Tests <noreply@example.com>"
-# 500 users behind one test machine share one IP address; failed sign-ins are still limited per account.
+# 500 users behind one test machine share one IP address. Only sign-in links that do not work
+# count against this limit, but a few of them must not lock out the whole run.
 export LOGIN_FAILURES_PER_IP=100000
 # The test copy is plain HTTP on localhost, even on a production server whose .env says production.
 export APP_ENV=development
@@ -83,10 +84,10 @@ until curl -fsS "$APP_BASE_URL/api/v1/ready" >/dev/null 2>&1; do
 done
 
 if [ "$MODE" = api ]; then EVENTS=2; else EVENTS=$((ROUNDS + 1)); fi
-LOADTEST_PASSWORD="$(python3 -c 'import secrets; print(secrets.token_urlsafe(12))')"
-export LOADTEST_PASSWORD
 echo "== seeding $VOTERS synthetic participants and $EVENTS rounds"
-$COMPOSE run --rm --no-deps --user 0:0 -e LOADTEST_PASSWORD -e LOADTEST_ACCOUNTS_FILE=/out/accounts.txt \
+# Every synthetic participant gets a personal sign-in link; accounts.txt holds one link token
+# per line for k6. They sign in to this test copy only, and the file is deleted after the run.
+$COMPOSE run --rm --no-deps --user 0:0 -e LOADTEST_ACCOUNTS_FILE=/out/accounts.txt \
   -v "$RESULTS:/out" migrate stagevote seed-loadtest --participants "$VOTERS" --events "$EVENTS" --yes-synthetic
 
 # Set this run's password on the test organiser (creates it the first time).
@@ -112,7 +113,7 @@ STARTED=$(date -u +%s)
 set +e
 { docker run --rm --network "${PROJECT}_default" --ulimit nofile=65536:65536 \
   -v "$ROOT/tests/load:/scripts:ro" -v "$RESULTS:/out" \
-  -e TARGET=http://proxy -e ORIGIN="$APP_BASE_URL" -e LOADTEST_PASSWORD -e ACCOUNTS_FILE=/out/accounts.txt \
+  -e TARGET=http://proxy -e ORIGIN="$APP_BASE_URL" -e ACCOUNTS_FILE=/out/accounts.txt \
   -e ADMIN_EMAIL="$LOAD_ADMIN_EMAIL" -e ADMIN_PASSWORD="$LOAD_ADMIN_PASSWORD" \
   -e VOTERS="$VOTERS" -e ROUNDS="$ROUNDS" -e BURST_SECONDS="$BURST" -e ROUND_SECONDS="$ROUND_SECONDS" \
   -e LOGIN_RAMP_SECONDS="$LOGIN_RAMP" -e USERS="$VOTERS" -e REQUESTS="${REQUESTS:-0}" -e THINK_MS="$THINK_MS" \
@@ -123,6 +124,8 @@ K6_STATUS=$(cat "$RESULTS/k6.status" 2>/dev/null || echo 1)  # k6's own exit cod
 set -e
 ENDED=$(date -u +%s)
 kill $SAMPLER 2>/dev/null || true
+# Nothing needs the sign-in links after k6, and the results folder is served by serve.sh.
+rm -f "$RESULTS/accounts.txt" 2>/dev/null || true
 
 echo "== reconciling the database"
 $COMPOSE run --rm --no-deps migrate stagevote reconcile | tee "$RESULTS/reconcile.txt"

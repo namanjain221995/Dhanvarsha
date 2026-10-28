@@ -4,7 +4,8 @@
   setup and inspection; every behaviour under test goes through the HTTP API or the
   service/worker functions that production code uses.
 * `ParticipantClient` / `AdminClient` wrap an `httpx.AsyncClient` (one cookie jar per
-  browser) talking to the ASGI app in-process.
+  browser) talking to the ASGI app in-process. A participant browser keeps its session and
+  device cookies, so the browser that first entered with a sign-in link can come back.
 * Every clock comparison uses database time (`clock_timestamp()`), never the test
   process clock.
 """
@@ -17,6 +18,7 @@ import json
 import os
 import uuid
 from collections.abc import Awaitable, Callable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -26,10 +28,13 @@ import asyncpg
 import httpx
 from fastapi import FastAPI
 from sqlalchemy import text
+from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from stagevote.db import asyncpg_dsn
 from stagevote.models import AdminUser, Ballot, Event, Nominee, Participant, Programme
-from stagevote.security import decrypt_payload, hash_password_sync, new_user_code
+from stagevote.security import decrypt_payload, hash_password_sync, new_token, new_user_code, token_hash
+from stagevote.services.invitations import LINK_TOKEN_KEY
 from stagevote.worker.runner import Worker
 
 API_DIR = Path(__file__).resolve().parents[1]
@@ -37,14 +42,16 @@ REPO_ROOT = API_DIR.parents[1]
 ORIGIN = "http://testserver"
 API = "/api/v1"
 ADMIN_API = "/api/v1/admin"
+# Plain names: the tests run over http, where the __Host- prefixed names cannot be used.
 PARTICIPANT_COOKIE = "sv_session"
+DEVICE_COOKIE = "sv_device"
 ADMIN_COOKIE = "sv_admin"
+TEST_DB_PREFIX = "stagevote_test_"
+APP_ROLE = "stagevote_app"
+OWNER_ROLE = "stagevote_owner"
 
-PARTICIPANT_PASSWORD = "Lantern-Velvet-Orbit-42"
-NEW_PASSWORD = "Saffron-Circuit-Kettle-77"
 ADMIN_PASSWORD = "Organiser-Strong-Passphrase-7"
 # Hashed once: Argon2 is deliberately slow and most tests only need *a* valid hash.
-_PARTICIPANT_HASH = hash_password_sync(PARTICIPANT_PASSWORD)
 _ADMIN_HASH = hash_password_sync(ADMIN_PASSWORD)
 
 _client_ips = itertools.count(1)
@@ -61,6 +68,73 @@ class DatabaseInfo:
 
 def mailpit_api() -> str:
     return f"http://127.0.0.1:{os.environ.get('MAILPIT_UI_PORT') or '8025'}/api/v1"
+
+
+# ---- throwaway databases ------------------------------------------------------------
+
+
+def database_named(base: DatabaseInfo, name: str) -> DatabaseInfo:
+    """Another database on the same server, reached with the same roles."""
+    assert name.startswith(TEST_DB_PREFIX)
+
+    def rename(url: str) -> str:
+        return make_url(url).set(database=name).render_as_string(hide_password=False)
+
+    return DatabaseInfo(
+        name=name,
+        owner_url=rename(base.owner_url),
+        app_url=rename(base.app_url),
+        super_url=rename(base.super_url),
+        super_admin_url=base.super_admin_url,
+    )
+
+
+def in_thread[T](fn: Callable[..., T], *args: Any) -> T:
+    """Run blocking/asyncio.run code outside pytest-asyncio's event loop."""
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        return pool.submit(fn, *args).result()
+
+
+async def create_database(db: DatabaseInfo) -> None:
+    conn = await asyncpg.connect(asyncpg_dsn(db.super_admin_url))
+    try:
+        await conn.execute(f'CREATE DATABASE "{db.name}" OWNER {OWNER_ROLE}')
+    finally:
+        await conn.close()
+    conn = await asyncpg.connect(asyncpg_dsn(db.super_url))
+    try:
+        # Same schema preparation as infra/postgres/init/10-stagevote-roles.sh.
+        await conn.execute(
+            f"ALTER SCHEMA public OWNER TO {OWNER_ROLE}; "
+            "REVOKE ALL ON SCHEMA public FROM PUBLIC; "
+            f"GRANT USAGE ON SCHEMA public TO {APP_ROLE};"
+        )
+    finally:
+        await conn.close()
+
+
+async def drop_database(db: DatabaseInfo) -> None:
+    assert db.name.startswith(TEST_DB_PREFIX) and db.name != "stagevote"
+    conn = await asyncpg.connect(asyncpg_dsn(db.super_admin_url))
+    try:
+        await conn.execute(f'DROP DATABASE IF EXISTS "{db.name}" WITH (FORCE)')
+    finally:
+        await conn.close()
+
+
+def migrate(owner_url: str, revision: str = "head", *, downgrade: bool = False) -> None:
+    """Alembic as the owner role, exactly as deployments run it (blocking: use in_thread)."""
+    from alembic import command
+    from alembic.config import Config
+
+    cfg = Config(str(API_DIR / "alembic.ini"))
+    cfg.attributes["url"] = owner_url
+    cfg.attributes["app_role"] = APP_ROLE
+    cfg.attributes["skip_logging_config"] = True  # keep pytest's logging intact
+    if downgrade:
+        command.downgrade(cfg, revision)
+    else:
+        command.upgrade(cfg, revision)
 
 
 # ---- data ---------------------------------------------------------------------
@@ -88,7 +162,7 @@ class ParticipantInfo:
     id: uuid.UUID
     user_code: str
     email: str
-    password: str | None
+    link_token: str | None  # the token of the participant's sign-in link (None: never invited)
 
 
 @dataclass
@@ -242,8 +316,12 @@ class Factory:
         email: str | None = None,
         display_name: str = "Test Participant",
     ) -> ParticipantInfo:
+        """An activated participant counts as signed in before and holds an unbound sign-in
+        link (only the token's hash is stored): the first browser that enters with it keeps
+        it. `activated=False` is someone imported and never invited: no link."""
         email = email or f"p-{uuid.uuid4().hex[:12]}@example.com"
         assert email.endswith("@example.com"), "tests only ever use example.com recipients"
+        link_token = new_token() if activated else None
         async with self.maker() as db, db.begin():
             now = (await db.execute(text("SELECT clock_timestamp()"))).scalar_one()
             participant = Participant(
@@ -253,13 +331,12 @@ class Factory:
                 email_normalized=email.lower(),
                 display_name=display_name,
                 user_code=new_user_code(),
-                password_hash=_PARTICIPANT_HASH if activated else None,
+                link_token_hash=token_hash(link_token) if link_token else None,
+                link_issued_at=now if activated else None,
                 activated_at=now if activated else None,
             )
             db.add(participant)
-        return ParticipantInfo(
-            participant.id, participant.user_code, email, PARTICIPANT_PASSWORD if activated else None
-        )
+        return ParticipantInfo(participant.id, participant.user_code, email, link_token)
 
     async def create_admin(self) -> AdminInfo:
         email = f"admin-{uuid.uuid4().hex[:12]}@example.com"
@@ -322,7 +399,7 @@ def make_http(
 
 
 class ParticipantClient:
-    """One participant browser: its own cookie jar and CSRF token."""
+    """One participant browser: its own cookie jar (session and device cookies) and CSRF token."""
 
     def __init__(self, http: httpx.AsyncClient, info: ParticipantInfo) -> None:
         self.http = http
@@ -333,11 +410,22 @@ class ParticipantClient:
     def token(self) -> str | None:
         return self.http.cookies.get(PARTICIPANT_COOKIE)
 
-    async def login(self, password: str | None = None, *, user_id: str | None = None) -> httpx.Response:
-        resp = await self.http.post(
-            f"{API}/auth/login",
-            json={"user_id": user_id or self.info.user_code, "password": password or self.info.password},
-        )
+    @property
+    def device(self) -> str | None:
+        return self.http.cookies.get(DEVICE_COOKIE)
+
+    def _link_token(self, token: str | None) -> str:
+        value = self.info.link_token if token is None else token
+        assert value is not None, "this participant has no sign-in link"
+        return value
+
+    async def check(self, token: str | None = None) -> httpx.Response:
+        """What the sign-in page asks when the link is opened (before any tap)."""
+        return await self.http.post(f"{API}/auth/link/check", json={"token": self._link_token(token)})
+
+    async def enter(self, token: str | None = None) -> httpx.Response:
+        """Tap "Enter the arena" with the participant's link (or another link token)."""
+        resp = await self.http.post(f"{API}/auth/link", json={"token": self._link_token(token)})
         if resp.status_code == 200:
             await self.refresh()
         return resp
@@ -483,16 +571,18 @@ class World:
         return client
 
     def browser(self, info: ParticipantInfo, **kwargs: Any) -> ParticipantClient:
-        """A new browser (empty cookie jar) for an existing participant."""
+        """A new browser (empty cookie jar) for an existing participant: another device."""
         return ParticipantClient(self.http(**kwargs), info)
 
     async def participant(
         self, *, login: bool = True, activated: bool = True, email: str | None = None
     ) -> ParticipantClient:
+        """A participant's browser, signed in with their sign-in link unless `login=False`
+        (the link is then bound to this browser)."""
         info = await self.factory.create_participant(self.programme_id, activated=activated, email=email)
         client = self.browser(info)
         if login:
-            resp = await client.login()
+            resp = await client.enter()
             assert resp.status_code == 200, resp.text
         return client
 
@@ -600,7 +690,8 @@ async def drain(worker: Worker) -> None:
         await asyncio.wait(set(worker.in_flight))
 
 
-def secret_of(ciphertext: bytes | None, field: str) -> str:
+def secret_of(ciphertext: bytes | None, field: str = LINK_TOKEN_KEY) -> str:
+    """The plaintext an email job carries (by default the sign-in link token)."""
     assert ciphertext is not None, "credential was already purged"
     value = decrypt_payload(bytes(ciphertext))[field]
     assert isinstance(value, str)

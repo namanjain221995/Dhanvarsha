@@ -8,6 +8,7 @@ import uuid
 from datetime import datetime, timedelta
 from typing import Any
 
+from jinja2 import TemplateError
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -16,9 +17,18 @@ from ..logging import get_logger
 from ..models import EmailAttempt, EmailJob, Participant, Programme
 from ..security import decrypt_payload
 from ..services.email_templates import invitation_template, programme_context, wording_of
+from ..services.invitations import LINK_TOKEN_KEY, sign_in_link
+from ..services.participants import name_from_email
 from ..state import emit
 from .providers import InlineImage, OutgoingEmail, Provider, SendResult
-from .templates import LOGO_CID, PREVIEW_PASSWORD, email_logo_png, render_invitation
+from .templates import (
+    LOGO_CID,
+    PREVIEW_LINK_TOKEN,
+    STAGE_BANNER_CID,
+    email_logo_png,
+    render_invitation,
+    stage_banner_gif,
+)
 
 log = get_logger(__name__)
 LEASE_SECONDS = 120
@@ -115,11 +125,12 @@ async def _prepare(
                 job,
                 "failed",
                 code="credential_expired",
-                error="The password copy for this email has expired; send the invitation again",
+                error="The sign-in link copy for this email has expired; send the invitation again",
             )
             return None
         secret = decrypt_payload(job.secret_ciphertext)
-        if "password" not in secret:
+        if LINK_TOKEN_KEY not in secret:
+            # Includes invitations queued before sign-in links, which carry a password.
             await _finish(
                 db, job, "failed", code="retired_payload", error="Created by an older version; send it again"
             )
@@ -134,17 +145,19 @@ async def _prepare(
         if logo:
             inline.append(InlineImage(cid=LOGO_CID, data=logo, subtype="png"))
             context["logo_src"] = f"cid:{LOGO_CID}"
+    if context["theme"] == "stage":
+        banner = await asyncio.to_thread(stage_banner_gif)
+        inline.append(InlineImage(cid=STAGE_BANNER_CID, data=banner, subtype="gif"))
+        context["banner_src"] = f"cid:{STAGE_BANNER_CID}"
     if job.kind == "invitation":
         assert participant is not None
         context |= {
-            "display_name": participant.display_name,
-            # The email address is the participant's user ID.
-            "user_id": participant.email,
-            "password": secret["password"],
+            "display_name": participant.display_name or name_from_email(participant.email),
+            "link": sign_in_link(settings.app_base_url, secret[LINK_TOKEN_KEY]),
         }
     else:
-        # A preview: the real design and wording with an example password that never works.
-        context |= {"display_name": "", "user_id": job.recipient, "password": PREVIEW_PASSWORD}
+        # A preview: the real design and wording with an example link that signs nobody in.
+        context |= {"display_name": "", "link": sign_in_link(settings.app_base_url, PREVIEW_LINK_TOKEN)}
     subject, body_text, body_html = render_invitation(context, wording, preview=job.kind == "test")
     return OutgoingEmail(
         to=job.recipient,
@@ -184,6 +197,18 @@ async def process_job(
                 message = await _prepare(db, job, settings, provider)
             except ValueError as exc:  # undecryptable payload: wrong key
                 await _finish(db, job, "failed", code="payload_unreadable", error=str(exc), purge=False)
+                return None
+            except TemplateError as exc:  # the template and its context disagree: a bug, not a retry
+                log.exception("email template failed", extra={"job_id": str(job_id)})
+                await _finish(
+                    db,
+                    job,
+                    "failed",
+                    code="template_error",
+                    error=f"The email could not be built from its template ({type(exc).__name__}); "
+                    "report this to the developers",
+                    purge=False,
+                )
                 return None
             if message is None:
                 await emit(db, job.programme_id, "email", {"j": str(job.id)})
@@ -323,7 +348,8 @@ async def purge_secrets(db: AsyncSession) -> int:
         expired_queued = await db.execute(
             text(
                 "UPDATE email_jobs SET status = 'failed', last_error_code = 'credential_expired', "
-                "last_error = 'The credential expired before delivery; issue a new one', finished_at = now() "
+                "last_error = 'The sign-in link copy expired before delivery; send the invitation again', "
+                "finished_at = now() "
                 "WHERE status = 'queued' AND secret_expires_at IS NOT NULL AND secret_expires_at <= now()"
             )
         )

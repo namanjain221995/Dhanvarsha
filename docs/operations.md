@@ -9,7 +9,7 @@ Gmail API provider); development uses `compose.yaml`.
 | | Development (`compose.yaml`) | Production (`compose.prod.yaml`) |
 |---|---|---|
 | URL | `http://localhost:<STAGEVOTE_HTTP_PORT>` (bootstrap picks a free port, 3000 first) | `https://<SITE_DOMAIN>` with automatic certificates (ports 80/443) |
-| Cookies | plain names, not `Secure` (HTTP on localhost) | `__Host-` names, `Secure`, `HttpOnly`, `SameSite=Lax` |
+| Cookies (session, device, organiser) | plain names (`sv_session`, `sv_device`, `sv_admin`), not `Secure` (HTTP on localhost) | `__Host-` names, `Secure`, `HttpOnly`, `SameSite=Lax` |
 | Email | Mailpit test inbox on `http://localhost:8025` | `smtp` or `gmail_workspace`; Mailpit and plain-text SMTP are refused |
 | Database | published on `127.0.0.1:55432` for tests | not published |
 | API docs | `/api/v1/docs` | disabled |
@@ -51,16 +51,24 @@ On AWS EC2, follow [deploy-ec2.md](deploy-ec2.md): `scripts/server-setup.sh` and
 - **Participants**: import emails (paste or CSV with `email` and optional `name`). Review
   the preview (invalid, duplicates, already imported) before importing.
 - **Email**: run diagnostics, send a test to yourself, then invite everyone. Each
-  invitation contains the participant's user ID (their email address) and password; the
-  account works as soon as the email arrives. Watch the email page until every invitation
-  is `accepted`; follow up on `failed` and `unknown`. Ask participants to keep the email.
+  invitation contains the participant's personal sign-in link behind its button. The link
+  is valid as soon as the email arrives; opened before sign-in opens, the page shows the
+  countdown and nothing is used up. Watch the email page until every invitation is
+  `accepted`; follow up on `failed` and `unknown`. Ask participants to keep the email and
+  to open it on the phone they will vote with: the first phone or browser that taps the
+  button keeps the link.
 - **Backups**: `scripts/backup.sh -f compose.prod.yaml` and practise a restore on a
   spare machine (see below).
 
 ## The day before
 
 - Rehearse with a test round and two or three test participants on real phones over the
-  venue Wi-Fi and mobile data. Archive the test round afterwards (votes stay in the
+  venue Wi-Fi and mobile data. Open at least one invitation from inside an email app (Gmail,
+  Outlook) and tap *Enter the arena* there, then open the same link in the phone's normal
+  browser (opening alone binds nothing: only the tap does). An app that opens links in a
+  built-in browser of its own keeps that browser's cookies apart, so the link then belongs
+  to the app and the normal browser says it is in use; knowing which apps do this on your
+  phones helps the help desk. Archive the test round afterwards (votes stay in the
   database but the round disappears from the programme).
 - After a full rehearsal of the real rounds, use *Live control › Start again › Restart from
   round 1*. It closes any open round, archives every round with its votes (votes are never
@@ -69,8 +77,8 @@ On AWS EC2, follow [deploy-ec2.md](deploy-ec2.md): `scripts/server-setup.sh` and
   can vote again. Planned times already in the past are cleared.
 - Check: *Live control* shows the worker as healthy and the live channel connected;
   `curl -fsS https://<domain>/api/v1/ready` returns `"status":"ok"`.
-- Print the help-desk sheet: how to reset a session and resend an invitation
-  (below).
+- Print the help-desk sheet (below). Most sign-in problems are solved by resending the
+  invitation.
 
 ## During the programme
 
@@ -88,11 +96,22 @@ On AWS EC2, follow [deploy-ec2.md](deploy-ec2.md): `scripts/server-setup.sh` and
 
 ### Help-desk answers
 
+Each invitation link works on one device: the first phone or browser that taps its button.
+Most answers below come down to a new invitation: Participants › find them › *Resend
+invitation* (the button reads *Send invitation* for someone never invited). It emails a new
+link, the old link stops working at once, every device they were signed in on is signed
+out, and the new link opens on the first device that taps it. There is no self-service
+recovery by design.
+
 | Participant says | Do this |
 |---|---|
-| "I lost my phone" or "someone else is using my account" | Participants › find them › *Sign out everywhere*. Every device they were signed in on is signed out. If someone else may have the password, use *Resend invitation* instead: it also replaces the password. |
-| "I lost the email / my password doesn't work" | Participants › find them › *Resend invitation*. A new email arrives with a new password; the old password stops working and any open session is signed out. (There is no self-service reset by design.) |
-| "I never got an invitation" | Check the address on the participant row and the email page status; fix the address if needed and *Send invitation*. Ask them to look in spam. |
+| "It says the link is already in use on another phone or browser" | The link was first opened somewhere else: another phone or computer, another browser, or an email app's built-in browser (some email apps open links in a browser of their own, with cookies separate from Safari and Chrome). If that was them in another app, they open the link there. Otherwise *Resend invitation*, and they tap the new email's button on the phone in hand. |
+| "I have a new phone" or "I want to vote on another device" | *Resend invitation*, then they open the new email on the new device. The old device is signed out and the old link stops working. |
+| "I signed out by mistake" or "it says my sign-in has ended" | Nothing to do in the console: they open the invitation email again **on the same device** and tap the button. This works after signing out and after the 12-hour session ends. If that device refuses the link, *Resend invitation*. |
+| "I lost my phone" or "someone else is using my account" | *Resend invitation*. The old link stops working and every device is signed out; they tap the new email's button straight away on the device in hand (if the lost phone can still read their email, it could tap first). *Sign out everywhere* alone is not enough here: it keeps the link on the old phone, which can sign straight back in with it. |
+| "The email never arrived" or "I deleted it" | Check the address on the participant row and the email page status; fix the address if needed and *Send invitation* (or *Resend invitation*). Ask them to look in spam. Only the newest invitation works. |
+| "It says the sign-in link is not valid any more" | They opened an older invitation. The newest email works; if they cannot find it, *Resend invitation*. |
+| "The site asks me to open my invitation email" | They opened the site without the link. They open the invitation email on this device and tap the button. |
 | "Did my vote count?" | Their receipt is on the round page and in the lobby. Admins can see that a ballot was voted (completion), never the choice. |
 | "The page says Reconnecting" | Usually venue Wi-Fi. Voting pauses until the phone confirms the latest state; the page recovers on its own. Switching to mobile data is fine; the session continues. |
 
@@ -102,9 +121,9 @@ On AWS EC2, follow [deploy-ec2.md](deploy-ec2.md): `scripts/server-setup.sh` and
   (`smtp_auth_failed`), delegation not authorised or not yet propagated
   (`unauthorized_client`), wrong sender mailbox (`invalid_grant`).
 - After a configuration fix, *Retry all failed* requeues failed invitations that still have
-  their encrypted password copy. Older ones need a fresh invitation (new password).
+  their encrypted copy of the sign-in link. Older ones need a fresh invitation (a new link).
 - `unknown` means the provider may already have the message. Retry only if a duplicate is
-  acceptable (the same password is resent).
+  acceptable (the same link is resent).
 - Sending pauses for 5 minutes after a configuration error; queued jobs wait, they are not
   lost.
 
@@ -129,8 +148,11 @@ docker compose -f compose.prod.yaml run --rm migrate stagevote reconcile
 ```
 
 - Back up before doors open, after the last round, and before any upgrade.
-- Dumps contain participant emails and password hashes: keep them encrypted and on
-  restricted storage.
+- Dumps contain participant emails, the hashes of sign-in links and devices, organiser
+  password hashes, and the retired password hashes of voters invited before links: keep
+  them encrypted and on restricted storage. After a restore, the valid sign-in links are
+  the ones that were valid when the dump was taken: invitations sent later stop working
+  and need sending again.
 - `restore.sh` is destructive: it stops the API and worker, drops and recreates the
   database, restores, reapplies migrations and grants, restarts, and checks privileges.
 - `stagevote reconcile` compares stored votes with tallies and checks for duplicates and
@@ -140,8 +162,8 @@ docker compose -f compose.prod.yaml run --rm migrate stagevote reconcile
 
 | Secret | Rotation effect |
 |---|---|
-| `APP_SECRET_KEY` | CSRF tokens change; open pages need a reload. Sessions stay valid. |
-| `INVITATION_ENCRYPTION_KEY` | Queued invitation emails can no longer be decrypted (they fail with `payload_unreadable`); send those invitations again. |
+| `APP_SECRET_KEY` | CSRF tokens change; open pages need a reload. Sessions, sign-in links and device bindings stay valid. |
+| `INVITATION_ENCRYPTION_KEY` | Queued invitation emails can no longer be decrypted (they fail with `payload_unreadable`); send those invitations again. Links already delivered keep working. |
 | DB passwords | Change in PostgreSQL (`ALTER ROLE`) and in `.env` together, then restart. |
 | Google service-account key | Create the new key, replace `secrets/google-service-account.json`, restart api and worker, delete the old key in Google Cloud. |
 

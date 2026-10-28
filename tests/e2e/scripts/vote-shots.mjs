@@ -1,6 +1,8 @@
 // Visual walkthrough of the voting flow (synthetic data): select, submit, receipt.
 // node scripts/vote-shots.mjs --base http://localhost:3101 --storage /work/shots/participant/state.json \
-//   --participant SV-XXXX:password --out /work/shots/participant --width 390 [--prefix flow]
+//   --link 'http://localhost:3101/enter#token=…' --out /work/shots/participant --width 390 [--prefix flow]
+// --link is a test participant's personal link (see shot.mjs); --storage keeps the browser that
+// used it, so the same link works again in later runs.
 import { existsSync } from 'node:fs'
 import { chromium } from '@playwright/test'
 
@@ -17,10 +19,10 @@ const browser = await chromium.launch()
 const storage = args.storage && existsSync(args.storage) ? args.storage : undefined
 const context = await browser.newContext({ storageState: storage, viewport: { width, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true })
 const page = await context.newPage()
-if (args.participant) {
-  const [user_id, password] = String(args.participant).split(':')
-  const r = await page.request.post(`${base}/api/v1/auth/login`, { headers: { Origin: base }, data: { user_id, password } })
-  console.log('login', r.status())
+if (args.link) {
+  const token = new URLSearchParams(new URL(String(args.link)).hash.slice(1)).get('token') ?? ''
+  const r = await page.request.post(`${base}/api/v1/auth/link`, { headers: { Origin: base }, data: { token } })
+  console.log('sign-in', r.status())
 }
 await page.goto(`${base}/lobby`, { waitUntil: 'networkidle' })
 await page.getByRole('link', { name: /Vote now|Continue voting|View your vote/ }).first().click()

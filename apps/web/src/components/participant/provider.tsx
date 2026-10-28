@@ -21,6 +21,8 @@ type ContextValue = {
   snapshot: Snapshot | null
   signedOutCode: string | null
   signedOutMessage: string | null
+  /** Why the session ended (logout, admin_reset, disabled…), when the server said. */
+  signedOutReason: string | null
   connection: LiveStatus
   /** False while the latest state cannot be confirmed with the server. */
   authoritative: boolean
@@ -39,7 +41,7 @@ const AUTHORITATIVE_WINDOW_MS = 25_000
 export function ParticipantProvider({ children }: { children: React.ReactNode }) {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null)
   const [status, setStatus] = useState<Status>('loading')
-  const [signedOut, setSignedOut] = useState<{ code: string; message: string } | null>(null)
+  const [signedOut, setSignedOut] = useState<{ code: string; message: string; reason: string | null } | null>(null)
   const [stale, setStale] = useState(false)
   const [lastRefreshAt, setLastRefreshAt] = useState<number | null>(null)
   const [revision, setRevision] = useState(0)
@@ -68,7 +70,8 @@ export function ParticipantProvider({ children }: { children: React.ReactNode })
       if (error instanceof ApiError && (error.status === 401 || error.code === 'ACCOUNT_DISABLED')) {
         stopped.current = true
         clearVotingStorage()
-        setSignedOut({ code: error.code, message: error.message })
+        const reason = typeof error.details.reason === 'string' ? error.details.reason : null
+        setSignedOut({ code: error.code, message: error.message, reason })
         setStatus('signed_out')
         setCsrfToken('participant', null)
         return null
@@ -171,6 +174,7 @@ export function ParticipantProvider({ children }: { children: React.ReactNode })
     snapshot,
     signedOutCode: signedOut?.code ?? null,
     signedOutMessage: signedOut?.message ?? null,
+    signedOutReason: signedOut?.reason ?? null,
     connection,
     authoritative,
     stale,

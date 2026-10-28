@@ -123,6 +123,8 @@ is fewer than 1% failed requests, 95% of answers within 1 second, and every acce
 3. *Email*: run diagnostics, then send yourself an invitation.
 4. *Events*: add the real rounds, teams and team members.
 5. *Participants › Add people*: paste the voters' email addresses and send the invitations.
+   Each voter gets a personal link that works on the first phone or browser that taps it,
+   so ask them to open it on the phone they will vote with.
 
 The server starts with an empty database: nothing from the development machine (demo rounds,
 fake participants) is copied. That is deliberate.
@@ -180,14 +182,58 @@ work. For the event, use your own domain:
 1. Attach an **Elastic IP** (otherwise the address changes when the instance stops).
 2. Add the DNS A record `vote.techsarasolutions.com` → that IP (Cloudflare: *DNS only*).
 3. On the server: `scripts/deploy.sh --domain vote.techsarasolutions.com --acme-email <you>`,
-   then `scripts/deploy.sh`. Invitations sent before the change contain the old link: send
-   them again (or send them only after the switch).
+   then `scripts/deploy.sh`. Invitations sent before the change contain sign-in links to the
+   old address, which stop working: send them again (or send them only after the switch).
 4. If the IP changed, run `scripts/setup-cicd.sh` again with the new `--host`.
+
+## Switching voters from passwords to sign-in links
+
+Voters now sign in with the personal link in their invitation email instead of an email
+address and a password. The first deploy that contains this change applies database
+migration `0006` (sign-in links). It is additive: it adds four empty columns to
+`participants` (the link hash is unique) and widens one check, and drops nothing, so the
+running version keeps working while the new one starts. Its downgrade refuses once any
+sign-in link exists, so roll back the code, never the database. The previous code runs on
+the migrated database: after such a rollback the passwords from the old emails work again,
+and anyone invited only with a link needs a new invitation from that version.
+
+What the deploy changes for people already invited:
+
+- The passwords in every invitation sent before the deploy stop working, because the
+  password sign-in is gone. Anyone already signed in stays signed in until that session
+  ends (at most 12 hours) or until they get a new invitation.
+- Invitation emails still waiting with a password inside (queued, or failed and kept for a
+  retry) are never sent: they fail as `retired_payload`.
+- Organisers are not affected: they still sign in at `/admin/login` with their email
+  address and password.
+
+So, after the deploy and well before the event:
+
+1. *Email › Invitation email*: read the saved wording. Text saved before this change may
+   still tell people to sign in with a password; edit it or restore the built-in wording.
+2. Re-send an invitation to **everyone already invited**, including people who have
+   signed in. *Invite everyone not yet invited* on the Participants page skips them, so use
+   *Email › Invitation email › Send invitations to* (up to 50 addresses at a time) or
+   *Resend invitation* in each participant's dialog. Each new email signs that person out
+   of any open session; one tap on its button signs them in again. Tell voters that the new
+   email replaces the old one and to open it on the phone they will vote with.
+3. Mind the Gmail SMTP limit. In the event-day test on 2026-10-23, Gmail accepted about 120
+   invitations at 120 per minute, then refused the SMTP login (`454`, shown as
+   `smtp_auth_failed`), marked those invitations failed and paused sending for 5 minutes;
+   at 30 per minute about 210 more went through before the next refusal
+   ([email-setup.md](email-setup.md)). For more than about 100 people, set
+   `EMAIL_MAX_PER_MINUTE=20` in `.env` and run `scripts/deploy.sh` again, then send in
+   batches of about 100 that are 30 to 60 minutes apart, starting at least two days before
+   the event, and use *Retry all failed* after each pause (the retry sends the same link).
+   Do not bulk-send on the event day: while Gmail refuses the login, the help desk's
+   re-sends fail too, and with sign-in links a re-send is their only remedy.
 
 ## Updates, backups and cost
 
 - **Update** to the newest code: push to `main` (the pipeline deploys), or on the server
-  `cd Dhanvarsha && git pull && scripts/deploy.sh`. Data stays.
+  `cd Dhanvarsha && git pull && scripts/deploy.sh`. Data stays. The update that switches
+  voters to sign-in links needs the steps in
+  [Switching voters from passwords to sign-in links](#switching-voters-from-passwords-to-sign-in-links).
 - **Back up** before the event and after it: `scripts/backup.sh` (files in `backups/`), and an
   EBS snapshot in the AWS console.
 - **Cost**: c5a.4xlarge is about 0.62 USD per hour while running (about 15 USD per day). After

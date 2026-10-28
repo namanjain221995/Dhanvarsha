@@ -21,7 +21,7 @@ type Flash = ReturnType<typeof useFlash>
 
 /**
  * The invitation's wording: edit it, see the result as participants will, and send real invitations.
- * Only the wording is editable; the user ID, password, button and footer are always added.
+ * Only the wording is editable; the personal sign-in button, the note under it and the footer are always added.
  */
 export function InvitationTemplatePanel({ timeZone, flash, onInvited }: { timeZone: string; flash: Flash; onInvited: (result: SendToResult) => void }) {
   const query = useAdminQuery<InvitationTemplate>(PATH)
@@ -98,8 +98,8 @@ export function InvitationTemplatePanel({ timeZone, flash, onInvited }: { timeZo
           Invitation email
         </h2>
         <p className="mt-0.5 max-w-3xl text-sm text-plum-soft">
-          Change what the invitation says. Every invitation always includes the participant’s user ID (their email address), their
-          own password, the sign-in button, when sign-in opens and the help contact, so these cannot be removed by mistake.
+          Change what the invitation says. Every invitation always includes the participant’s own sign-in button (a personal link
+          that works on one device), when sign-in opens and the help contact, so these cannot be removed by mistake.
           {base.customised && base.updated_at ? ` Last saved ${formatWhen(base.updated_at, timeZone)}.` : ' It uses the built-in wording now.'}
         </p>
       </div>
@@ -120,7 +120,7 @@ export function InvitationTemplatePanel({ timeZone, flash, onInvited }: { timeZo
             maxLength={3000}
             value={draft.intro}
             error={errors.intro}
-            hint="Shown above the user ID and password. Leave an empty line between paragraphs."
+            hint="Shown above the sign-in button. Leave an empty line between paragraphs."
             onChange={(e) => update('intro', e.target.value)}
           />
           <TextAreaField
@@ -138,6 +138,7 @@ export function InvitationTemplatePanel({ timeZone, flash, onInvited }: { timeZo
             value={draft.button_label}
             maxLength={60}
             error={errors.button_label}
+            hint="The label of each person’s own sign-in button."
             onChange={(e) => update('button_label', e.target.value)}
           />
           <div className="rounded-2xl bg-ivory px-4 py-3 text-sm">
@@ -260,7 +261,7 @@ function LivePreview({ wording }: { wording: InvitationWording }) {
         <SkeletonBlock className="m-4 h-96" />
       )}
       <p className="border-t border-sand px-4 py-2.5 text-sm text-plum-soft">
-        Example participant: Asha Rao. Each real invitation shows that person’s own email address and password.
+        Example participant: Asha Rao. Each real invitation has that person’s own sign-in link; the example button signs nobody in.
       </p>
     </div>
   )
@@ -324,7 +325,7 @@ function SendInvitations({
         onChange={(e) => setTo(e.target.value)}
         error={error}
         placeholder="asha@example.com, ravi@example.com"
-        hint="Separate addresses with commas (up to 50). Each person gets a real invitation with their own password and can sign in straight away. People not on the participant list yet are added automatically."
+        hint="Separate addresses with commas (up to 50). Each person gets a real invitation with their own sign-in link. People not on the participant list yet are added automatically."
       />
       <Button type="submit" busy={busy || (saving && dirty)}>
         {busy ? null : <Send aria-hidden className="size-4" />}
@@ -336,9 +337,9 @@ function SendInvitations({
           title={`Send ${count === 1 ? 'an invitation' : `${count} invitations`}?`}
           description={
             <>
-              Each person gets an email with their user ID (their email address) and their own password.
-              {dirty ? ' Your unsaved wording is saved first.' : ''} Anyone who was invited before gets a new password, and their old one
-              stops working.
+              Each person gets an email with their own sign-in link.
+              {dirty ? ' Your unsaved wording is saved first.' : ''} Anyone who was invited before gets a new link: their old link stops
+              working and they are signed out on every device.
             </>
           }
           confirmLabel="Send invitations"

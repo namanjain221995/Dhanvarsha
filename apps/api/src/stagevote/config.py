@@ -54,14 +54,16 @@ class Settings(BaseSettings):
 
     session_ttl_hours: float = 12
     admin_session_ttl_hours: float = 12
-    # How long the encrypted copy of an emailed password is kept so a failed delivery can be
-    # retried with the same password. Afterwards, re-send the invitation (new password).
+    # Lifetime of the device cookie that names the browser a sign-in link is bound to. It
+    # only lets that browser use its own link again and never signs anyone in by itself,
+    # so it outlives many sessions. Browsers cap cookie lifetimes at 400 days.
+    device_cookie_days: int = 180
+    # How long the encrypted copy of an emailed sign-in link is kept so a failed delivery can
+    # be retried with the same link. Afterwards, re-send the invitation (new link).
     invitation_retry_hours: float = 72
 
-    # Rate limits. Only failed attempts count towards the per-IP limit because a
-    # whole venue may share one public IP address.
-    login_failures_per_account: int = 8
-    login_failure_window_seconds: int = 900
+    # Rate limit for sign-in links that do not exist. Only failed attempts count, and the
+    # limit is generous, because a whole venue may share one public IP address.
     login_failures_per_ip: int = 1000
     login_ip_window_seconds: int = 600
 
@@ -132,6 +134,12 @@ class Settings(BaseSettings):
         # The __Host- prefix makes browsers refuse the cookie unless it is Secure,
         # host-only and Path=/. It is only usable over HTTPS.
         return "__Host-sv_session" if self.cookie_secure else "sv_session"
+
+    @property
+    def participant_device_cookie_name(self) -> str:
+        # Separate from the session and much longer lived: it names the browser that a
+        # sign-in link is bound to. Requests are never authenticated with it.
+        return "__Host-sv_device" if self.cookie_secure else "sv_device"
 
     @property
     def admin_cookie_name(self) -> str:

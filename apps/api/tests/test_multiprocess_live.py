@@ -168,7 +168,7 @@ async def test_live_updates_and_revocation_cross_processes_and_survive_listener_
         admin = AdminClient(on_b, await factory.create_admin())
         await admin.login()
         voter = ParticipantClient(on_a, voter_info)
-        assert (await voter.login()).status_code == 200
+        assert (await voter.enter()).status_code == 200
         try:
             # WebSocket authentication: the Origin and the session cookie are both required.
             for origin, cookie in (("https://evil.example", voter.token), (proc_a.origin, "forged-token")):
@@ -197,7 +197,8 @@ async def test_live_updates_and_revocation_cross_processes_and_survive_listener_
 
             # 3. Listener connections die: a change made meanwhile still arrives (outbox
             #    catch-up) and every client is told to resync once the listener is back.
-            assert (await voter.login()).status_code == 200
+            #    The same browser comes back with its link after the organiser's reset.
+            assert (await voter.enter()).status_code == 200
             ws_a = await open_socket(proc_a, voter.token)
             ws_b = await open_socket(proc_b, voter.token)
             sockets += [ws_a, ws_b]

@@ -293,7 +293,7 @@ export function ImportPanel({
             {summary && summary.new > 0 ? (
               <CheckboxField
                 label="Send invitations now"
-                description="Each new participant gets an email with their user ID (their email address) and a password, and can sign in straight away. You can also invite them later."
+                description="Each new participant gets an email with their own sign-in link. You can also invite them later."
                 checked={invite}
                 onChange={setInvite}
               />

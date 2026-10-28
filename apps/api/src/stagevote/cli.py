@@ -7,7 +7,10 @@ worker           run the background worker
 seed-demo        fill a pristine programme with 14 demo rounds and synthetic participants
 seed-rounds      add N blank events to fill in later (default 14; allowed in production)
 seed-sample-content  fill empty event descriptions and ballots with sample teams to replace later
-seed-loadtest    create an isolated synthetic programme for load testing (non-production)
+seed-loadtest    create an isolated synthetic programme for load testing (non-production);
+                 writes one sign-in link token per synthetic account
+sign-in-link     give one participant a new sign-in link and print it instead of emailing it
+                 (non-production; the previous link stops working)
 activate-programme   switch the active programme by slug
 reconcile        verify stored votes against receipts and aggregates
 check-privileges verify the runtime role cannot modify votes
@@ -19,6 +22,7 @@ import argparse
 import asyncio
 import getpass
 import os
+import sys
 
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -189,6 +193,66 @@ async def activate_programme(slug: str) -> None:
     print(f"Active programme is now {slug}.")
 
 
+async def sign_in_link(email: str) -> str:
+    """Rotate one participant's sign-in link exactly as an invitation does (new token,
+    binding released, sessions signed out, pending invitation emails superseded) but
+    print the link instead of emailing it. For development, screenshots and tests."""
+    from .models import Participant, Programme
+    from .services.invitations import replace_link
+    from .services.invitations import sign_in_link as link_for
+    from .services.participants import normalize_email
+    from .services.programmes import server_now
+    from .state import Actor, audit
+
+    settings = get_settings()
+    if settings.is_production:
+        raise SystemExit(
+            "Refusing to print sign-in links in production (APP_ENV=production). "
+            "Send the invitation from the organiser console instead."
+        )
+    try:
+        _, key = normalize_email(email)
+    except ValueError as exc:
+        raise SystemExit(f"{email!r} is not a valid email address: {exc}") from exc
+    maker, engine = _owner_session()
+    async with maker() as db, db.begin():
+        programme = (
+            await db.execute(select(Programme).where(Programme.is_active.is_(True)))
+        ).scalar_one_or_none()
+        if programme is None:
+            raise SystemExit("Run `stagevote bootstrap` first.")
+        participant = (
+            await db.execute(
+                select(Participant)
+                .where(Participant.programme_id == programme.id, Participant.email_normalized == key)
+                .with_for_update()
+            )
+        ).scalar_one_or_none()
+        if participant is None:
+            raise SystemExit(f"No participant {key} in the active programme {programme.slug!r}.")
+        if participant.disabled_at is not None:
+            raise SystemExit(f"{key} is disabled. Enable the account first.")
+        token, signed_out = await replace_link(db, participant, await server_now(db))
+        await audit(
+            db,
+            Actor.system("cli"),
+            "participant.link_issued",
+            programme_id=programme.id,
+            target_type="participant",
+            target_id=participant.id,
+            details={"via": "cli", "sessions_signed_out": signed_out},
+        )
+    await engine.dispose()  # type: ignore[attr-defined]
+    print(
+        f"New sign-in link for {key}. The previous link no longer works; {signed_out} session(s) "
+        "signed out. It opens on the first browser that uses it:",
+        file=sys.stderr,
+    )
+    link = link_for(settings.app_base_url, token)
+    print(link)
+    return link
+
+
 async def reconcile(slug: str | None) -> int:
     """Check that aggregates equal the stored votes and that no duplicates exist."""
     maker, engine = _owner_session()
@@ -308,7 +372,7 @@ def main(argv: list[str] | None = None) -> int:
         "--activate-sample",
         type=int,
         default=0,
-        help="give N synthetic participants one generated password (printed once) so they can sign in without an invitation",
+        help="give N synthetic participants a sign-in link (printed once) so they can sign in without an invitation",
     )
     sr = sub.add_parser("seed-rounds")
     sr.add_argument("--count", type=int, default=14)
@@ -322,6 +386,8 @@ def main(argv: list[str] | None = None) -> int:
         required=True,
         help="confirm this creates synthetic accounts in a non-production database",
     )
+    sil = sub.add_parser("sign-in-link")
+    sil.add_argument("--email", required=True)
     ap = sub.add_parser("activate-programme")
     ap.add_argument("--slug", required=True)
     rc = sub.add_parser("reconcile")
@@ -355,6 +421,8 @@ def main(argv: list[str] | None = None) -> int:
         from .seed import seed_loadtest
 
         asyncio.run(seed_loadtest(args.participants, args.events))
+    elif args.command == "sign-in-link":
+        asyncio.run(sign_in_link(args.email))
     elif args.command == "activate-programme":
         asyncio.run(activate_programme(args.slug))
     elif args.command == "reconcile":

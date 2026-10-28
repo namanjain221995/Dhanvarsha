@@ -4,8 +4,9 @@
 // starts an isolated Compose project with synthetic accounts and refuses any other target.
 //
 // USERS virtual users share exactly REQUESTS API requests between them, sent as fast as the
-// server answers (plus THINK_MS of pause after each, if set). Each user first signs in (that
-// is their first request), then makes the calls a voter's phone makes, in this mix:
+// server answers (plus THINK_MS of pause after each, if set). Each user first opens their own
+// sign-in link as the link page does (their first two requests: the link check, then the tap
+// that signs in), then makes the calls a voter's phone makes, in this mix:
 //
 //   35%  GET  /api/v1/me/snapshot            the voting home screen
 //   25%  GET  /api/v1/me/events/{id}         the live round with its ballot
@@ -24,26 +25,29 @@ import { Counter, Trend } from 'k6/metrics'
 
 const TARGET = __ENV.TARGET
 const ORIGIN = __ENV.ORIGIN
-const PASSWORD = __ENV.LOADTEST_PASSWORD
 const USERS = Number(__ENV.USERS || 500)
 const REQUESTS = Number(__ENV.REQUESTS || 10000)
 const THINK_MS = Number(__ENV.THINK_MS || 0)
 const MAX_MINUTES = Number(__ENV.MAX_MINUTES || 30)
 
-if (!TARGET || !ORIGIN || !PASSWORD || !__ENV.ACCOUNTS_FILE) {
-  throw new Error('TARGET, ORIGIN, LOADTEST_PASSWORD and ACCOUNTS_FILE are required (use tests/load/run.sh)')
+if (!TARGET || !ORIGIN || !__ENV.ACCOUNTS_FILE) {
+  throw new Error('TARGET, ORIGIN and ACCOUNTS_FILE are required (use tests/load/run.sh)')
 }
-if (REQUESTS < USERS) throw new Error('REQUESTS must be at least USERS: every user signs in once')
+if (REQUESTS < 2 * USERS) throw new Error('REQUESTS must be at least twice USERS: every user checks their link and signs in once')
 
-const accounts = new SharedArray('accounts', () =>
+// One sign-in link token per line (written by seed-loadtest). A link works on one device only,
+// so every user needs a token of their own.
+const tokens = new SharedArray('tokens', () =>
   open(__ENV.ACCOUNTS_FILE)
     .split('\n')
     .map((s) => s.trim())
     .filter(Boolean),
 )
+if (tokens.length < USERS) throw new Error(`ACCOUNTS_FILE holds ${tokens.length} sign-in links for ${USERS} users`)
 
 export const options = {
-  // Each user stays signed in across iterations (k6 would otherwise clear cookies every time).
+  // Each user stays signed in across iterations, on the same "phone" (k6 would otherwise clear
+  // cookies, the session and the device cookie, every time).
   noCookiesReset: true,
   setupTimeout: '120s',
   teardownTimeout: '120s',
@@ -71,6 +75,7 @@ const unexpectedErrors = new Counter('unexpected_errors')
 const loginLatency = new Trend('login_latency', true)
 
 // Per virtual user (k6 keeps module state per VU).
+let linkChecked = false
 let signedIn = false
 let csrf = ''
 let voted = false
@@ -106,17 +111,32 @@ export function setup() {
 export default function (data) {
   const index = exec.vu.idInTest - 1
   if (!signedIn) {
-    const userId = accounts[index % accounts.length]
-    const res = http.post(`${TARGET}/api/v1/auth/login`, JSON.stringify({ user_id: userId, password: PASSWORD }), {
-      headers,
-      tags: { name: 'POST /auth/login' },
-    })
-    loginLatency.add(res.timings.duration)
-    if (res.status !== 200) {
-      unexpected('login', res)
-      return
+    const token = tokens[index]
+    if (!linkChecked) {
+      // As on the link page, the check comes before the tap. Its answer gives this user's phone
+      // the device cookie, so a sign-in whose answer is lost can be retried from the same phone
+      // without being refused as another device.
+      const res = http.post(`${TARGET}/api/v1/auth/link/check`, JSON.stringify({ token }), {
+        headers,
+        tags: { name: 'POST /auth/link/check' },
+      })
+      if (res.status !== 200) {
+        unexpected('link check', res)
+        return
+      }
+      linkChecked = true
+    } else {
+      const res = http.post(`${TARGET}/api/v1/auth/link`, JSON.stringify({ token }), {
+        headers,
+        tags: { name: 'POST /auth/link' },
+      })
+      loginLatency.add(res.timings.duration)
+      if (res.status !== 200) {
+        unexpected('sign-in', res)
+        return
+      }
+      signedIn = true
     }
-    signedIn = true
     if (THINK_MS) sleep(THINK_MS / 1000)
     return
   }

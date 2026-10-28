@@ -40,6 +40,16 @@ class ImportRow:
         return data
 
 
+def name_from_email(email: str) -> str:
+    """A friendly name for a voter invited without one, taken from their address:
+    'naman.jain@techsarasolutions.com' -> 'Naman Jain', 'namanjain34710@gmail.com' -> 'Namanjain'.
+    Dots, dashes and underscores separate words; digits and any +tag are dropped. Returns ''
+    when nothing usable is left."""
+    local = email.split("@", 1)[0].split("+", 1)[0]
+    words = [w for w in re.split(r"[._\-\s]+", re.sub(r"\d+", " ", local)) if w]
+    return " ".join(w[:1].upper() + w[1:].lower() for w in words)[:120]
+
+
 def normalize_email(raw: str) -> tuple[str, str]:
     """Return (stored address, uniqueness key) or raise ValueError with a reason.
 

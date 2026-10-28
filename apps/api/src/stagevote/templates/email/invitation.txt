@@ -1,14 +1,13 @@
-{% if preview %}PREVIEW: this is how participants see their invitation. The password below
-is an example and does not work: every participant gets their own password.
+{% if preview %}PREVIEW: this is how participants see their invitation. The link below
+is an example and does not work: every participant gets their own personal link.
 
 {% endif %}{{ programme_name }}: {{ heading }}
 
 {{ intro_text }}
 
-User ID (your email address): {{ user_id }}
-Password: {{ password }}
+Enter the arena: {{ link }}
 
-Sign in: {{ link }}
+This button is your personal pass. It signs you in on the first phone or computer you open it on, and again on that same device whenever you come back. On any other device it will not open, so please don't forward this email.
 {% if opens_at %}
 Sign-in opens {{ opens_at }} ({{ timezone }}).
 {% endif %}{% if closing_text %}

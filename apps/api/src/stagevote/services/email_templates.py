@@ -16,6 +16,7 @@ from ..mailer.templates import (
     LOGO_MAX_WIDTH,
     Wording,
     format_local,
+    split_title,
 )
 from ..models import EmailTemplate, Programme
 
@@ -47,7 +48,12 @@ def wording_of(row: EmailTemplate | None) -> Wording:
 async def programme_context(
     db: AsyncSession, programme: Programme | None, settings: Settings
 ) -> tuple[dict[str, Any], str | None]:
-    """Return (context shared by every email, storage key of the programme logo)."""
+    """Return (context shared by every email, storage key of the programme logo).
+
+    Callers add `display_name` and `link`: the participant's personal sign-in link, or the
+    example link in previews. There is deliberately no default link, so a context that
+    forgets it fails to render instead of sending a button that signs nobody in.
+    """
     tz = programme.timezone if programme else settings.programme_timezone
     logo_key = None
     logo_size: dict[str, int] = {}
@@ -67,14 +73,22 @@ async def programme_context(
             if width > LOGO_MAX_WIDTH:
                 width, height = LOGO_MAX_WIDTH, round(LOGO_MAX_WIDTH / ratio)
             logo_size = {"logo_width": max(width, 1), "logo_height": max(height, 1)}
+    name = programme.name if programme else settings.product_name
+    title_main, title_year = split_title(name)
     context: dict[str, Any] = {
-        "programme_name": programme.name if programme else settings.product_name,
+        "programme_name": name,
+        # The gold look's emails use the night-blue design with the name as a title and any
+        # trailing year ("Dhanvarsha 2026") on its own line, as on the sign-in page.
+        "theme": "stage" if programme and programme.accent == "gold" else "classic",
+        "title_main": title_main,
+        "title_year": title_year,
+        "tagline": programme.description if programme else "",
+        "asset_base": settings.app_base_url,
         "product_name": settings.product_name,
         "help_contact": programme.help_contact if programme else "",
         "accent": ACCENT_HEX.get(programme.accent if programme else "violet", ACCENT_HEX["violet"]),
         "timezone": tz,
         "opens_at": format_local(programme.login_opens_at, tz) if programme else None,
-        "link": f"{settings.app_base_url}/",
         **logo_size,
     }
     return context, logo_key

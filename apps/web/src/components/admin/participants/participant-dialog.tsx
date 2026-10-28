@@ -30,14 +30,15 @@ const ACTIONS: Record<
     label: 'Send invitation',
     icon: <Mail aria-hidden className="size-4" />,
     description:
-      'Emails their user ID (their email address) and a new password. The account works as soon as the email arrives. Any earlier password stops working and every device they are signed in on is signed out.',
+      'Emails a new personal sign-in link. Their old link stops working and every device they are signed in on is signed out. Use this when someone changes phone, their link shows “already in use”, or the email was lost.',
     tone: 'primary',
     path: (id) => `/admin/participants/${id}/invite`,
   },
   'reset-session': {
     label: 'Sign out everywhere',
     icon: <LogOut aria-hidden className="size-4" />,
-    description: 'Signs them out on every device they are signed in on, for example a lost phone. They can sign in again with their password. Their votes are kept.',
+    description:
+      'Signs them out on every device. They can come back on the same phone with the link in their invitation email. If the phone is lost or someone else has their link, use Send invitation instead.',
     tone: 'primary',
     path: (id) => `/admin/participants/${id}/reset-session`,
   },
@@ -52,7 +53,7 @@ const ACTIONS: Record<
   enable: {
     label: 'Enable account',
     icon: <UserCheck aria-hidden className="size-4" />,
-    description: 'They can sign in again with the password from their latest invitation. Send a new invitation if they no longer have it.',
+    description: 'They can sign in again with the link in their latest invitation. Send a new invitation if they no longer have it.',
     tone: 'primary',
     path: (id) => `/admin/participants/${id}/enable`,
   },
@@ -69,7 +70,8 @@ const ACTIONS: Record<
 const SESSION_END: Record<string, string> = {
   logout: 'Signed out',
   admin_reset: 'Reset by an organiser',
-  password_reset: 'Ended by a password change',
+  replaced: 'Replaced by a new sign-in on the same device',
+  password_reset: 'Ended by a reset link (retired)',
   credentials_reissued: 'Ended by a new invitation',
   disabled: 'Ended when disabled',
   expired: 'Expired',
@@ -163,10 +165,10 @@ export function ParticipantDialog({
       }
       const messages: Record<Exclude<ActionKind, 'delete'>, string> = {
         invite: row.invited_at
-          ? `New invitation queued for ${label}. Their previous password no longer works.`
+          ? `New invitation queued for ${label}. Their old link no longer works.`
           : `Invitation queued for ${label}.`,
         'reset-session': response.sessions_revoked
-          ? `${label} is signed out of ${plural(response.sessions_revoked, 'session')}. They can sign in again anywhere.`
+          ? `${label} is signed out of ${plural(response.sessions_revoked, 'session')}. They can come back on the same device with the link in their invitation email.`
           : `${label} had no active session. Nothing changed.`,
         disable: `${label} is disabled and signed out.`,
         enable: `${label} can sign in again.`,
@@ -288,6 +290,7 @@ export function ParticipantDialog({
                 ['Email', p.email],
                 ['Added', formatStamp(p.created_at, timeZone)],
                 ['Invited', p.invited_at ? formatStamp(p.invited_at, timeZone) : 'Not yet'],
+                ['Invitation link', linkStatus(p, timeZone)],
                 ['First signed in', p.activated_at ? formatStamp(p.activated_at, timeZone) : 'Not yet'],
                 ...(p.disabled_at ? ([['Disabled', formatStamp(p.disabled_at, timeZone)]] as [string, string][]) : []),
               ]}
@@ -403,6 +406,17 @@ export function ParticipantDialog({
       </div>
     </Dialog>
   )
+}
+
+/**
+ * Whether their newest invitation link has been used. The first device that taps it keeps it,
+ * until a new invitation replaces the link.
+ */
+function linkStatus(p: ParticipantDetail['participant'], timeZone: string): string {
+  if (p.link_bound_at) return `In use on a device since ${formatStamp(p.link_bound_at, timeZone)}`
+  if (p.link_issued_at) return 'Not used yet'
+  // Someone invited before invitations carried a personal link has none yet.
+  return p.invited_at ? 'None yet. Send the invitation again to email one.' : 'Not sent yet'
 }
 
 /** "Chrome on Android" style summary of a user-agent string. */

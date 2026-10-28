@@ -15,6 +15,10 @@ import { ReceiptStub } from './receipt'
 import { navigateWithTransition, notifyPageReady, transitionName } from './transition'
 import { type BallotState, useVoting } from './use-voting'
 
+// How long the receipt stays on screen after the last vote of a round before the page goes back
+// to the programme.
+const AUTO_BACK_SECONDS = 3
+
 function NomineeOption({
   ballot,
   nominee,
@@ -209,6 +213,9 @@ export function EventDetailView({ eventId }: { eventId: string }) {
   const [focusBallot, setFocusBallot] = useState<string | null>(null)
   const [announce, setAnnounce] = useState('')
   const [confettiKey, setConfettiKey] = useState<string | null>(null)
+  // When a vote made on this page completes the round, the page goes back to the programme on
+  // its own a few seconds later. "Stay on this page" cancels it.
+  const [stay, setStay] = useState(false)
   const headingRefs = useRef<Record<string, HTMLHeadingElement | null>>({})
   const now = useServerNow(1000)
   const snapshot = p.snapshot
@@ -268,7 +275,11 @@ export function EventDetailView({ eventId }: { eventId: string }) {
       if (s?.receipt && s.celebrate && lastCelebrated.current !== s.receipt.receipt_code) {
         lastCelebrated.current = s.receipt.receipt_code
         setConfettiKey(s.receipt.receipt_code)
-        setAnnounce(`Vote recorded for ${s.receipt.nominee_name}. Receipt ${s.receipt.receipt_code}.`)
+        const roundDone = ballots.every((b) => state[b.id]?.receipt ?? b.receipt)
+        setAnnounce(
+          `Vote recorded for ${s.receipt.nominee_name}. Receipt ${s.receipt.receipt_code}.` +
+            (roundDone ? ` Going back to the programme in ${AUTO_BACK_SECONDS} seconds.` : ''),
+        )
         headingRefs.current[ballot.id]?.focus({ preventScroll: true })
         const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches
         document
@@ -277,6 +288,13 @@ export function EventDetailView({ eventId }: { eventId: string }) {
       }
     }
   }, [state, ballots])
+
+  const goingBack = !stay && unvoted.length === 0 && ballots.some((b) => state[b.id]?.celebrate)
+  useEffect(() => {
+    if (!goingBack) return
+    const id = window.setTimeout(() => navigateWithTransition(() => router.push('/lobby')), AUTO_BACK_SECONDS * 1000)
+    return () => window.clearTimeout(id)
+  }, [goingBack, router])
 
   const phaseAnnouncement =
     targetState?.submit.phase === 'submitting'
@@ -447,6 +465,24 @@ export function EventDetailView({ eventId }: { eventId: string }) {
 
         {allVoted ? (
           <div className="enter-up mt-6 rounded-[var(--radius-card)] border border-sand bg-paper p-5">
+            {goingBack ? (
+              <div className="mb-4 border-b border-sand pb-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="font-semibold text-plum">Going back to the programme…</p>
+                  <button
+                    type="button"
+                    onClick={() => setStay(true)}
+                    className="min-h-11 rounded-full px-3 text-sm font-semibold text-primary underline-offset-4 hover:underline"
+                  >
+                    Stay on this page
+                  </button>
+                </div>
+                {/* Empties over the same few seconds as the wait (transform only). */}
+                <div aria-hidden className="mt-2 h-1 overflow-hidden rounded-full bg-plum/10">
+                  <div className="auto-back-bar h-full rounded-full bg-gold" style={{ animationDuration: `${AUTO_BACK_SECONDS}s` }} />
+                </div>
+              </div>
+            ) : null}
             <p className="font-semibold">What happens next</p>
             <p className="mt-1 text-plum-soft">
               {otherLive

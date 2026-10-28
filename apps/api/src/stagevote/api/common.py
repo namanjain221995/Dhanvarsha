@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
 from fastapi import Response
@@ -37,6 +37,14 @@ def set_session_cookie(response: Response, name: str, token: str, expires_at: da
         httponly=True,
         samesite="lax",
     )
+
+
+def set_device_cookie(response: Response, token: str) -> None:
+    """The long-lived cookie naming this browser for sign-in links. Same flags as the
+    session cookie; nothing ever clears it, so signing out keeps the browser's link."""
+    settings = get_settings()
+    expires = datetime.now(UTC) + timedelta(days=settings.device_cookie_days)
+    set_session_cookie(response, settings.participant_device_cookie_name, token, expires)
 
 
 def clear_session_cookie(response: Response, name: str) -> None:
