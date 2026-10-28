@@ -249,6 +249,7 @@ async def preview_invitation(
         context["logo_src"] = f"/media/{logo_key}"
     if context["theme"] == "stage":
         context["banner_src"] = "/api/v1/public/email-banner.gif"
+        context["mark_src"] = "/brand/techsara-mark.png"
     # The example link signs nobody in, like the one in preview emails.
     context |= {"display_name": "Asha Rao", "link": sign_in_link(settings.app_base_url, PREVIEW_LINK_TOKEN)}
     subject, body_text, body_html = render_invitation(context, wording)

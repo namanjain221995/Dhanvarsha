@@ -78,7 +78,7 @@
         </tr>
         <tr>
           <td align="center" bgcolor="#071238" style="padding:20px 28px 24px 28px;background:#071238;border-top:1px solid #24346f;text-align:center;font-size:12px;line-height:1.6;color:#8f9bc6;">
-            {% if logo_src %}<img src="{{ logo_src }}" width="{{ (logo_width * 36 / logo_height)|round|int }}" height="36" alt="{{ programme_name }}" style="display:block;margin:0 auto 10px auto;width:{{ (logo_width * 36 / logo_height)|round|int }}px;height:36px;border:0;outline:none;text-decoration:none;">{% endif %}
+            {% if mark_src %}<img src="{{ mark_src }}" width="44" height="44" alt="TechSara" style="display:block;margin:0 auto 10px auto;width:44px;height:44px;border:0;outline:none;text-decoration:none;">{% elif logo_src %}<img src="{{ logo_src }}" width="{{ (logo_width * 36 / logo_height)|round|int }}" height="36" alt="{{ programme_name }}" style="display:block;margin:0 auto 10px auto;width:{{ (logo_width * 36 / logo_height)|round|int }}px;height:36px;border:0;outline:none;text-decoration:none;">{% endif %}
             {% if help_contact %}Need help? Contact {{ help_contact }}.<br>{% endif %}
             {% if preview %}An organiser of {{ programme_name }} sent you this preview.{% else %}You received this because you were invited to {{ programme_name }}.{% endif %}
           </td>

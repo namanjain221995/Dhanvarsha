@@ -18,7 +18,13 @@ from PIL import Image
 from helpers import API, World, assert_error, drain, secret_of
 from stagevote.config import get_settings
 from stagevote.mailer.providers import OutgoingEmail, RecordingProvider, build_mime
-from stagevote.mailer.templates import LOGO_CID, PREVIEW_LINK_TOKEN, STAGE_BANNER_CID, split_title
+from stagevote.mailer.templates import (
+    BRAND_MARK_CID,
+    LOGO_CID,
+    PREVIEW_LINK_TOKEN,
+    STAGE_BANNER_CID,
+    split_title,
+)
 from stagevote.services.assets import store_generated_image
 from stagevote.services.invitations import sign_in_link
 from stagevote.worker.runner import Worker
@@ -344,6 +350,9 @@ async def test_gold_look_sends_the_night_blue_design_with_the_animated_banner(
     [banner] = [image for image in message.inline_images if image.cid == STAGE_BANNER_CID]
     assert banner.subtype == "gif" and banner.data.startswith(b"GIF89a")
     assert f'src="cid:{STAGE_BANNER_CID}"' in message.html
+    # The footer shows the TechSara mark, as on the sign-in page.
+    [mark] = [image for image in message.inline_images if image.cid == BRAND_MARK_CID]
+    assert mark.data.startswith(b"\x89PNG") and f'src="cid:{BRAND_MARK_CID}"' in message.html
     # Night blue and gold, with the year on its own line under the name.
     assert 'bgcolor="#071238"' in message.html
     assert ">Dhanvarsha</div>" in message.html and ">2026</div>" in message.html

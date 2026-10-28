@@ -1,5 +1,5 @@
-"""Animated email banner for the gold (Dhanvarsha) look: night-blue sky, gold arcs, the ticket
-emblem, falling gold coins that turn as they fall, twinkling four-point stars and gold dust.
+"""Animated email banner for the gold (Dhanvarsha) look: night-blue sky, gold arcs, the emblem
+with the TechSara mark, falling gold coins that turn as they fall, twinkling four-point stars and gold dust.
 
 Email apps do not run CSS animation (Gmail strips it), but they play animated GIFs, so the
 motion lives in the image. The first frame is a complete picture on its own, for Outlook on
@@ -11,6 +11,7 @@ usage: python3 make_banner.py OUT.gif [WIDTH] [HEIGHT]
 import math
 import random
 import sys
+from pathlib import Path
 
 from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont
 
@@ -25,6 +26,7 @@ MS = 85  # per frame: a 2 s loop
 TOP, MID, BOTTOM = (19, 40, 112), (12, 27, 79), (11, 24, 73)
 GOLD_LIGHT, GOLD, GOLD_DEEP = (255, 233, 168), (244, 203, 82), (168, 116, 20)
 RUPEE_FONT = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+MARK = Path(__file__).resolve().parents[1] / "apps/web/public/brand/techsara-mark.png"
 
 rng = random.Random(20261028)
 
@@ -71,7 +73,7 @@ def background() -> Image.Image:
 
 
 def emblem(r: int) -> Image.Image:
-    """The ticket emblem: a navy disc ringed in gold with a gold ticket, as on the sign-in page."""
+    """The emblem: a navy disc ringed in gold with the TechSara mark, as on the sign-in page."""
     size = r * 2 + 8 * S
     img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     c = size / 2
@@ -87,34 +89,11 @@ def emblem(r: int) -> Image.Image:
     d = ImageDraw.Draw(img)
     d.ellipse((c - r, c - r, c + r, c + r), outline=(*GOLD, 255), width=int(2.4 * S))
     d.ellipse((c - r * 0.9, c - r * 0.9, c + r * 0.9, c + r * 0.9), outline=(242, 193, 78, 60), width=S)
-    # The ticket: a rectangle with round notches on both ends, tilted.
-    tw, th = r * 1.15, r * 0.62
-    pts = []
-    for i in range(40):  # left end with notch
-        a = math.pi / 2 + math.pi * i / 39
-        pts.append((-tw / 2 + 0.0 - math.cos(a) * th * 0.18 * -1, -math.sin(a) * th * 0.18 * -1))
-    shape = [(-tw / 2, -th / 2), (tw / 2, -th / 2)]
-    for i in range(21):
-        a = -math.pi / 2 + math.pi * i / 20
-        shape.append((tw / 2 - math.cos(a) * th * 0.2, math.sin(a) * th * 0.2))
-    shape += [(tw / 2, th / 2), (-tw / 2, th / 2)]
-    for i in range(21):
-        a = math.pi / 2 - math.pi * i / 20
-        shape.append((-tw / 2 + math.cos(a) * th * 0.2, math.sin(a) * th * 0.2))
-    ang = math.radians(-35)
-    rot = [(c + x * math.cos(ang) - y * math.sin(ang), c + x * math.sin(ang) + y * math.cos(ang)) for x, y in shape]
-    tmask = Image.new("L", (size, size), 0)
-    ImageDraw.Draw(tmask).polygon(rot, fill=255)
-    grad = Image.new("RGBA", (size, size))
-    gp = grad.load()
-    for y in range(size):
-        for x in range(size):
-            t = ((x - c) + (y - c)) / (2 * r) + 0.5
-            gp[x, y] = (*(lerp(GOLD_LIGHT, GOLD, t / 0.4) if t < 0.4 else lerp(GOLD, GOLD_DEEP, (t - 0.4) / 0.6)), 255)
-    img.paste(grad, (0, 0), tmask)
-    # Inner outline and the perforation on the ticket.
-    inner = [(c + (x * 0.62) * math.cos(ang) - (y * 0.62) * math.sin(ang), c + (x * 0.62) * math.sin(ang) + (y * 0.62) * math.cos(ang)) for x, y in [(-tw / 2, -th / 2), (tw / 2, -th / 2), (tw / 2, th / 2), (-tw / 2, th / 2), (-tw / 2, -th / 2)]]
-    d.line(inner, fill=(138, 93, 12, 190), width=int(1.6 * S))
+    # The TechSara mark, as on the sign-in page (its triangle is centred on that image).
+    mark = Image.open(MARK).convert("RGBA")
+    side = round(r * 1.56)
+    mark = mark.resize((side, side), Image.LANCZOS)
+    img.alpha_composite(mark, (round(c - side / 2), round(c - side / 2)))
     return img
 
 

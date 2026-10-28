@@ -38,7 +38,7 @@ export function useRememberedAccent(current: Accent | undefined): string | null 
   )
 }
 
-function TicketEmblem() {
+function BrandEmblem() {
   return (
     <svg className="stage-emblem" viewBox="0 0 120 120" aria-hidden focusable="false">
       <defs>
@@ -56,14 +56,8 @@ function TicketEmblem() {
       <circle cx="60" cy="60" r="55" fill="url(#stage-emblem-fill)" />
       <circle className="stage-emblem-ring" cx="60" cy="60" r="55" fill="none" stroke="url(#stage-gold)" strokeWidth="2.2" pathLength="100" />
       <circle cx="60" cy="60" r="50" fill="none" stroke="#f2c14e" strokeOpacity="0.18" strokeWidth="1" />
-      <g transform="rotate(-35 60 60)">
-        <g className="stage-ticket">
-          <path d="M27 42 H93 V53 A7 7 0 0 0 93 67 V78 H27 V67 A7 7 0 0 0 27 53 Z" fill="url(#stage-gold)" />
-          <rect x="38" y="49" width="38" height="22" rx="2" fill="none" stroke="#8a5d0c" strokeWidth="1.6" opacity="0.75" />
-          <line x1="83" y1="45" x2="83" y2="75" stroke="#8a5d0c" strokeWidth="1.4" strokeDasharray="2.4 2.4" opacity="0.7" />
-          <path d="M30 44 H90" stroke="#fff6cf" strokeWidth="1.2" opacity="0.7" />
-        </g>
-      </g>
+      {/* The TechSara mark (public/brand/techsara-mark.png, its triangle centred on the canvas), appearing after the ring draws. */}
+      <image className="stage-ticket" href="/brand/techsara-mark.png" x="17" y="17" width="86" height="86" />
     </svg>
   )
 }
@@ -245,7 +239,7 @@ export function StageSignIn({ programme, signIn }: { programme: PublicProgramme;
       <div className="relative mx-auto flex w-full max-w-[420px] flex-1 flex-col justify-center px-6 pb-6 pt-[max(2.75rem,env(safe-area-inset-top))]">
         <header className="text-center">
           <div className="stage-emblem-wrap">
-            <TicketEmblem />
+            <BrandEmblem />
           </div>
           <StageTitle name={programme.name} />
           {programme.description ? (

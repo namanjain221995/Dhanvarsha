@@ -22,9 +22,11 @@ from ..services.participants import name_from_email
 from ..state import emit
 from .providers import InlineImage, OutgoingEmail, Provider, SendResult
 from .templates import (
+    BRAND_MARK_CID,
     LOGO_CID,
     PREVIEW_LINK_TOKEN,
     STAGE_BANNER_CID,
+    brand_mark_png,
     email_logo_png,
     render_invitation,
     stage_banner_gif,
@@ -149,6 +151,9 @@ async def _prepare(
         banner = await asyncio.to_thread(stage_banner_gif)
         inline.append(InlineImage(cid=STAGE_BANNER_CID, data=banner, subtype="gif"))
         context["banner_src"] = f"cid:{STAGE_BANNER_CID}"
+        mark = await asyncio.to_thread(brand_mark_png)
+        inline.append(InlineImage(cid=BRAND_MARK_CID, data=mark, subtype="png"))
+        context["mark_src"] = f"cid:{BRAND_MARK_CID}"
     if job.kind == "invitation":
         assert participant is not None
         context |= {

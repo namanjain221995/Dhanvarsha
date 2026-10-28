@@ -192,7 +192,12 @@ export function ParticipantHeader({
     // edge to edge (the negative margins undo the page padding); it also covers the notch area.
     <header className="-mx-4 flex items-center gap-3 rounded-b-[1.5rem] border-b border-sand bg-paper px-4 pb-3 pt-[calc(0.75rem+env(safe-area-inset-top))] shadow-[var(--shadow-card)] sm:-mx-5 sm:border-x sm:px-5">
       <Link href="/lobby" className="flex min-w-0 flex-1 items-center gap-3 rounded-xl">
-        <ProgrammeLogo src={programme.logo_url} name={programme.name} height={44} />
+        {/* The gold look shows the TechSara mark in its gold-ringed badge, as on the sign-in page. */}
+        <ProgrammeLogo
+          src={programme.accent === 'gold' ? '/brand/techsara-badge.png' : programme.logo_url}
+          name={programme.name}
+          height={44}
+        />
         <span className="min-w-0">
           <span className="type-condensed block truncate text-[1.02rem] font-bold leading-tight">{programme.name}</span>
           <ConnectionDot connection={connection} />

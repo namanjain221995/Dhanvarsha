@@ -54,6 +54,8 @@ LOGO_CID = "programme-logo@stagevote"
 # stars (made by scripts/make-email-banner.py). Mail apps do not run CSS animation, so the
 # motion is a GIF; Outlook on Windows shows its first frame, which is a full picture.
 STAGE_BANNER_CID = "stage-banner@stagevote"
+# The TechSara mark in the gold look's footer, as on the sign-in page.
+BRAND_MARK_CID = "brand-mark@stagevote"
 _YEAR = re.compile(r"^(.*\S)\s+((?:19|20)\d{2})$")
 # The logo keeps its own shape: this height, and a width up to LOGO_MAX_WIDTH.
 LOGO_HEIGHT = 56
@@ -160,6 +162,7 @@ def render_invitation(
     }
     full.setdefault("logo_src", None)
     full.setdefault("banner_src", None)
+    full.setdefault("mark_src", None)
     text = _text.get_template("invitation.txt").render(full)
     # The gold look has its own night-blue design; every other accent uses the light one.
     page = "invitation_stage.html" if full.get("theme") == "stage" else "invitation.html"
@@ -181,6 +184,16 @@ def stage_banner_gif() -> bytes:
     if _banner is None:
         _banner = (_DIR / "stage-banner.gif").read_bytes()
     return _banner
+
+
+_mark: bytes | None = None
+
+
+def brand_mark_png() -> bytes:
+    global _mark
+    if _mark is None:
+        _mark = (_DIR / "brand-mark.png").read_bytes()
+    return _mark
 
 
 _logo_cache: dict[str, bytes] = {}
