@@ -166,3 +166,27 @@ export type EventDetail = {
   results: BallotResult[] | null
   preview?: boolean
 }
+
+/** One card of the opening page. */
+export type OpeningCard = {
+  id: string
+  title: string
+  /** An icon key (components/participant/opening-icons.tsx). */
+  icon: string
+  /** An uploaded picture shown in the circle instead of the icon. */
+  image_url: string | null
+  /** "" for a decorative button, otherwise an http(s) URL or a path on this site. */
+  link: string
+}
+
+/** GET /public/opening: the showcase page for the big screen (/opening), defaults already applied. */
+export type PublicOpening = {
+  title: string
+  year: string
+  tagline: string
+  button_label: string
+  /** Null shows the built-in TechSara mark. */
+  logo_url: string | null
+  cards: OpeningCard[]
+  updated_at: string | null
+}

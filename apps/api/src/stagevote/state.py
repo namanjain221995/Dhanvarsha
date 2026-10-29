@@ -7,6 +7,7 @@ Lock ordering (documented in docs/architecture.md and followed everywhere):
    scheduled open, deadline sweep, schedule resume), settings changes and every event,
    ballot and nominee editor take it EXCLUSIVE before touching rows.
 2. programme row        - FOR UPDATE, only inside live transitions and settings edits.
+   The opening page editor takes only this lock: it changes nothing a vote reads.
 3. event / ballot rows  - FOR UPDATE inside transitions and editors.
 4. participant row      - FOR SHARE in votes, FOR UPDATE in link sign-in, invitations,
    disable and session reset.

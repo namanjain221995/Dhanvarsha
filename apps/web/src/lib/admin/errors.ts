@@ -45,7 +45,8 @@ export function fieldErrors(error: unknown): Record<string, string> {
   return out
 }
 
-function plainValidation(message: string): string {
+/** A Pydantic message as a plain sentence. */
+export function plainValidation(message: string): string {
   const tooLong = /at most (\d+) character/.exec(message)
   if (tooLong) return `Use ${tooLong[1]} characters or fewer.`
   if (/at least 1 character/.test(message)) return 'This cannot be empty.'

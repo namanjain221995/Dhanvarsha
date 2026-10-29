@@ -38,7 +38,11 @@ export function useRememberedAccent(current: Accent | undefined): string | null 
   )
 }
 
-function BrandEmblem() {
+/**
+ * The gold-ringed navy emblem with the TechSara mark (also the opening page's emblem). `src`
+ * puts an uploaded logo inside the ring instead, kept within the inner circle at its own shape.
+ */
+export function BrandEmblem({ src }: { src?: string | null }) {
   return (
     <svg className="stage-emblem" viewBox="0 0 120 120" aria-hidden focusable="false">
       <defs>
@@ -57,13 +61,17 @@ function BrandEmblem() {
       <circle className="stage-emblem-ring" cx="60" cy="60" r="55" fill="none" stroke="url(#stage-gold)" strokeWidth="2.2" pathLength="100" />
       <circle cx="60" cy="60" r="50" fill="none" stroke="#f2c14e" strokeOpacity="0.18" strokeWidth="1" />
       {/* The TechSara mark (public/brand/techsara-mark.png, its triangle centred on the canvas), appearing after the ring draws. */}
-      <image className="stage-ticket" href="/brand/techsara-mark.png" x="17" y="17" width="86" height="86" />
+      {src ? (
+        <image className="stage-ticket" href={src} x="25" y="25" width="70" height="70" preserveAspectRatio="xMidYMid meet" />
+      ) : (
+        <image className="stage-ticket" href="/brand/techsara-mark.png" x="17" y="17" width="86" height="86" />
+      )}
     </svg>
   )
 }
 
 /** Gold light sweeping down from the top corners, like stage curtains drawn in light. */
-function StageArcs() {
+export function StageArcs() {
   return (
     <svg className="stage-arcs" viewBox="0 0 400 320" preserveAspectRatio="xMidYMin slice" aria-hidden focusable="false">
       <defs>

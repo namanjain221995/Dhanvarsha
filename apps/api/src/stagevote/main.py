@@ -19,6 +19,7 @@ from .api import (
     admin_live,
     admin_participants,
     admin_results,
+    opening,
     participant,
 )
 from .config import get_settings
@@ -125,6 +126,8 @@ def create_app(*, start_hub: bool = True) -> FastAPI:
     app.include_router(admin_participants.router)
     app.include_router(admin_results.router)
     app.include_router(admin_email.router)
+    app.include_router(opening.router)
+    app.include_router(opening.admin)
     app.include_router(live_routes.router)
     return app
 

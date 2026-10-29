@@ -7,6 +7,16 @@ export type RoundBallot = { kind: BallotKind; title: string; options?: string[] 
 
 export type TypedAnswer = { participant_name: string; participant_email: string; answer: string; created_at: string }
 
+export type OpeningPage = {
+  title: string
+  year: string
+  tagline: string
+  button_label: string
+  logo_asset_id: string | null
+  logo_url: string | null
+  cards: { id: string; title: string; icon: string; image_asset_id: string | null; image_url: string | null; link: string }[]
+}
+
 /** Organiser actions through the real admin API (same-origin headers, CSRF). */
 export class Admin {
   private constructor(
@@ -189,6 +199,22 @@ export class Admin {
         }[]
       }[]
     }>('get', `/results?event_id=${eventId}`)
+  }
+
+  /** The opening page (/opening) as the editor sees it: the page, the defaults, the icon keys and the version. */
+  opening() {
+    return this.call<{
+      opening: OpeningPage
+      defaults: OpeningPage
+      icons: string[]
+      settings_version: number
+    }>('get', '/opening')
+  }
+
+  /** Back to the built-in title, year, tagline, button text and cards. */
+  async resetOpening() {
+    const current = await this.opening()
+    return this.call('delete', '/opening', { settings_version: current.settings_version })
   }
 
   async dispose() {

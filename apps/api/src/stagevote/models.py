@@ -125,6 +125,7 @@ class Programme(Base):
             "login_opens_at IS NULL OR login_closes_at IS NULL OR login_closes_at > login_opens_at",
             name="ck_programmes_login_window",
         ),
+        CheckConstraint("jsonb_typeof(opening) = 'object'", name="ck_programmes_opening_object"),
         Index("uq_programmes_single_active", "is_active", unique=True, postgresql_where=text("is_active")),
     )
 
@@ -153,6 +154,11 @@ class Programme(Base):
     preview_upcoming: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     publish_schedule: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # The opening showcase page as the organiser saved it, {} until then. Every key is
+    # optional: services/opening.py fills a missing one from the built-in page.
+    opening: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
+    )
     # state_version changes whenever anything a participant can see changes; it is the
     # signal clients use to refetch their snapshot. live_version changes only on live
     # transitions and protects admin live controls against stale actions.

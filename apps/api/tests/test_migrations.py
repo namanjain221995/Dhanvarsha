@@ -1,6 +1,6 @@
-"""Migrations 0006 (sign-in links) and 0007 (question ballots), each on a throwaway
-database of its own: additive on the way up, and a downgrade that refuses to destroy data
-the previous schema cannot hold."""
+"""Migrations 0006 (sign-in links), 0007 (question ballots) and 0008 (the opening page),
+each on a throwaway database of its own: additive on the way up, and a downgrade that
+refuses to destroy data the previous schema cannot hold."""
 
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ from stagevote.config import get_settings
 from stagevote.db import asyncpg_dsn, build_engine
 from stagevote.security import new_token, token_hash
 
-HEAD = "0007"
+HEAD = "0008"
 
 LINK_COLUMNS = (
     "SELECT column_name, data_type, is_nullable FROM information_schema.columns "
@@ -55,19 +55,28 @@ async def connect(url: str) -> asyncpg.Connection:
     return await asyncpg.connect(asyncpg_dsn(url), statement_cache_size=0)
 
 
+async def old_programme(owner: asyncpg.Connection, name: str) -> uuid.UUID:
+    """A programme made under an earlier release. It is inserted with SQL and only the
+    columns every revision has, since the ORM model always writes the newest columns."""
+    programme_id = uuid.uuid4()
+    await owner.execute(
+        "INSERT INTO programmes (id, slug, is_active, name, description, instructions, help_contact, "
+        "accent, timezone, countdown_enabled, run_mode, schedule_suspended, schedule_revision, "
+        "preview_upcoming, publish_schedule, state_version, live_version, settings_version) "
+        "VALUES ($1, $2, true, $3, '', '', '', 'violet', 'Asia/Kolkata', "
+        "true, 'manual', false, 1, false, true, 1, 1, 1)",
+        programme_id,
+        f"migration-{programme_id.hex[:12]}",
+        name,
+    )
+    return programme_id
+
+
 async def test_0006_adds_sign_in_links_and_refuses_to_destroy_them(scratch: DatabaseInfo) -> None:
     await alembic(scratch, "0005")
     owner = await connect(scratch.owner_url)
     try:
-        programme_id, person = uuid.uuid4(), uuid.uuid4()
-        await owner.execute(
-            "INSERT INTO programmes (id, slug, is_active, name, description, instructions, help_contact, "
-            "accent, timezone, countdown_enabled, run_mode, schedule_suspended, schedule_revision, "
-            "preview_upcoming, publish_schedule, state_version, live_version, settings_version) "
-            "VALUES ($1, 'migration-test', true, 'Migration test', '', '', '', 'violet', 'Asia/Kolkata', "
-            "true, 'manual', false, 1, false, true, 1, 1, 1)",
-            programme_id,
-        )
+        programme_id, person = await old_programme(owner, "Migration test"), uuid.uuid4()
         # Someone who signed in with an emailed password under the previous release.
         await owner.execute(
             "INSERT INTO participants (id, programme_id, email, email_normalized, display_name, user_code, "
@@ -160,7 +169,7 @@ async def test_0007_adds_question_ballots_and_refuses_to_destroy_answers(scratch
     app = await connect(scratch.app_url)
     try:
         # A vote recorded under the previous release.
-        programme_id = await factory.create_programme()
+        programme_id = await old_programme(owner, "Before questions")
         event = await factory.create_event(programme_id, name="Before")
         person = await factory.create_participant(programme_id)
         session_id = uuid.uuid4()
@@ -271,6 +280,60 @@ async def test_0007_adds_question_ballots_and_refuses_to_destroy_answers(scratch
             await alembic(scratch, "0006", downgrade=True)
         assert await owner.fetchval("SELECT version_num FROM alembic_version") == HEAD
         assert await owner.fetchval("SELECT answer_text FROM votes WHERE id = $1", answer_vote) == "Hello"
+    finally:
+        await app.close()
+        await owner.close()
+        await engine.dispose()
+
+
+OPENING_COLUMN = (
+    "SELECT data_type, is_nullable, column_default FROM information_schema.columns "
+    "WHERE table_name = 'programmes' AND column_name = 'opening'"
+)
+
+
+async def test_0008_adds_the_opening_page_and_drops_it_on_downgrade(scratch: DatabaseInfo) -> None:
+    await alembic(scratch, "0007")
+    engine = build_engine(get_settings(), scratch.owner_url, pool_size=1)
+    factory = Factory(async_sessionmaker(engine, expire_on_commit=False, autoflush=False))
+    owner = await connect(scratch.owner_url)
+    app = await connect(scratch.app_url)
+    try:
+        # A programme set up under the previous release.
+        programme_id = await old_programme(owner, "Dhanvarsha 2026")
+
+        await alembic(scratch, "0008")
+        assert tuple(await owner.fetchrow(OPENING_COLUMN)) == ("jsonb", "NO", "'{}'::jsonb")
+        # Every existing programme shows the built-in page.
+        assert (
+            await owner.fetchval("SELECT opening::text FROM programmes WHERE id = $1", programme_id) == "{}"
+        )
+
+        # The runtime role saves a page through its existing table grants; only an object fits.
+        await app.execute(
+            "UPDATE programmes SET opening = $1::jsonb WHERE id = $2",
+            '{"button_label": "PLAY"}',
+            programme_id,
+        )
+        with pytest.raises(asyncpg.CheckViolationError):
+            await app.execute("UPDATE programmes SET opening = '[]'::jsonb WHERE id = $1", programme_id)
+        # Programmes created by the application get the empty page too.
+        created = await factory.create_programme(activate=False)
+        assert await owner.fetchval("SELECT opening::text FROM programmes WHERE id = $1", created) == "{}"
+
+        await alembic(scratch, "0007", downgrade=True)
+        assert await owner.fetchval("SELECT version_num FROM alembic_version") == "0007"
+        assert await owner.fetchrow(OPENING_COLUMN) is None
+        assert (
+            await owner.fetchval("SELECT name FROM programmes WHERE id = $1", programme_id)
+            == "Dhanvarsha 2026"
+        )
+
+        await alembic(scratch, "head")
+        assert await owner.fetchval("SELECT version_num FROM alembic_version") == HEAD
+        assert (
+            await owner.fetchval("SELECT opening::text FROM programmes WHERE id = $1", programme_id) == "{}"
+        )
     finally:
         await app.close()
         await owner.close()

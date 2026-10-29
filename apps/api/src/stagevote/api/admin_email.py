@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import re
 import uuid
-from typing import Annotated, Any, Literal
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, Response
-from pydantic import BeforeValidator, Field, StringConstraints
+from pydantic import Field
 from sqlalchemy import delete, func, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -31,7 +31,7 @@ from ..services.invitations import queue_test_email, sign_in_link
 from ..services.participants import normalize_email
 from ..services.programmes import active_programme
 from ..state import audit, emit
-from .common import Model, SingleLine, no_store
+from .common import Model, MultiLine, SingleLine, no_store
 
 router = APIRouter(prefix="/api/v1/admin", dependencies=[Depends(current_admin)])
 
@@ -137,16 +137,6 @@ async def diagnose(
 
 
 # ---- invitation wording ---------------------------------------------------------
-
-
-def _newlines(value: Any) -> Any:
-    return value.replace("\r\n", "\n").replace("\r", "\n") if isinstance(value, str) else value
-
-
-# Paragraph text: line breaks and tabs allowed, other control characters refused.
-MultiLine = Annotated[
-    str, BeforeValidator(_newlines), StringConstraints(pattern=r"^[^\x00-\x08\x0b-\x1f\x7f]*$")
-]
 
 
 class WordingIn(Model):

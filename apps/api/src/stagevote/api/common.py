@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import Response
-from pydantic import BaseModel, ConfigDict, StringConstraints
+from pydantic import BaseModel, BeforeValidator, ConfigDict, StringConstraints
 
 from ..config import get_settings
 
@@ -15,6 +15,16 @@ NO_STORE = {"Cache-Control": "no-store, private", "Pragma": "no-cache"}
 
 # Names and titles end up in email headers and single-line UI: no control characters.
 SingleLine = Annotated[str, StringConstraints(pattern=r"^[^\x00-\x1f\x7f]*$")]
+
+
+def _newlines(value: Any) -> Any:
+    return value.replace("\r\n", "\n").replace("\r", "\n") if isinstance(value, str) else value
+
+
+# Paragraph text: line breaks and tabs allowed, other control characters refused.
+MultiLine = Annotated[
+    str, BeforeValidator(_newlines), StringConstraints(pattern=r"^[^\x00-\x08\x0b-\x1f\x7f]*$")
+]
 
 
 class Model(BaseModel):
