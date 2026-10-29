@@ -3,6 +3,7 @@
 import { ArrowRight, CalendarClock, CircleSlash, Clock3, Play, Square } from 'lucide-react'
 import { useState } from 'react'
 import { Notice } from '@/components/ui/misc'
+import { ballotTurnout, isQuestion } from '@/lib/admin/labels'
 import type { LiveState, SchedulePreview } from '@/lib/admin/types'
 import { formatWhen } from '@/lib/admin/zoned'
 import { serverClock, useServerNow } from '@/lib/time'
@@ -253,14 +254,18 @@ export function CloseVotingDialog({ state, busy, error, onSubmit, onClose }: Bas
     >
       {ballots.length ? (
         <ul className="space-y-1.5 rounded-2xl border border-sand bg-ivory p-4 text-sm">
-          {ballots.map((ballot) => (
-            <li key={ballot.ballot_id} className="flex flex-wrap justify-between gap-x-3">
-              <span className="font-semibold text-plum">{ballot.title}</span>
-              <span className="tabular text-plum-soft">
-                {ballot.total_votes} of {ballot.eligible_voters} voted, {ballot.remaining_voters} still to vote
-              </span>
-            </li>
-          ))}
+          {ballots.map((ballot) => {
+            const { total, eligible, remaining } = ballotTurnout(ballot)
+            const answered = isQuestion(ballot.kind)
+            return (
+              <li key={ballot.ballot_id} className="flex flex-wrap justify-between gap-x-3">
+                <span className="font-semibold text-plum">{ballot.title}</span>
+                <span className="tabular text-plum-soft">
+                  {total} of {eligible} {answered ? 'answered' : 'voted'}, {remaining} still to {answered ? 'answer' : 'vote'}
+                </span>
+              </li>
+            )
+          })}
         </ul>
       ) : null}
       <ScheduleNote state={state} />

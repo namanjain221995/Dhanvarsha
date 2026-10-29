@@ -260,9 +260,13 @@ class Factory:
         name: str | None = None,
         ballots: int = 1,
         nominees: int = 3,
+        kinds: tuple[str, ...] | None = None,
         planned_start: datetime | None = None,
         planned_end: datetime | None = None,
     ) -> EventInfo:
+        """`kinds` gives one ballot per kind (instead of `ballots` team ballots); a text
+        ballot never gets nominees."""
+        ballot_kinds = kinds if kinds is not None else ("team",) * ballots
         async with self.maker() as db, db.begin():
             position = (
                 await db.execute(
@@ -281,19 +285,19 @@ class Factory:
             db.add(event)
             await db.flush()
             infos: list[BallotInfo] = []
-            for b in range(ballots):
+            for b, kind in enumerate(ballot_kinds):
                 ballot = Ballot(
                     id=uuid.uuid4(),
                     programme_id=programme_id,
                     event_id=event.id,
                     position=b + 1,
                     title=f"{event.name} ballot {b + 1}",
-                    kind="team",
+                    kind=kind,
                 )
                 db.add(ballot)
                 await db.flush()
                 nominee_ids = []
-                for n in range(nominees):
+                for n in range(0 if kind == "text" else nominees):
                     nominee = Nominee(
                         id=uuid.uuid4(), ballot_id=ballot.id, position=n + 1, name=f"Act {b + 1}.{n + 1}"
                     )
@@ -459,14 +463,36 @@ class ParticipantClient:
         send_key: bool = True,
         send_csrf: bool = True,
     ) -> httpx.Response:
+        return await self.submit(
+            ballot_id,
+            {"nominee_id": str(nominee_id)},
+            key=key,
+            csrf=csrf,
+            send_key=send_key,
+            send_csrf=send_csrf,
+        )
+
+    async def answer(self, ballot_id: uuid.UUID, answer: str, *, key: str | None = None) -> httpx.Response:
+        """Submit a typed answer to a text ballot."""
+        return await self.submit(ballot_id, {"answer": answer}, key=key)
+
+    async def submit(
+        self,
+        ballot_id: uuid.UUID,
+        body: dict[str, Any],
+        *,
+        key: str | None = None,
+        csrf: str | None = None,
+        send_key: bool = True,
+        send_csrf: bool = True,
+    ) -> httpx.Response:
+        """POST any vote body (a nominee, a typed answer, or something malformed)."""
         headers: dict[str, str] = {}
         if send_key:
             headers["Idempotency-Key"] = key if key is not None else uuid.uuid4().hex
         if send_csrf:
             headers["X-CSRF-Token"] = csrf if csrf is not None else (self.csrf or "")
-        return await self.http.post(
-            f"{API}/me/ballots/{ballot_id}/vote", json={"nominee_id": str(nominee_id)}, headers=headers
-        )
+        return await self.http.post(f"{API}/me/ballots/{ballot_id}/vote", json=body, headers=headers)
 
 
 class AdminClient:

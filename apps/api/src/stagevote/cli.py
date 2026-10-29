@@ -254,7 +254,11 @@ async def sign_in_link(email: str) -> str:
 
 
 async def reconcile(slug: str | None) -> int:
-    """Check that aggregates equal the stored votes and that no duplicates exist."""
+    """Check that aggregates equal the stored votes and that no duplicates exist.
+
+    Typed answers are rows in votes too: they are counted on their own, and only on text
+    ballots. The nominee tallies must add up to the votes that name a nominee.
+    """
     maker, engine = _owner_session()
     async with maker() as db, db.begin():
         where = "pr.slug = :slug" if slug else "pr.is_active"
@@ -271,8 +275,22 @@ async def reconcile(slug: str | None) -> int:
                 {"p": programme_id},
             )
         ).scalar_one()
-        total = (
-            await db.execute(text("SELECT count(*) FROM votes WHERE programme_id = :p"), {"p": programme_id})
+        total, for_nominees, answers = (
+            await db.execute(
+                text(
+                    "SELECT count(*), count(nominee_id), count(answer_text) FROM votes WHERE programme_id = :p"
+                ),
+                {"p": programme_id},
+            )
+        ).one()
+        misplaced = (
+            await db.execute(
+                text(
+                    "SELECT count(*) FROM votes v JOIN ballots b ON b.id = v.ballot_id WHERE v.programme_id = :p "
+                    "AND (v.answer_text IS NOT NULL) <> (b.kind = 'text')"
+                ),
+                {"p": programme_id},
+            )
         ).scalar_one()
         by_ballot = (
             await db.execute(
@@ -305,12 +323,21 @@ async def reconcile(slug: str | None) -> int:
         ).scalar_one()
     await engine.dispose()  # type: ignore[attr-defined]
     print(f"votes stored:            {total}")
+    print(f"votes for nominees:      {for_nominees}")
     print(f"sum of nominee tallies:  {tally_sum}")
+    print(f"typed answers:           {answers}")
     print(f"duplicate (voter,ballot) {dupes}")
     print(f"cross-ballot references  {bad_refs}")
+    print(f"wrong kind for ballot    {misplaced}")
     for title, event, count in by_ballot:
         print(f"  {event} / {title}: {count}")
-    ok = dupes == 0 and bad_refs == 0 and int(tally_sum) == int(total)
+    ok = (
+        dupes == 0
+        and bad_refs == 0
+        and misplaced == 0
+        and int(tally_sum) == int(for_nominees)
+        and int(for_nominees) + int(answers) == int(total)
+    )
     print("RECONCILED" if ok else "MISMATCH")
     return 0 if ok else 1
 

@@ -1,6 +1,6 @@
 'use client'
 
-import { Clock3, ScrollText } from 'lucide-react'
+import { Clock3, Drama, ScrollText } from 'lucide-react'
 import { Dialog } from '@/components/ui/dialog'
 import { Avatar } from '@/components/ui/misc'
 import { useAdminQuery } from '@/lib/admin/query'
@@ -75,14 +75,52 @@ export function EventPreviewDialog({ eventId, onClose }: { eventId: string; onCl
               ) : null}
             </div>
 
+            {data.ballots.length === 0 ? (
+              <div className="mt-5 flex items-center gap-3 rounded-[var(--radius-card)] border border-sand bg-paper p-4">
+                <span aria-hidden className="flex size-10 shrink-0 items-center justify-center rounded-full bg-gold-wash text-gold-deep">
+                  <Drama className="size-5" />
+                </span>
+                <p className="type-condensed text-[1.1rem] font-bold leading-snug text-plum">No voting in this round. Enjoy the show!</p>
+              </div>
+            ) : null}
+
             {data.ballots.map((ballot) => (
               <div key={ballot.id} className="mt-5">
                 <p className="type-condensed text-[1.15rem] font-bold text-plum">{ballot.title}</p>
                 {ballot.description ? <p className="text-sm text-plum-soft">{ballot.description}</p> : null}
-                <p className="text-xs text-plum-soft">Choose one {ballot.kind === 'team' ? 'team' : 'person'}.</p>
-                {ballot.nominees.length === 0 ? (
+                <p className="text-xs text-plum-soft">
+                  {ballot.kind === 'text'
+                    ? 'Type your answer. It is final once submitted.'
+                    : ballot.kind === 'mcq'
+                      ? 'Choose one answer.'
+                      : `Choose one ${ballot.kind === 'team' ? 'team' : 'person'}.`}
+                </p>
+                {ballot.kind === 'text' ? (
+                  <div className="mt-2 rounded-2xl border-2 border-sand bg-paper px-3 pb-2 pt-2.5">
+                    <p className="min-h-16 text-sm text-plum-faint">Type your answer here</p>
+                    <p className="tabular text-right text-xs text-plum-soft">0/500</p>
+                  </div>
+                ) : ballot.kind === 'mcq' && ballot.nominees.length ? (
+                  <ul className="mt-2 space-y-2">
+                    {ballot.nominees.map((option, index) => (
+                      <li key={option.id} className="flex items-center gap-3 rounded-2xl border border-sand bg-paper p-3">
+                        <span
+                          aria-hidden
+                          className="type-condensed flex size-10 shrink-0 items-center justify-center rounded-xl border-2 border-sand-strong bg-ivory font-bold text-plum"
+                        >
+                          {index < 26 ? String.fromCharCode(65 + index) : index + 1}
+                        </span>
+                        <div className="min-w-0 flex-1">
+                          <p className="break-words font-semibold leading-snug text-plum">{option.name}</p>
+                          {option.description ? <p className="line-clamp-2 text-xs text-plum-soft">{option.description}</p> : null}
+                        </div>
+                        <span aria-hidden className="size-5 shrink-0 rounded-full border-2 border-plum-faint" />
+                      </li>
+                    ))}
+                  </ul>
+                ) : ballot.nominees.length === 0 ? (
                   <p className="mt-2 rounded-2xl border border-dashed border-gold/60 bg-gold-wash/60 px-3 py-2 text-sm text-plum">
-                    No nominees yet.
+                    {ballot.kind === 'mcq' ? 'No answer options yet.' : 'No nominees yet.'}
                   </p>
                 ) : (
                   <ul className="mt-2 space-y-2">
@@ -106,7 +144,7 @@ export function EventPreviewDialog({ eventId, onClose }: { eventId: string; onCl
                   </ul>
                 )}
                 <div aria-hidden className="mt-3 flex min-h-12 items-center justify-center rounded-full bg-primary/40 font-semibold text-white">
-                  Submit vote
+                  {ballot.kind === 'mcq' || ballot.kind === 'text' ? 'Submit answer' : 'Submit vote'}
                 </div>
               </div>
             ))}

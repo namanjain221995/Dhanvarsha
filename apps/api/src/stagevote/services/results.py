@@ -1,4 +1,9 @@
-"""Aggregate results computed directly from persisted votes (no second tally)."""
+"""Aggregate results computed directly from persisted votes (no second tally).
+
+Team, individual and multiple-choice ballots are counted per nominee (answer option).
+A typed-answer (text) ballot is counted as a number of answers; the answers themselves
+are only ever listed to organisers (`typed_answers`), never to voters.
+"""
 
 from __future__ import annotations
 
@@ -7,6 +12,8 @@ from typing import Any
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from .participants import name_from_email
 
 
 async def eligible_voters(db: AsyncSession, programme_id: uuid.UUID) -> int:
@@ -26,6 +33,7 @@ async def ballot_results(
 ) -> list[dict[str, Any]]:
     if not ballot_ids:
         return []
+    order = {str(b): i for i, b in enumerate(ballot_ids)}
     rows = (
         await db.execute(
             text(
@@ -39,6 +47,20 @@ async def ballot_results(
                 WHERE b.id = ANY(:ids)
                 GROUP BY b.id, b.title, b.kind, b.position, n.id, n.name, n.affiliation, n.position
                 ORDER BY b.position, n.position, n.name
+                """
+            ),
+            {"ids": ballot_ids},
+        )
+    ).all()
+    answered = (
+        await db.execute(
+            text(
+                """
+                SELECT b.id AS ballot_id, b.title, b.kind, count(v.id) AS answers
+                FROM ballots b
+                LEFT JOIN votes v ON v.ballot_id = b.id AND v.answer_text IS NOT NULL
+                WHERE b.id = ANY(:ids) AND b.kind = 'text'
+                GROUP BY b.id, b.title, b.kind
                 """
             ),
             {"ids": ballot_ids},
@@ -77,4 +99,63 @@ async def ballot_results(
             }
         )
         out.append(ballot)
+    for row in answered:
+        count = int(row.answers)
+        out.append(
+            {
+                "ballot_id": str(row.ballot_id),
+                "title": row.title,
+                "kind": row.kind,
+                "nominees": [],
+                "answer_count": count,
+                "total_votes": count,
+                "eligible_voters": eligible,
+                "remaining_voters": max(eligible - count, 0),
+                "leaders": [],
+                "tie": False,
+            }
+        )
+    out.sort(key=lambda b: order.get(b["ballot_id"], len(order)))
+    return out
+
+
+def participant_results(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Published results as voters see them: a typed-answer question shows only how many
+    answered, never what anyone typed."""
+    return [
+        {"ballot_id": r["ballot_id"], "kind": "text", "answer_count": r["answer_count"]}
+        if r["kind"] == "text"
+        else r
+        for r in results
+    ]
+
+
+async def typed_answers(db: AsyncSession, ballot_ids: list[uuid.UUID]) -> dict[str, list[dict[str, Any]]]:
+    """For organisers: every typed answer of these ballots with who typed it, oldest first."""
+    if not ballot_ids:
+        return {}
+    rows = (
+        await db.execute(
+            text(
+                """
+                SELECT v.ballot_id, v.answer_text, v.created_at, p.display_name, p.email
+                FROM votes v
+                JOIN participants p ON p.id = v.participant_id
+                WHERE v.ballot_id = ANY(:ids) AND v.answer_text IS NOT NULL
+                ORDER BY v.created_at, v.id
+                """
+            ),
+            {"ids": ballot_ids},
+        )
+    ).all()
+    out: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        out.setdefault(str(row.ballot_id), []).append(
+            {
+                "participant_name": row.display_name or name_from_email(row.email),
+                "participant_email": row.email,
+                "answer": row.answer_text,
+                "created_at": row.created_at,
+            }
+        )
     return out

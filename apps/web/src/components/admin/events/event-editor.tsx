@@ -7,7 +7,7 @@ import { useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Notice } from '@/components/ui/misc'
 import { describeError, errorCode, fieldErrors } from '@/lib/admin/errors'
-import { CLOSE_REASONS, plural } from '@/lib/admin/labels'
+import { CLOSE_REASONS, isQuestion, plural } from '@/lib/admin/labels'
 import { adminAction, useAdminQuery } from '@/lib/admin/query'
 import { useAdminSession, useAdminSignal } from '@/lib/admin/session'
 import type { AdminBallot, AdminEvent, AdminNominee, EventDetail, EventsList } from '@/lib/admin/types'
@@ -74,6 +74,15 @@ export function EventEditor({ eventId }: { eventId: string }) {
   const structural = !event.frozen && event.status === 'upcoming'
   const problems = readinessProblems(event)
   const serverNow = query.data ? Date.parse(query.data.server_time) : undefined
+  const hasQuestions = event.ballots.some((ballot) => isQuestion(ballot.kind))
+  const firstBallot = event.ballots[0]
+  const createdNote = !firstBallot
+    ? 'Event created with no voting. It can open as it is, or add a ballot or question below.'
+    : firstBallot.kind === 'text'
+      ? 'Event created. Its question needs nothing more, so it can open as it is.'
+      : firstBallot.kind === 'mcq'
+        ? 'Event created. Add at least two answer options to its question so it can open.'
+        : 'Event created. Add nominees to its ballot so it can open.'
 
   const refresh = async () => {
     await query.reload()
@@ -135,7 +144,7 @@ export function EventEditor({ eventId }: { eventId: string }) {
       <FlashRegion flash={flash.flash} onDismiss={flash.clear} className="mt-5 empty:hidden" />
       {params.get('created') === '1' && !flash.flash ? (
         <Notice tone="success" className="mt-5">
-          Event created. Add nominees to its ballot so it can open.
+          {createdNote}
         </Notice>
       ) : null}
 
@@ -158,7 +167,7 @@ export function EventEditor({ eventId }: { eventId: string }) {
             {event.status === 'closed'
               ? ` ${event.close_reason ? (CLOSE_REASONS[event.close_reason] ?? 'Closed') : 'Closed'}, ${formatWhen(event.closed_at, tz, serverNow)}.`
               : ` Voting closes ${formatWhen(event.voting_deadline_at, tz, serverNow)}.`}{' '}
-            {plural(event.vote_count, 'vote')} so far.
+            {hasQuestions ? plural(event.vote_count, 'vote or answer', 'votes and answers') : plural(event.vote_count, 'vote')} so far.
           </p>
         ) : null}
       </div>
@@ -166,6 +175,12 @@ export function EventEditor({ eventId }: { eventId: string }) {
       <div className="mt-5 grid gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(0,26rem)] xl:items-start">
         <div className="min-w-0 space-y-5">
           <h2 className="type-display text-[1.6rem] text-plum">Ballots</h2>
+          {event.ballots.length === 0 ? (
+            <p className="rounded-[var(--radius-card)] border border-dashed border-sand-strong bg-paper px-4 py-4 text-sm text-plum sm:px-6">
+              No voting in this round (show only). While it is live, participants see “No voting in this round. Enjoy the
+              show!”.
+            </p>
+          ) : null}
           {event.ballots.map((ballot, index) => (
             <BallotCard key={ballot.id} event={event} ballot={ballot} index={index} actions={actions} />
           ))}
@@ -183,7 +198,7 @@ export function EventEditor({ eventId }: { eventId: string }) {
             ) : (
               <Button variant="secondary" onClick={() => setAddingBallot(true)}>
                 <Plus aria-hidden className="size-4" />
-                Add another ballot
+                {event.ballots.length ? 'Add another ballot' : 'Add a ballot or question'}
               </Button>
             )
           ) : (
@@ -210,14 +225,24 @@ export function EventEditor({ eventId }: { eventId: string }) {
           key={dialog.key}
           open
           tone="danger"
-          title="Remove this ballot?"
-          description={`“${dialog.value.ballot.title}” and its ${plural(dialog.value.ballot.nominees.length, 'nominee')} will be deleted. This cannot be undone.`}
-          confirmLabel="Remove ballot"
+          title={isQuestion(dialog.value.ballot.kind) ? 'Remove this question?' : 'Remove this ballot?'}
+          description={
+            dialog.value.ballot.kind === 'text' || !dialog.value.ballot.nominees.length
+              ? `“${dialog.value.ballot.title}” will be deleted. This cannot be undone.`
+              : `“${dialog.value.ballot.title}” and its ${plural(
+                  dialog.value.ballot.nominees.length,
+                  dialog.value.ballot.kind === 'mcq' ? 'answer option' : 'nominee',
+                )} will be deleted. This cannot be undone.`
+          }
+          confirmLabel={isQuestion(dialog.value.ballot.kind) ? 'Remove question' : 'Remove ballot'}
           busy={busy}
           error={dialogError}
           onConfirm={() =>
             dialog.value?.kind === 'delete-ballot' &&
-            void remove(`/admin/ballots/${dialog.value.ballot.id}`, `Ballot “${dialog.value.ballot.title}” removed.`)
+            void remove(
+              `/admin/ballots/${dialog.value.ballot.id}`,
+              `${isQuestion(dialog.value.ballot.kind) ? 'Question' : 'Ballot'} “${dialog.value.ballot.title}” removed.`,
+            )
           }
           onClose={dialog.close}
         />
@@ -228,8 +253,12 @@ export function EventEditor({ eventId }: { eventId: string }) {
           open
           tone="danger"
           title={`Remove ${dialog.value.nominee.name}?`}
-          description={`They will no longer appear on “${dialog.value.ballot.title}”. This cannot be undone.`}
-          confirmLabel="Remove nominee"
+          description={
+            dialog.value.ballot.kind === 'mcq'
+              ? `This answer option will no longer appear on “${dialog.value.ballot.title}”. This cannot be undone.`
+              : `They will no longer appear on “${dialog.value.ballot.title}”. This cannot be undone.`
+          }
+          confirmLabel={dialog.value.ballot.kind === 'mcq' ? 'Remove option' : 'Remove nominee'}
           busy={busy}
           error={dialogError}
           onConfirm={() =>

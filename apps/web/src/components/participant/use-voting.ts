@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useReducer, useRef } from 'react'
 import { ApiError, newIdempotencyKey, participantApi } from '@/lib/api'
-import type { EventDetail, Receipt } from '@/lib/types'
+import { type BallotKind, type EventDetail, isQuestionKind, type Receipt } from '@/lib/types'
 
 /**
  * Per-ballot submission state machine.
@@ -15,15 +15,34 @@ import type { EventDetail, Receipt } from '@/lib/types'
  * SAME idempotency key. It never shows failure or offers another choice until the first
  * attempt is reconciled. Pending attempts survive reloads in sessionStorage. A selection
  * that was never submitted is only a draft: it is never sent automatically.
+ *
+ * The same machine serves votes, multiple-choice answers and typed answers. A draft is the
+ * chosen nominee (or answer option) id, or for a typed-answer question the text as typed.
  */
+
+/** What is sent: a nominee or answer option, or the typed text of an answer. */
+export type Choice = { nominee_id: string } | { answer: string }
 
 export type SubmitPhase =
   | { phase: 'idle' }
-  | { phase: 'submitting'; nomineeId: string; key: string }
-  | { phase: 'checking'; nomineeId: string; key: string; attempt: number }
+  | { phase: 'submitting'; choice: Choice; key: string }
+  | { phase: 'checking'; choice: Choice; key: string; attempt: number }
   | { phase: 'error'; code: string; message: string }
 
+/** The nominee id of a vote or option being sent, if any. */
+export function sentNominee(submit: SubmitPhase | undefined): string | null {
+  if (!submit || (submit.phase !== 'submitting' && submit.phase !== 'checking')) return null
+  return 'nominee_id' in submit.choice ? submit.choice.nominee_id : null
+}
+
+/** The typed answer being sent, if any. */
+export function sentAnswer(submit: SubmitPhase | undefined): string | null {
+  if (!submit || (submit.phase !== 'submitting' && submit.phase !== 'checking')) return null
+  return 'answer' in submit.choice ? submit.choice.answer : null
+}
+
 export type BallotState = {
+  /** Nominee or option id, or the typed text on a typed-answer question. */
   draft: string | null
   submit: SubmitPhase
   receipt: Receipt | null
@@ -35,7 +54,7 @@ type State = Record<string, BallotState>
 
 type Action =
   | { type: 'sync'; detail: EventDetail; drafts: Record<string, string | null> }
-  | { type: 'select'; ballotId: string; nomineeId: string }
+  | { type: 'select'; ballotId: string; value: string | null }
   | { type: 'submit'; ballotId: string; phase: SubmitPhase }
   | { type: 'recorded'; ballotId: string; receipt: Receipt; celebrate: boolean; note?: string | null }
 
@@ -47,12 +66,19 @@ function reducer(state: State, action: Action): State {
       const next: State = {}
       for (const ballot of action.detail.ballots) {
         const prev = state[ballot.id] ?? empty
-        const nomineeIds = new Set(ballot.nominees.map((n) => n.id))
         const restored = action.drafts[ballot.id]
-        const draft = prev.draft ?? (restored && nomineeIds.has(restored) ? restored : null)
+        let draft: string | null
+        if (ballot.kind === 'text') {
+          // A typed answer is kept as typed, whatever it says.
+          draft = prev.draft ?? (restored ? restored : null)
+        } else {
+          const nomineeIds = new Set(ballot.nominees.map((n) => n.id))
+          const candidate = prev.draft ?? (restored && nomineeIds.has(restored) ? restored : null)
+          draft = candidate && nomineeIds.has(candidate) ? candidate : null
+        }
         next[ballot.id] = {
           ...prev,
-          draft: draft && nomineeIds.has(draft) ? draft : null,
+          draft,
           // The server's receipt always wins over local state.
           receipt: ballot.receipt ?? prev.receipt,
           submit: ballot.receipt ? { phase: 'idle' } : prev.submit,
@@ -63,7 +89,7 @@ function reducer(state: State, action: Action): State {
     case 'select': {
       const prev = state[action.ballotId] ?? empty
       if (prev.receipt || prev.submit.phase === 'submitting' || prev.submit.phase === 'checking') return state
-      return { ...state, [action.ballotId]: { ...prev, draft: action.nomineeId, submit: { phase: 'idle' } } }
+      return { ...state, [action.ballotId]: { ...prev, draft: action.value, submit: { phase: 'idle' } } }
     }
     case 'submit': {
       const prev = state[action.ballotId] ?? empty
@@ -110,15 +136,26 @@ export function clearVotingStorage() {
   }
 }
 
-function readPending(owner: string | null, ballotId: string): { key: string; nomineeId: string } | null {
+type Pending = { key: string; choice: Choice }
+
+function readPending(owner: string | null, ballotId: string): Pending | null {
   if (!owner) return null
   try {
     const raw = storage(owner)?.getItem(pendingKey(owner, ballotId))
-    return raw ? (JSON.parse(raw) as { key: string; nomineeId: string }) : null
+    if (!raw) return null
+    const stored = JSON.parse(raw) as { key?: string; choice?: Choice; nomineeId?: string }
+    if (!stored.key) return null
+    if (stored.choice) return { key: stored.key, choice: stored.choice }
+    // Pending attempts saved before typed answers existed carry only the nominee id.
+    if (stored.nomineeId) return { key: stored.key, choice: { nominee_id: stored.nomineeId } }
+    return null
   } catch {
     return null
   }
 }
+
+/** Typed answers: trimmed, 1 to 500 characters (the server checks the same). */
+export const ANSWER_MAX = 500
 
 const sleep = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms))
 
@@ -132,6 +169,18 @@ const DEFINITE_REFUSALS: Record<string, string> = {
   VOTING_NOT_OPEN: 'This round is not open for voting yet.',
   PROGRAMME_ACCESS_CLOSED: 'The programme is not open for voting now.',
   INVALID_NOMINEE: 'That choice is no longer available. Review the list and choose again.',
+  ANSWER_INVALID: 'Type an answer of up to 500 characters.',
+}
+
+/** The same refusals, worded for an answer to a question. */
+const ANSWER_REFUSALS: Record<string, string> = {
+  ...DEFINITE_REFUSALS,
+  VOTING_CLOSED: 'This round closed before your answer arrived. It was not recorded.',
+  INVALID_NOMINEE: 'That answer is no longer available. Review the options and choose again.',
+}
+
+function refusal(kind: BallotKind | undefined, code: string, fallback: string): string {
+  return (isQuestionKind(kind) ? ANSWER_REFUSALS : DEFINITE_REFUSALS)[code] ?? fallback
 }
 
 export function useVoting(detail: EventDetail | null, participantId: string | null, onRecorded: () => void) {
@@ -142,6 +191,11 @@ export function useVoting(detail: EventDetail | null, participantId: string | nu
   useEffect(() => {
     onRecordedRef.current = onRecorded
   }, [onRecorded])
+  // Ballot kinds for wording only (refusal messages, "already answered" notes).
+  const kinds = useRef<Record<string, BallotKind>>({})
+  useEffect(() => {
+    kinds.current = Object.fromEntries((detail?.ballots ?? []).map((b) => [b.id, b.kind]))
+  }, [detail])
 
   useEffect(() => {
     mounted.current = true
@@ -164,12 +218,12 @@ export function useVoting(detail: EventDetail | null, participantId: string | nu
 
   /** Resolve an attempt whose outcome is unknown. Only ever retries with the same key. */
   const reconcile = useCallback(
-    async (ballotId: string, nomineeId: string, key: string) => {
+    async (ballotId: string, choice: Choice, key: string) => {
       if (running.current.has(ballotId)) return
       running.current.add(ballotId)
       try {
         for (let attempt = 1; mounted.current; attempt += 1) {
-          dispatch({ type: 'submit', ballotId, phase: { phase: 'checking', nomineeId, key, attempt } })
+          dispatch({ type: 'submit', ballotId, phase: { phase: 'checking', choice, key, attempt } })
           await waitForOnline()
           try {
             const found = await participantApi<{ receipt: Receipt }>(`/me/ballots/${ballotId}/receipt`, { timeoutMs: 8000 })
@@ -182,7 +236,7 @@ export function useVoting(detail: EventDetail | null, participantId: string | nu
               try {
                 const result = await participantApi<{ receipt: Receipt }>(`/me/ballots/${ballotId}/vote`, {
                   method: 'POST',
-                  body: { nominee_id: nomineeId },
+                  body: choice,
                   idempotencyKey: key,
                   timeoutMs: 12_000,
                 })
@@ -193,10 +247,11 @@ export function useVoting(detail: EventDetail | null, participantId: string | nu
                 if (!retryError.isNetwork && retryError.status < 500) {
                   const receipt = retryError.details.receipt as Receipt | undefined
                   if (receipt) {
-                    record(ballotId, receipt, false, 'Your vote was already recorded.')
+                    const answered = isQuestionKind(kinds.current[ballotId] ?? receipt.ballot_kind)
+                    record(ballotId, receipt, false, answered ? 'Your answer was already recorded.' : 'Your vote was already recorded.')
                     return
                   }
-                  fail(ballotId, retryError.code, DEFINITE_REFUSALS[retryError.code] ?? retryError.message)
+                  fail(ballotId, retryError.code, refusal(kinds.current[ballotId], retryError.code, retryError.message))
                   return
                 }
               }
@@ -229,50 +284,72 @@ export function useVoting(detail: EventDetail | null, participantId: string | nu
     for (const ballot of detail.ballots) {
       if (ballot.receipt) continue
       const pending = readPending(participantId, ballot.id)
-      if (pending) void reconcile(ballot.id, pending.nomineeId, pending.key)
+      if (pending) void reconcile(ballot.id, pending.choice, pending.key)
     }
   }, [detail, reconcile, participantId])
 
-  const select = useCallback((ballotId: string, nomineeId: string) => {
-    storage(participantId)?.setItem(draftKey(participantId ?? '', ballotId), nomineeId)
-    dispatch({ type: 'select', ballotId, nomineeId })
+  /** Choose a nominee or option, or (typed-answer questions) store the text as typed. */
+  const select = useCallback((ballotId: string, value: string) => {
+    const store = storage(participantId)
+    if (value) store?.setItem(draftKey(participantId ?? '', ballotId), value)
+    else store?.removeItem(draftKey(participantId ?? '', ballotId))
+    dispatch({ type: 'select', ballotId, value: value || null })
   }, [participantId])
 
   const submit = useCallback(
     async (ballotId: string) => {
       const current = state[ballotId]
-      const nomineeId = current?.draft
-      if (!nomineeId || current?.receipt) return
+      const draft = current?.draft
+      if (!draft || current?.receipt) return
       if (current.submit.phase === 'submitting' || current.submit.phase === 'checking') return
+      const kind = detail?.ballots.find((b) => b.id === ballotId)?.kind
+      let choice: Choice
+      if (kind === 'text') {
+        const answer = draft.trim()
+        if (!answer || answer.length > ANSWER_MAX) {
+          fail(ballotId, 'ANSWER_INVALID', refusal(kind, 'ANSWER_INVALID', 'Type an answer of up to 500 characters.'))
+          return
+        }
+        choice = { answer }
+      } else {
+        choice = { nominee_id: draft }
+      }
       const key = newIdempotencyKey()
-      storage(participantId)?.setItem(pendingKey(participantId ?? '', ballotId), JSON.stringify({ key, nomineeId }))
-      dispatch({ type: 'submit', ballotId, phase: { phase: 'submitting', nomineeId, key } })
+      storage(participantId)?.setItem(pendingKey(participantId ?? '', ballotId), JSON.stringify({ key, choice }))
+      dispatch({ type: 'submit', ballotId, phase: { phase: 'submitting', choice, key } })
       try {
         const result = await participantApi<{ receipt: Receipt }>(`/me/ballots/${ballotId}/vote`, {
           method: 'POST',
-          body: { nominee_id: nomineeId },
+          body: choice,
           idempotencyKey: key,
           timeoutMs: 12_000,
         })
         record(ballotId, result.receipt, true)
       } catch (error) {
         if (!(error instanceof ApiError)) {
-          void reconcile(ballotId, nomineeId, key)
+          void reconcile(ballotId, choice, key)
           return
         }
         if (error.isNetwork || error.status >= 500) {
-          void reconcile(ballotId, nomineeId, key)
+          void reconcile(ballotId, choice, key)
           return
         }
         const receipt = error.details.receipt as Receipt | undefined
         if (receipt && (error.code === 'ALREADY_VOTED' || error.code === 'IDEMPOTENCY_KEY_REUSED')) {
-          record(ballotId, receipt, false, 'You had already voted on this ballot. Votes are final.')
+          record(
+            ballotId,
+            receipt,
+            false,
+            isQuestionKind(kind)
+              ? 'You had already answered this question. Answers are final.'
+              : 'You had already voted on this ballot. Votes are final.',
+          )
           return
         }
-        fail(ballotId, error.code, DEFINITE_REFUSALS[error.code] ?? error.message)
+        fail(ballotId, error.code, refusal(kind, error.code, error.message))
       }
     },
-    [state, record, reconcile, fail, participantId],
+    [state, detail, record, reconcile, fail, participantId],
   )
 
   return { state, select, submit }

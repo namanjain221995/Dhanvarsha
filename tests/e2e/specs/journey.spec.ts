@@ -9,6 +9,7 @@ test.describe('participant journey', () => {
   test('invitation email, sign-in, live round, vote, receipt, next round, completion', async ({ page, baseURL }) => {
     const admin = await Admin.login(baseURL!)
     await admin.ensureRunning()
+    await admin.ensureAccessOpen()
     await admin.closeCurrent()
     const tag = Date.now().toString(36)
 

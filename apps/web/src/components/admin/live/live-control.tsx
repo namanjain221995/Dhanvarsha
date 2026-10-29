@@ -22,7 +22,7 @@ import { Button } from '@/components/ui/button'
 import { Notice } from '@/components/ui/misc'
 import { adminApi } from '@/lib/api'
 import { describeError, errorCode, goToLogin, isApiError, isUnauthenticated } from '@/lib/admin/errors'
-import { CLOSE_REASONS, SCHEDULE_JOB_LABELS, plural } from '@/lib/admin/labels'
+import { ballotKindLabel, ballotTurnout, CLOSE_REASONS, isQuestion, SCHEDULE_JOB_LABELS, plural } from '@/lib/admin/labels'
 import { adminAction, useAdminQuery } from '@/lib/admin/query'
 import { useAdminSession, useAdminSignal } from '@/lib/admin/session'
 import type { LiveEvent, LiveState, ScheduleJob, SchedulePreview } from '@/lib/admin/types'
@@ -543,30 +543,30 @@ function OnAirCard({
             </Link>
           </div>
           {ballots.length === 0 ? (
-            <p className="mt-2 text-sm text-plum-soft">This event has no ballots with nominees.</p>
+            <p className="mt-2 text-sm text-plum-soft">No voting in this round: it has no ballots or questions to count.</p>
           ) : (
             <ul className="mt-1 space-y-5">
               {ballots.map((ballot) => {
-                const pct = ballot.eligible_voters ? Math.round((ballot.total_votes / ballot.eligible_voters) * 100) : 0
+                const { total, eligible, remaining } = ballotTurnout(ballot)
+                const pct = eligible ? Math.round((total / eligible) * 100) : 0
+                const answered = isQuestion(ballot.kind)
                 return (
                   <li key={ballot.ballot_id}>
                     <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-0.5">
                       <p className="min-w-0 break-words font-semibold text-plum">
                         {ballot.title}
-                        <span className="ml-2 text-sm font-normal text-plum-soft">
-                          {ballot.kind === 'team' ? 'Team ballot' : 'Individual ballot'}
-                        </span>
+                        <span className="ml-2 text-sm font-normal text-plum-soft">{ballotKindLabel(ballot.kind)}</span>
                       </p>
                       <p className="tabular text-sm text-plum">
-                        <strong className="text-base">{ballot.total_votes.toLocaleString('en-IN')}</strong> of{' '}
-                        {ballot.eligible_voters.toLocaleString('en-IN')} voted ({pct}%)
+                        <strong className="text-base">{total.toLocaleString('en-IN')}</strong> of {eligible.toLocaleString('en-IN')}{' '}
+                        {answered ? 'answered' : 'voted'} ({pct}%)
                       </p>
                     </div>
                     <div className="mt-2">
-                      <Bar value={ballot.total_votes} max={ballot.eligible_voters} size="lg" />
+                      <Bar value={total} max={eligible} size="lg" />
                     </div>
                     <p className="tabular mt-1.5 text-sm text-plum-soft">
-                      {ballot.remaining_voters.toLocaleString('en-IN')} still to vote
+                      {remaining.toLocaleString('en-IN')} still to {answered ? 'answer' : 'vote'}
                     </p>
                   </li>
                 )

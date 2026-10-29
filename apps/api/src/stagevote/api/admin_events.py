@@ -10,6 +10,14 @@ Freeze rules
   - nominee affiliation, description and photo stay editable (audited);
   - ballots and nominees cannot be added or removed: a new meaning needs a new event.
 * Votes reference nominees with ON DELETE RESTRICT, so nothing with votes can be deleted.
+
+Ballot kinds
+------------
+* team and individual ballots are votes for a nominee.
+* mcq is a multiple-choice question: the title is the question and the nominees are its
+  answer options (a name and an optional description; no members, no photo).
+* text is a question answered by typing: it has no nominees at all.
+* A round may have no ballots: a show with no voting.
 """
 
 from __future__ import annotations
@@ -27,7 +35,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db import get_db
 from ..deps import AdminContext, current_admin
-from ..errors import conflict, not_found, validation
+from ..errors import AppError, conflict, not_found, validation
 from ..models import Asset, Ballot, Event, Nominee, Programme
 from ..services.live import begin_transition, regenerate_schedule
 from ..services.programmes import active_programme, server_now
@@ -35,6 +43,16 @@ from ..state import Actor, audit, bump_state
 from .common import Model, SingleLine, no_store
 
 router = APIRouter(prefix="/api/v1/admin", dependencies=[Depends(current_admin)])
+
+BallotKind = Literal["team", "individual", "mcq", "text"]
+# A ballot title is a question for mcq and text ballots, so it may be longer than a name.
+BALLOT_TITLE_MAX = 200
+_DEFAULT_TITLES = {
+    "team": "Your vote",
+    "individual": "Your vote",
+    "mcq": "Your question here",
+    "text": "Your question here",
+}
 
 
 def _ratio(a: str, b: str) -> float:
@@ -274,8 +292,10 @@ class EventCreate(Model):
     name: SingleLine = Field(min_length=1, max_length=120)
     description: str = Field(default="", max_length=4000)
     rules: str = Field(default="", max_length=4000)
-    ballot_kind: Literal["team", "individual"] = "team"
-    ballot_title: SingleLine = Field(default="Your vote", min_length=1, max_length=80)
+    # The kind of the event's first ballot, or "none" for a round with no voting.
+    ballot_kind: Literal["team", "individual", "mcq", "text", "none"] = "team"
+    # Defaults to a placeholder that suits the kind.
+    ballot_title: SingleLine | None = Field(default=None, min_length=1, max_length=BALLOT_TITLE_MAX)
     planned_start_at: AwareDatetime | None = None
     planned_end_at: AwareDatetime | None = None
     logo_asset_id: uuid.UUID | None = None
@@ -315,16 +335,17 @@ async def create_event(
         )
         db.add(event)
         await db.flush()
-        db.add(
-            Ballot(
-                programme_id=programme.id,
-                event_id=event.id,
-                position=1,
-                title=body.ballot_title,
-                kind=body.ballot_kind,
+        if body.ballot_kind != "none":
+            db.add(
+                Ballot(
+                    programme_id=programme.id,
+                    event_id=event.id,
+                    position=1,
+                    title=body.ballot_title or _DEFAULT_TITLES[body.ballot_kind],
+                    kind=body.ballot_kind,
+                )
             )
-        )
-        await db.flush()
+            await db.flush()
         if body.planned_start_at:
             await _after_schedule_edit(db, programme, now)
         await bump_state(db, programme.id, reason="event_created")
@@ -531,6 +552,20 @@ async def unarchive_event(
 # ---- ballots ------------------------------------------------------------------
 
 
+async def _has_nominees(db: AsyncSession, ballot_id: uuid.UUID) -> bool:
+    return (
+        await db.execute(select(Nominee.id).where(Nominee.ballot_id == ballot_id).limit(1))
+    ).first() is not None
+
+
+def _text_has_no_options(message: str = "A typed-answer question has no answer options.") -> AppError:
+    return conflict("TEXT_QUESTION_HAS_NO_OPTIONS", message)
+
+
+def _option_has_no_photo() -> AppError:
+    return conflict("OPTION_HAS_NO_PHOTO", "Answer options of a multiple-choice question have no photo.")
+
+
 async def _get_ballot(db: AsyncSession, programme: Programme, ballot_id: uuid.UUID) -> tuple[Ballot, Event]:
     ballot = (
         await db.execute(
@@ -547,8 +582,8 @@ async def _get_ballot(db: AsyncSession, programme: Programme, ballot_id: uuid.UU
 
 
 class BallotCreate(Model):
-    title: SingleLine = Field(min_length=1, max_length=80)
-    kind: Literal["team", "individual"] = "team"
+    title: SingleLine = Field(min_length=1, max_length=BALLOT_TITLE_MAX)
+    kind: BallotKind = "team"
     description: str = Field(default="", max_length=2000)
 
 
@@ -599,8 +634,8 @@ async def create_ballot(
 
 
 class BallotPatch(Model):
-    title: SingleLine | None = Field(default=None, min_length=1, max_length=80)
-    kind: Literal["team", "individual"] | None = None
+    title: SingleLine | None = Field(default=None, min_length=1, max_length=BALLOT_TITLE_MAX)
+    kind: BallotKind | None = None
     description: str | None = Field(default=None, max_length=2000)
     reason: str | None = Field(default=None, max_length=300)
 
@@ -624,6 +659,8 @@ async def patch_ballot(
         if body.kind is not None and body.kind != ballot.kind:
             if frozen:
                 raise conflict("BALLOT_FROZEN", "The ballot type cannot change after voting opened.")
+            if body.kind == "text" and await _has_nominees(db, ballot.id):
+                raise _text_has_no_options("Remove the options before making this a typed-answer question.")
             changes["kind"] = {"from": ballot.kind, "to": body.kind}
             ballot.kind = body.kind
         if body.title is not None and body.title != ballot.title:
@@ -678,9 +715,7 @@ async def delete_ballot(
         ballot, event = await _get_ballot(db, programme, ballot_id)
         if ballot.frozen_at is not None or event.status != "upcoming":
             raise conflict("BALLOT_FROZEN", "Ballots cannot be removed after voting has opened.")
-        remaining = (await db.execute(select(func.count()).where(Ballot.event_id == event.id))).scalar_one()
-        if remaining <= 1:
-            raise conflict("LAST_BALLOT", "An event needs at least one ballot.")
+        # The last ballot may go too: the round then has no voting.
         try:
             await db.execute(delete(Nominee).where(Nominee.ballot_id == ballot.id))
             await db.execute(delete(Ballot).where(Ballot.id == ballot.id))
@@ -724,6 +759,7 @@ class NomineeCreate(Model):
     affiliation: SingleLine = Field(default="", max_length=120)
     description: str = Field(default="", max_length=1000)
     # Team ballots: who is in the team. Shown to voters; the vote is for the whole team.
+    # An answer option of a multiple-choice question has none (always stored as []).
     members: list[MemberName] = Field(default_factory=list, max_length=MAX_MEMBERS)
     photo_asset_id: uuid.UUID | None = None
 
@@ -744,6 +780,10 @@ async def create_nominee(
         ballot, event = await _get_ballot(db, programme, ballot_id)
         if ballot.frozen_at is not None or event.status != "upcoming":
             raise conflict("BALLOT_FROZEN", "Nominees cannot be added after voting has opened.")
+        if ballot.kind == "text":
+            raise _text_has_no_options()
+        if ballot.kind == "mcq" and body.photo_asset_id is not None:
+            raise _option_has_no_photo()
         position = (
             await db.execute(
                 select(func.coalesce(func.max(Nominee.position), 0)).where(Nominee.ballot_id == ballot.id)
@@ -755,7 +795,7 @@ async def create_nominee(
             name=body.name,
             affiliation=body.affiliation,
             description=body.description,
-            members=_members(body.members),
+            members=[] if ballot.kind == "mcq" else _members(body.members),
             photo_asset_id=body.photo_asset_id,
         )
         db.add(nominee)
@@ -816,6 +856,8 @@ async def patch_nominee(
         programme, _ = await begin_transition(db, current.id, None)
         nominee, ballot, event = await _get_nominee(db, programme, nominee_id)
         frozen = ballot.frozen_at is not None
+        if ballot.kind == "mcq" and body.photo_asset_id is not None and not body.clear_photo:
+            raise _option_has_no_photo()
         changes: dict[str, Any] = {}
         if body.name is not None and body.name != nominee.name:
             if frozen:
@@ -844,9 +886,10 @@ async def patch_nominee(
                 changes[key] = {"from": getattr(nominee, key), "to": value}
                 setattr(nominee, key, value)
         # Like the affiliation and description, the member list is presentation only and
-        # may be corrected after voting opens (every change is audited).
-        if body.members is not None and _members(body.members) != list(nominee.members):
-            members = _members(body.members)
+        # may be corrected after voting opens (every change is audited). Answer options of a
+        # multiple-choice question have no members.
+        members = None if body.members is None else [] if ballot.kind == "mcq" else _members(body.members)
+        if members is not None and members != list(nominee.members):
             changes["members"] = {"from": list(nominee.members), "to": members}
             nominee.members = members
         if body.clear_photo or (body.photo_asset_id and body.photo_asset_id != nominee.photo_asset_id):

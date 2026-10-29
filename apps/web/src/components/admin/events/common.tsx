@@ -11,11 +11,21 @@ export function EventStatusChip({ event }: { event: Pick<AdminEvent, 'status' | 
   return <StatusChip tone="neutral" icon={<Clock3 aria-hidden className="size-3.5" />} label="Upcoming" />
 }
 
-/** Problems that would stop the event from opening (the server checks the same thing). */
+/**
+ * Problems that would stop the event from opening (the server checks the same thing).
+ * A round with no ballots may open (no voting); typed-answer questions need nothing.
+ */
 export function readinessProblems(event: AdminEvent): string[] {
   if (event.status !== 'upcoming') return []
-  if (!event.ballots.length) return ['Add a ballot']
-  return event.ballots.filter((ballot) => ballot.nominees.length === 0).map((ballot) => `Add nominees to “${ballot.title}”`)
+  const problems: string[] = []
+  for (const ballot of event.ballots) {
+    if (ballot.kind === 'mcq') {
+      if (ballot.nominees.length < 2) problems.push(`Add at least two answers to “${ballot.title}”`)
+    } else if (ballot.kind !== 'text' && ballot.nominees.length === 0) {
+      problems.push(`Add nominees to “${ballot.title}”`)
+    }
+  }
+  return problems
 }
 
 export function ReadinessChip({ event }: { event: AdminEvent }) {

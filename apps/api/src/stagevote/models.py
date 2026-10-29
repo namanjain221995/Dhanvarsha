@@ -33,7 +33,11 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 ACCENTS = ("violet", "plum", "indigo", "teal", "rose", "amber", "gold")
 EVENT_STATUSES = ("upcoming", "open", "closed")
-BALLOT_KINDS = ("team", "individual")
+# team and individual ballots are votes for a nominee. mcq is a multiple-choice question
+# whose answer options are nominees; text is a question answered by typing (no nominees).
+BALLOT_KINDS = ("team", "individual", "mcq", "text")
+# The longest typed answer, in characters (ck_votes_choice enforces the same limit).
+ANSWER_MAX_LENGTH = 500
 EMAIL_JOB_KINDS = ("invitation", "login_reminder", "password_reset", "test")
 EMAIL_JOB_STATUSES = ("queued", "processing", "accepted", "failed", "unknown", "superseded", "cancelled")
 SCHEDULE_JOB_STATUSES = ("pending", "done", "skipped", "missed", "stale", "failed")
@@ -240,7 +244,8 @@ class Ballot(Base):
     programme_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     event_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     position: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    title: Mapped[str] = mapped_column(String(80), nullable=False)
+    # For mcq and text ballots the title is the question.
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
     kind: Mapped[str] = mapped_column(String(16), nullable=False, default="team")
     description: Mapped[str] = mapped_column(Text, nullable=False, default="")
     frozen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -395,6 +400,14 @@ class Vote(Base):
             name="fk_votes_session_of_participant",
             ondelete="RESTRICT",
         ),
+        # A vote is either for a nominee or, on a text ballot, a typed answer. The composite
+        # nominee foreign key is not checked when nominee_id is NULL.
+        CheckConstraint(
+            "(nominee_id IS NOT NULL AND answer_text IS NULL) OR "
+            "(nominee_id IS NULL AND answer_text IS NOT NULL "
+            f"AND char_length(answer_text) BETWEEN 1 AND {ANSWER_MAX_LENGTH})",
+            name="ck_votes_choice",
+        ),
         Index("ix_votes_ballot_nominee", "ballot_id", "nominee_id"),
         Index("ix_votes_event", "event_id"),
     )
@@ -404,7 +417,8 @@ class Vote(Base):
     programme_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     event_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     ballot_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
-    nominee_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    nominee_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    answer_text: Mapped[str | None] = mapped_column(Text)
     participant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     session_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     idempotency_key: Mapped[str] = mapped_column(String(80), nullable=False)

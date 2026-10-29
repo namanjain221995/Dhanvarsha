@@ -7,13 +7,13 @@ import { useEffect, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Notice } from '@/components/ui/misc'
 import { describeError, fieldErrors } from '@/lib/admin/errors'
-import { plural } from '@/lib/admin/labels'
+import { BALLOT_KIND_OPTIONS, defaultBallotTitle, isQuestion, plural } from '@/lib/admin/labels'
 import { adminAction, useAdminQuery } from '@/lib/admin/query'
 import { useAdminSession, useAdminSignal } from '@/lib/admin/session'
-import type { AdminEvent, BallotKind, EventsList } from '@/lib/admin/types'
+import type { AdminEvent, BallotKind, EventsList, NewEventBallotKind } from '@/lib/admin/types'
 import { formatWhen, zonedInputToIso } from '@/lib/admin/zoned'
 import { ConfirmDialog } from '../confirm'
-import { InputField, RadioCards, ZonedDateTimeField } from '../form'
+import { InputField, SelectField, ZonedDateTimeField } from '../form'
 import {
   EmptyState,
   FlashRegion,
@@ -27,7 +27,43 @@ import {
   useFlash,
   focusSoon,
 } from '../primitives'
-import { EventStatusChip, nomineeCount, PublishedChip, ReadinessChip } from './common'
+import { EventStatusChip, PublishedChip, ReadinessChip } from './common'
+
+const KIND_WORDS: Record<BallotKind, string> = {
+  team: 'team',
+  individual: 'individual',
+  mcq: 'multiple choice',
+  text: 'typed answer',
+}
+
+/** "2 ballots (team and multiple choice), 3 nominees, 4 answer options", or no voting at all. */
+function ballotSummary(event: AdminEvent): string {
+  if (!event.ballots.length) return 'No voting (show only)'
+  const kinds = Array.from(new Set(event.ballots.map((ballot) => KIND_WORDS[ballot.kind])))
+  const parts = [`${plural(event.ballots.length, 'ballot')} (${kinds.join(' and ')})`]
+  const votes = event.ballots.filter((ballot) => !isQuestion(ballot.kind))
+  const choices = event.ballots.filter((ballot) => ballot.kind === 'mcq')
+  if (votes.length) parts.push(plural(votes.reduce((sum, ballot) => sum + ballot.nominees.length, 0), 'nominee'))
+  if (choices.length) parts.push(plural(choices.reduce((sum, ballot) => sum + ballot.nominees.length, 0), 'answer option'))
+  return parts.join(', ')
+}
+
+const NEW_EVENT_KINDS: { value: NewEventBallotKind; label: string; hint: string }[] = [
+  ...BALLOT_KIND_OPTIONS.map((option) => ({
+    ...option,
+    hint: {
+      team: 'Participants vote for one team or group. You add the teams next.',
+      individual: 'Participants vote for one person. You add the people next.',
+      mcq: 'Participants pick one answer. You add the answer options next.',
+      text: 'Participants type an answer of up to 500 characters. Only organisers see the answers.',
+    }[option.value],
+  })),
+  {
+    value: 'none',
+    label: 'No voting (show only)',
+    hint: 'The round opens with nothing to vote on. Participants see “No voting in this round. Enjoy the show!”.',
+  },
+]
 
 type EventsDialog = { kind: 'create' } | { kind: 'archive'; event: AdminEvent } | { kind: 'restore'; event: AdminEvent }
 
@@ -253,8 +289,6 @@ function EventRow({
   onMove: (direction: -1 | 1) => void
   onArchive: (from: Element) => void
 }) {
-  const nominees = nomineeCount(event)
-  const kinds = Array.from(new Set(event.ballots.map((ballot) => (ballot.kind === 'team' ? 'team' : 'individual'))))
   const when =
     event.status === 'upcoming'
       ? event.planned_start_at
@@ -287,7 +321,7 @@ function EventRow({
           {event.results_published ? <PublishedChip /> : null}
         </div>
         <p className="mt-1 text-sm text-plum-soft">
-          {plural(event.ballots.length, 'ballot')} ({kinds.join(' and ') || 'none'}), {plural(nominees, 'nominee')}.{' '}
+          {ballotSummary(event)}.{' '}
           {when}.{event.vote_count ? ` ${plural(event.vote_count, 'vote')}.` : ''}
         </p>
       </div>
@@ -329,7 +363,7 @@ function EventRow({
 function CreateEventDialog({ timeZone, onClose }: { timeZone: string; onClose: () => void }) {
   const router = useRouter()
   const [name, setName] = useState('')
-  const [kind, setKind] = useState<BallotKind>('team')
+  const [kind, setKind] = useState<NewEventBallotKind>('team')
   const [ballotTitle, setBallotTitle] = useState('')
   const [withSchedule, setWithSchedule] = useState(false)
   const [start, setStart] = useState('')
@@ -361,7 +395,7 @@ function CreateEventDialog({ timeZone, onClose }: { timeZone: string; onClose: (
         body: {
           name: name.trim(),
           ballot_kind: kind,
-          ballot_title: ballotTitle.trim() || (kind === 'team' ? 'Best team' : 'Best performer'),
+          ...(kind === 'none' ? {} : { ballot_title: ballotTitle.trim() || defaultBallotTitle(kind) }),
           ...(withSchedule ? { planned_start_at: startIso, planned_end_at: endIso } : {}),
         },
       })
@@ -381,7 +415,15 @@ function CreateEventDialog({ timeZone, onClose }: { timeZone: string; onClose: (
       open
       wide
       title="New event"
-      description="Create the round now, then add nominees on the next page."
+      description={
+        kind === 'none'
+          ? 'Create the round now. You can still add a ballot or question on the next page.'
+          : kind === 'text'
+            ? 'Create the round now. A typed-answer question needs nothing more.'
+            : kind === 'mcq'
+              ? 'Create the round now, then add answer options on the next page.'
+              : 'Create the round now, then add nominees on the next page.'
+      }
       confirmLabel="Create event"
       busy={busy}
       error={error}
@@ -398,26 +440,35 @@ function CreateEventDialog({ timeZone, onClose }: { timeZone: string; onClose: (
           error={errors.name}
           placeholder="For example: Lightning Pitches"
         />
-        <RadioCards<BallotKind>
-          legend="Who participants vote for"
-          name="new-ballot-kind"
+        <SelectField
+          label="Ballot type"
           value={kind}
-          onChange={setKind}
-          options={[
-            { value: 'team', label: 'Teams', description: 'Each nominee is a team or group.' },
-            { value: 'individual', label: 'Individuals', description: 'Each nominee is one person.' },
-          ]}
-        />
-        <InputField
-          label="Ballot title"
-          optional
-          value={ballotTitle}
-          maxLength={80}
-          onChange={(e) => setBallotTitle(e.target.value)}
-          placeholder={kind === 'team' ? 'Best team' : 'Best performer'}
-          hint="The question participants answer. You can add more ballots to the event later."
-          error={errors.ballot_title}
-        />
+          onChange={(e) => setKind(e.target.value as NewEventBallotKind)}
+          hint={NEW_EVENT_KINDS.find((option) => option.value === kind)?.hint}
+          error={errors.ballot_kind}
+        >
+          {NEW_EVENT_KINDS.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </SelectField>
+        {kind === 'none' ? null : (
+          <InputField
+            label={isQuestion(kind) ? 'Question' : 'Ballot title'}
+            optional
+            value={ballotTitle}
+            maxLength={200}
+            onChange={(e) => setBallotTitle(e.target.value)}
+            placeholder={defaultBallotTitle(kind)}
+            hint={
+              isQuestion(kind)
+                ? 'What participants are asked. You can add more ballots and questions to the event later.'
+                : 'The question participants answer. You can add more ballots to the event later.'
+            }
+            error={errors.ballot_title}
+          />
+        )}
         <div>
           <label className="flex min-h-11 cursor-pointer items-center gap-3">
             <input

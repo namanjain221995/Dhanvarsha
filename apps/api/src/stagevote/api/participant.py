@@ -174,7 +174,12 @@ async def get_event(
 
 
 class VoteIn(Model):
-    nominee_id: uuid.UUID
+    # Exactly one of the two, as the ballot kind needs: a nominee (team, individual and
+    # mcq ballots) or a typed answer (text ballots). The service checks which, so a wrong
+    # or missing field is answered as WRONG_CHOICE and a bad answer as ANSWER_INVALID.
+    # (The request size limit bounds the answer; the 500-character rule is the service's.)
+    nominee_id: uuid.UUID | None = None
+    answer: str | None = None
 
 
 @router.post("/me/ballots/{ballot_id}/vote")
@@ -187,7 +192,9 @@ async def submit_vote(
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     no_store(response)
-    receipt, created = await voting.submit_vote(db, ctx, ballot_id, body.nominee_id, idempotency_key)
+    receipt, created = await voting.submit_vote(
+        db, ctx, ballot_id, body.nominee_id, idempotency_key, answer=body.answer
+    )
     response.status_code = 201 if created else 200
     return {"receipt": receipt.public(), "replayed": not created}
 

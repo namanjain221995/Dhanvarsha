@@ -1,4 +1,41 @@
-import type { EmailJobKind, EmailJobStatus, ScheduleJobStatus } from './types'
+import type { BallotKind, BallotResult, EmailJobKind, EmailJobStatus, ScheduleJobStatus } from './types'
+
+/** What the organiser picks when adding a ballot or changing its type. */
+export const BALLOT_KIND_OPTIONS: { value: BallotKind; label: string }[] = [
+  { value: 'team', label: 'Team vote' },
+  { value: 'individual', label: 'Person vote' },
+  { value: 'mcq', label: 'Multiple-choice question' },
+  { value: 'text', label: 'Typed-answer question' },
+]
+
+/** Short labels next to a ballot's title (editor, live control, results). */
+export function ballotKindLabel(kind: BallotKind): string {
+  if (kind === 'team') return 'Team ballot'
+  if (kind === 'individual') return 'Individual ballot'
+  if (kind === 'mcq') return 'Multiple-choice question'
+  return 'Typed-answer question'
+}
+
+/** Questions are answered rather than voted on. */
+export const isQuestion = (kind: BallotKind): boolean => kind === 'mcq' || kind === 'text'
+
+/** Default title of the first ballot when an event is created without one. */
+export function defaultBallotTitle(kind: BallotKind): string {
+  if (kind === 'team') return 'Best team'
+  if (kind === 'individual') return 'Best performer'
+  return 'Your question here'
+}
+
+/**
+ * How many took part in a ballot. Typed-answer questions count their answers; the vote
+ * fields of those may be missing depending on the server version.
+ */
+export function ballotTurnout(ballot: BallotResult): { total: number; eligible: number; remaining: number } {
+  const total =
+    ballot.kind === 'text' ? (ballot.answer_count ?? ballot.answers?.length ?? ballot.total_votes ?? 0) : (ballot.total_votes ?? 0)
+  const eligible = ballot.eligible_voters ?? 0
+  return { total, eligible, remaining: ballot.remaining_voters ?? Math.max(eligible - total, 0) }
+}
 
 export const CLOSE_REASONS: Record<string, string> = {
   manual: 'Closed by an organiser',

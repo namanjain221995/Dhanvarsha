@@ -1,12 +1,12 @@
 'use client'
 
-import { Download, EyeOff, Lock, Megaphone, Scale, Trophy } from 'lucide-react'
+import { Download, EyeOff, Lock, Megaphone, MessageSquareText, Scale, Trophy } from 'lucide-react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Notice } from '@/components/ui/misc'
 import { describeError } from '@/lib/admin/errors'
-import { plural } from '@/lib/admin/labels'
+import { ballotKindLabel, ballotTurnout, plural } from '@/lib/admin/labels'
 import { adminAction, useAdminQuery } from '@/lib/admin/query'
 import { useAdminSession, useAdminSignal } from '@/lib/admin/session'
 import type { BallotResult, EventResults, ResultsResponse } from '@/lib/admin/types'
@@ -87,7 +87,7 @@ export function ResultsPage() {
     <>
       <PageHeader
         title="Results"
-        description="Vote counts for each ballot. Participants see them only after you publish."
+        description="Vote counts for each ballot, and the answers to each question. Participants see the counts only after you publish, and never the typed answers."
         actions={
           <a
             href={csvHref()}
@@ -146,7 +146,11 @@ export function ResultsPage() {
           title={dialog.value.kind === 'publish' ? 'Publish these results?' : 'Unpublish these results?'}
           description={
             dialog.value.kind === 'publish'
-              ? `Participants will see the vote counts for every ballot in ${dialog.value.event.name}. You can unpublish them later.`
+              ? `Participants will see the vote counts for every ballot in ${dialog.value.event.name}.${
+                  dialog.value.event.ballots.some((ballot) => ballot.kind === 'text')
+                    ? ' For typed-answer questions they see only how many answered, never the answers.'
+                    : ''
+                } You can unpublish them later.`
               : `Participants will no longer see the results of ${dialog.value.event.name}. The votes are not affected.`
           }
           confirmLabel={dialog.value.kind === 'publish' ? 'Publish results' : 'Unpublish results'}
@@ -225,7 +229,10 @@ function EventResultsView({
         </div>
       </div>
       {event.status === 'open' ? (
-        <p className="mt-3 text-sm text-plum-soft">Counts update as votes arrive. You can publish once voting closes.</p>
+        <p className="mt-3 text-sm text-plum-soft">
+          Counts update as {event.ballots.some((ballot) => ballot.kind === 'mcq' || ballot.kind === 'text') ? 'votes and answers' : 'votes'}{' '}
+          arrive. You can publish once voting closes.
+        </p>
       ) : null}
       {error ? (
         <div className="mt-4">
@@ -234,13 +241,93 @@ function EventResultsView({
       ) : null}
       {event.ballots.length === 0 ? (
         <Notice tone="info" className="mt-5">
-          This event has no ballots with nominees yet.
+          This event has no ballots or questions with something to count yet.
         </Notice>
       ) : (
         <div className="mt-5 grid gap-5 xl:grid-cols-2">
-          {event.ballots.map((ballot) => (
-            <BallotResultCard key={ballot.ballot_id} ballot={ballot} final={event.label === 'final'} started={event.label !== 'not_started'} />
-          ))}
+          {event.ballots.map((ballot) =>
+            ballot.kind === 'text' ? (
+              <TypedAnswersCard key={ballot.ballot_id} ballot={ballot} timeZone={timeZone} started={event.label !== 'not_started'} />
+            ) : (
+              <BallotResultCard key={ballot.ballot_id} ballot={ballot} final={event.label === 'final'} started={event.label !== 'not_started'} />
+            ),
+          )}
+        </div>
+      )}
+    </section>
+  )
+}
+
+/** A typed-answer question: who typed what, oldest first. Only organisers see this. */
+function TypedAnswersCard({ ballot, timeZone, started }: { ballot: BallotResult; timeZone: string; started: boolean }) {
+  const answers = ballot.answers ?? []
+  const { total, eligible, remaining } = ballotTurnout(ballot)
+  const headingId = `ballot-result-${ballot.ballot_id}`
+  return (
+    <section aria-labelledby={headingId} className="min-w-0 rounded-[var(--radius-card)] border border-sand bg-paper p-4 sm:p-6 xl:col-span-2">
+      <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+        <h3 id={headingId} className="break-words text-[1.15rem] font-bold text-plum">
+          {ballot.title}
+        </h3>
+        <span className="text-sm text-plum-soft">{ballotKindLabel(ballot.kind)}</span>
+      </div>
+      <dl className="mt-3 grid grid-cols-3 gap-2 text-sm">
+        <div className="rounded-2xl bg-ivory px-3 py-2">
+          <dt className="text-plum-soft">Answers</dt>
+          <dd className="tabular text-[1.3rem] font-bold text-plum">{total.toLocaleString('en-IN')}</dd>
+        </div>
+        <div className="rounded-2xl bg-ivory px-3 py-2">
+          <dt className="text-plum-soft">Eligible</dt>
+          <dd className="tabular text-[1.3rem] font-bold text-plum">{eligible.toLocaleString('en-IN')}</dd>
+        </div>
+        <div className="rounded-2xl bg-ivory px-3 py-2">
+          <dt className="text-plum-soft">Not answered</dt>
+          <dd className="tabular text-[1.3rem] font-bold text-plum">{remaining.toLocaleString('en-IN')}</dd>
+        </div>
+      </dl>
+      <p className="mt-2 flex items-start gap-2 text-sm text-plum-soft">
+        <MessageSquareText aria-hidden className="mt-0.5 size-4 shrink-0" />
+        Typed answers are shown only here and in the CSV. Participants never see them.
+      </p>
+      {!started ? (
+        <p className="mt-4 text-sm text-plum-soft">Voting has not opened yet.</p>
+      ) : answers.length === 0 ? (
+        <p className="mt-4 text-sm text-plum-soft">No answers yet.</p>
+      ) : (
+        <div className="mt-4 overflow-x-auto">
+          <table className="w-full min-w-[36rem] text-left text-sm">
+            <caption className="sr-only">
+              {plural(answers.length, 'typed answer')} to “{ballot.title}”, oldest first
+            </caption>
+            <thead className="border-b border-sand text-plum-soft">
+              <tr>
+                <th scope="col" className="py-2.5 pr-4 font-semibold">
+                  Name
+                </th>
+                <th scope="col" className="py-2.5 pr-4 font-semibold">
+                  Email
+                </th>
+                <th scope="col" className="py-2.5 pr-4 font-semibold">
+                  Answer
+                </th>
+                <th scope="col" className="py-2.5 font-semibold">
+                  Time
+                </th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-sand">
+              {answers.map((answer, index) => (
+                <tr key={`${answer.participant_email}-${index}`} className="align-top">
+                  <th scope="row" className="max-w-[12rem] py-3 pr-4 font-semibold text-plum [overflow-wrap:anywhere]">
+                    {answer.participant_name || 'No name'}
+                  </th>
+                  <td className="max-w-[14rem] break-all py-3 pr-4 text-plum-soft">{answer.participant_email}</td>
+                  <td className="whitespace-pre-wrap py-3 pr-4 text-plum [overflow-wrap:anywhere]">{answer.answer}</td>
+                  <td className="tabular whitespace-nowrap py-3 text-plum-soft">{formatWhen(answer.created_at, timeZone)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
     </section>
@@ -248,6 +335,8 @@ function EventResultsView({
 }
 
 function BallotResultCard({ ballot, final, started }: { ballot: BallotResult; final: boolean; started: boolean }) {
+  const mcq = ballot.kind === 'mcq'
+  const unit = mcq ? 'answer' : 'vote'
   const order = new Map(ballot.nominees.map((nominee, index) => [nominee.nominee_id, index]))
   const nominees = [...ballot.nominees].sort(
     (a, b) => b.votes - a.votes || (order.get(a.nominee_id) ?? 0) - (order.get(b.nominee_id) ?? 0),
@@ -259,13 +348,13 @@ function BallotResultCard({ ballot, final, started }: { ballot: BallotResult; fi
 
   let outcome: React.ReactNode
   if (!started) outcome = <p className="text-sm text-plum-soft">Voting has not opened yet.</p>
-  else if (ballot.total_votes === 0) outcome = <p className="text-sm text-plum-soft">No votes yet.</p>
+  else if (ballot.total_votes === 0) outcome = <p className="text-sm text-plum-soft">{mcq ? 'No answers yet.' : 'No votes yet.'}</p>
   else if (ballot.tie) {
     outcome = (
       <p className="flex items-start gap-2 rounded-2xl bg-gold-wash px-3 py-2.5 text-[0.95rem] font-semibold text-plum">
         <Scale aria-hidden className="mt-0.5 size-4 shrink-0 text-gold-deep" />
         <span>
-          Tie: {joinNames(leaders.map((nominee) => nominee.name))}, {plural(top, 'vote')} each.
+          Tie: {joinNames(leaders.map((nominee) => nominee.name))}, {plural(top, unit)} each.
           {final ? ' There is no single winner.' : ''}
         </span>
       </p>
@@ -275,7 +364,7 @@ function BallotResultCard({ ballot, final, started }: { ballot: BallotResult; fi
       <p className="flex items-start gap-2 rounded-2xl bg-ivory px-3 py-2.5 text-[0.95rem] font-semibold text-plum">
         <Trophy aria-hidden className="mt-0.5 size-4 shrink-0 text-gold-deep" />
         <span>
-          {final ? 'Winner' : 'Leading so far'}: {leaders[0].name}, {plural(leaders[0].votes, 'vote')}.
+          {mcq ? 'Most chosen' : final ? 'Winner' : 'Leading so far'}: {leaders[0].name}, {plural(leaders[0].votes, unit)}.
         </span>
       </p>
     )
@@ -287,11 +376,11 @@ function BallotResultCard({ ballot, final, started }: { ballot: BallotResult; fi
         <h3 id={headingId} className="break-words text-[1.15rem] font-bold text-plum">
           {ballot.title}
         </h3>
-        <span className="text-sm text-plum-soft">{ballot.kind === 'team' ? 'Team ballot' : 'Individual ballot'}</span>
+        <span className="text-sm text-plum-soft">{ballotKindLabel(ballot.kind)}</span>
       </div>
       <dl className="mt-3 grid grid-cols-3 gap-2 text-sm">
         <div className="rounded-2xl bg-ivory px-3 py-2">
-          <dt className="text-plum-soft">Votes</dt>
+          <dt className="text-plum-soft">{mcq ? 'Answers' : 'Votes'}</dt>
           <dd className="tabular text-[1.3rem] font-bold text-plum">{ballot.total_votes.toLocaleString('en-IN')}</dd>
         </div>
         <div className="rounded-2xl bg-ivory px-3 py-2">
@@ -299,7 +388,7 @@ function BallotResultCard({ ballot, final, started }: { ballot: BallotResult; fi
           <dd className="tabular text-[1.3rem] font-bold text-plum">{ballot.eligible_voters.toLocaleString('en-IN')}</dd>
         </div>
         <div className="rounded-2xl bg-ivory px-3 py-2">
-          <dt className="text-plum-soft">Not voted</dt>
+          <dt className="text-plum-soft">{mcq ? 'Not answered' : 'Not voted'}</dt>
           <dd className="tabular text-[1.3rem] font-bold text-plum">{ballot.remaining_voters.toLocaleString('en-IN')}</dd>
         </div>
       </dl>
@@ -317,12 +406,12 @@ function BallotResultCard({ ballot, final, started }: { ballot: BallotResult; fi
                   {leading ? (
                     <span className="ml-2 inline-flex items-center gap-1 text-sm font-semibold text-gold-deep">
                       {ballot.tie ? <Scale aria-hidden className="size-3.5" /> : <Trophy aria-hidden className="size-3.5" />}
-                      {ballot.tie ? 'Tied' : final ? 'Winner' : 'Leading'}
+                      {ballot.tie ? 'Tied' : mcq ? 'Most chosen' : final ? 'Winner' : 'Leading'}
                     </span>
                   ) : null}
                 </p>
                 <p className="tabular text-sm text-plum">
-                  <strong>{plural(nominee.votes, 'vote')}</strong> <span className="text-plum-soft">({nominee.percent.toFixed(1)}%)</span>
+                  <strong>{plural(nominee.votes, unit)}</strong> <span className="text-plum-soft">({nominee.percent.toFixed(1)}%)</span>
                 </p>
               </div>
               <div className="mt-1.5">

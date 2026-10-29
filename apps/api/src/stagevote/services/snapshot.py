@@ -21,7 +21,7 @@ from ..errors import AppError, not_found
 from ..models import Asset, Ballot, Event, Nominee, Programme
 from .participants import name_from_email
 from .programmes import login_phase, public_programme, server_now
-from .results import ballot_results
+from .results import ballot_results, participant_results
 from .voting import list_receipts
 
 
@@ -217,8 +217,11 @@ async def participant_snapshot(db: AsyncSession, ctx: ParticipantContext) -> dic
             "opened_at": event.opened_at if released else None,
             "voting_deadline_at": event.voting_deadline_at if status == "live" else None,
             "closed_at": _closed_at(event) if status == "closed" else None,
+            # The kind lets the lobby say "Vote now" or "Answer now"; a round with no
+            # ballots has no voting at all.
             "ballots": [
-                {"id": str(b.id), "title": b.title, "voted": b.id in voted_ballots} for b in event.ballots
+                {"id": str(b.id), "title": b.title, "kind": b.kind, "voted": b.id in voted_ballots}
+                for b in event.ballots
             ]
             if released
             else [],
@@ -275,7 +278,9 @@ async def event_detail(db: AsyncSession, ctx: ParticipantContext, event_id: uuid
         receipts = {r.ballot_id: r for r in await list_receipts(db, ctx.participant_id)}
         results = None
         if event.results_published and status == "closed":
-            results = await ballot_results(db, [b.id for b in event.ballots], programme_id=programme.id)
+            results = participant_results(
+                await ballot_results(db, [b.id for b in event.ballots], programme_id=programme.id)
+            )
 
     base: dict[str, Any] = {
         "server_time": now,

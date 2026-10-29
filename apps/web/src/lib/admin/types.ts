@@ -17,7 +17,10 @@ export type RunMode = 'manual' | 'scheduled'
 export type LoginPhase = 'before_open' | 'open' | 'closed'
 export type EventStatus = 'upcoming' | 'open' | 'closed'
 export type EffectiveStatus = EventStatus | 'closing'
-export type BallotKind = 'team' | 'individual'
+/** team / individual: votes for nominees. mcq: multiple-choice question. text: typed-answer question. */
+export type BallotKind = 'team' | 'individual' | 'mcq' | 'text'
+/** POST /admin/events: the first ballot's kind, or "none" for a round without voting. */
+export type NewEventBallotKind = BallotKind | 'none'
 
 // ---- live control -------------------------------------------------------------
 
@@ -30,6 +33,18 @@ export type NomineeResult = {
   leading: boolean
 }
 
+/** One typed answer, as organisers see it on the results page (never shown to participants). */
+export type TypedAnswer = {
+  participant_name: string
+  participant_email: string
+  answer: string
+  created_at: string
+}
+
+/**
+ * Votes and multiple-choice answers per option. Typed-answer questions (kind "text") carry
+ * `answers` and `answer_count` instead; their vote fields may be missing or zero.
+ */
 export type BallotResult = {
   ballot_id: string
   title: string
@@ -40,6 +55,8 @@ export type BallotResult = {
   remaining_voters: number
   leaders: string[]
   tie: boolean
+  answers?: TypedAnswer[]
+  answer_count?: number
 }
 
 export type LiveEvent = {

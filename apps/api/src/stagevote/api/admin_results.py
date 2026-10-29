@@ -17,7 +17,7 @@ from ..errors import conflict, not_found
 from ..models import Event
 from ..services.live import begin_transition
 from ..services.programmes import active_programme, server_now
-from ..services.results import ballot_results
+from ..services.results import ballot_results, typed_answers
 from ..state import audit, bump_state
 from .common import no_store
 
@@ -50,6 +50,11 @@ async def _event_results(
         else []
     )
     results = await ballot_results(db, [r.id for r in ballot_rows], programme_id=programme_id)
+    # Organisers see what was typed for a typed-answer question, and who typed it.
+    answers = await typed_answers(db, [uuid.UUID(r["ballot_id"]) for r in results if r["kind"] == "text"])
+    for result in results:
+        if result["kind"] == "text":
+            result["answers"] = answers.get(result["ballot_id"], [])
     by_ballot = {r["ballot_id"]: r for r in results}
     out = []
     for index, event in enumerate(events, start=1):
@@ -107,7 +112,8 @@ async def export_csv(
     db: AsyncSession = Depends(get_db),
     ctx: AdminContext = Depends(current_admin),
 ) -> Response:
-    """Aggregate counts only (no per-person selections)."""
+    """Aggregate counts for votes and multiple-choice questions (never who chose what),
+    then one row per typed answer with who typed it, as on the results page."""
     async with db.begin():
         programme = await active_programme(db)
         events = await _events(db, programme.id, None)
@@ -160,6 +166,31 @@ async def export_csv(
                         "yes" if ballot["tie"] else "no",
                     ]
                 )
+    typed = [
+        (item, ballot, answer)
+        for item in data
+        for ballot in item["ballots"]
+        if ballot["kind"] == "text"
+        for answer in ballot["answers"]
+    ]
+    if typed:
+        # A second table under the counts, after an empty row.
+        writer.writerow([])
+        writer.writerow(
+            ["event", "ballot", "kind", "participant_name", "participant_email", "answer", "time"]
+        )
+        for item, ballot, answer in typed:
+            writer.writerow(
+                [
+                    _safe(item["name"]),
+                    _safe(ballot["title"]),
+                    ballot["kind"],
+                    _safe(answer["participant_name"]),
+                    _safe(answer["participant_email"]),
+                    _safe(answer["answer"]),
+                    answer["created_at"].isoformat(),
+                ]
+            )
     return Response(
         content=buffer.getvalue(),
         media_type="text/csv; charset=utf-8",

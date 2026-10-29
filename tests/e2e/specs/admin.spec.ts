@@ -287,7 +287,7 @@ test.describe('organiser console', () => {
 
     await page.getByRole('button', { name: 'Add another ballot' }).click()
     await page.getByLabel('Ballot title').fill('Best member')
-    await page.getByText('Individuals', { exact: true }).click()
+    await page.getByLabel('Ballot type').selectOption({ label: 'Person vote' })
     await page.getByRole('button', { name: 'Add ballot', exact: true }).click()
     await flash(page, 'Ballot “Best member” added.')
     await page.getByRole('button', { name: 'Add nominee to Best member' }).click()

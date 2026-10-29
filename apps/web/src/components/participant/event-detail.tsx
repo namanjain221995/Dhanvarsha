@@ -1,19 +1,19 @@
 'use client'
 
-import { ArrowLeft, ArrowRight, Check, CircleSlash, LoaderCircle, Sparkles, UsersRound } from 'lucide-react'
+import { ArrowLeft, ArrowRight, Check, CircleSlash, Drama, LoaderCircle, Sparkles, UsersRound } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Avatar, Notice } from '@/components/ui/misc'
 import { ApiError, participantApi } from '@/lib/api'
 import { serverClock, useServerNow } from '@/lib/time'
-import type { BallotDetail, BallotResult, EventDetail, Nominee } from '@/lib/types'
+import { type BallotDetail, type BallotResult, type EventDetail, isAnswerReceipt, isQuestionKind, type Nominee } from '@/lib/types'
 import { Countdown, EventLogo, PageColumn, StatusChip, timeLabel, titleSize } from './bits'
 import { Confetti } from './confetti'
 import { useParticipant } from './provider'
 import { ReceiptStub } from './receipt'
 import { navigateWithTransition, notifyPageReady, transitionName } from './transition'
-import { type BallotState, useVoting } from './use-voting'
+import { ANSWER_MAX, type BallotState, sentAnswer, sentNominee, useVoting } from './use-voting'
 
 // How long the receipt stays on screen after the last vote of a round before the page goes back
 // to the programme.
@@ -90,18 +90,149 @@ function TeamMembers({ members, className = '' }: { members: string[]; className
   )
 }
 
-function ResultsView({ result }: { result: BallotResult }) {
+/** A, B, C, ... for the answer options of a multiple-choice question. */
+function optionLetter(index: number): string {
+  return index < 26 ? String.fromCharCode(65 + index) : String(index + 1)
+}
+
+/** One answer option of a multiple-choice question: a large card with its letter. */
+function AnswerOption({
+  ballot,
+  option,
+  index,
+  checked,
+  disabled,
+  onSelect,
+}: {
+  ballot: BallotDetail
+  option: Nominee
+  index: number
+  checked: boolean
+  disabled: boolean
+  onSelect: () => void
+}) {
+  const id = `n-${ballot.id}-${option.id}`
+  const letter = optionLetter(index)
+  return (
+    <label
+      htmlFor={id}
+      data-checked={checked ? 'true' : undefined}
+      className={`group relative flex min-h-[4.25rem] cursor-pointer items-center gap-3.5 rounded-[1.25rem] border-2 bg-paper px-3.5 py-3 transition-[border-color,background-color,box-shadow] duration-150 has-[:focus-visible]:shadow-[0_0_0_3px_var(--primary-ring)] ${
+        checked ? 'border-primary bg-primary-wash/60' : 'border-sand hover:border-plum-faint/50'
+      } ${disabled ? 'cursor-not-allowed opacity-70' : ''}`}
+    >
+      <input
+        id={id}
+        type="radio"
+        name={`ballot-${ballot.id}`}
+        value={option.id}
+        checked={checked}
+        disabled={disabled}
+        onChange={onSelect}
+        className="peer sr-only"
+        aria-describedby={option.description ? `${id}-desc` : undefined}
+      />
+      <span
+        aria-hidden
+        className={`type-condensed flex size-11 shrink-0 items-center justify-center rounded-[14px] border-2 text-[1.2rem] font-bold transition-colors duration-150 ${
+          checked ? 'border-primary bg-primary text-white' : 'border-sand-strong bg-ivory text-plum'
+        }`}
+      >
+        {letter}
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="sr-only">{letter}. </span>
+        <span className="block text-[1.05rem] font-semibold leading-snug text-plum [overflow-wrap:anywhere]">{option.name}</span>
+        {option.description ? (
+          <span id={`${id}-desc`} className="mt-0.5 line-clamp-2 block text-sm leading-snug text-plum-soft">
+            {option.description}
+          </span>
+        ) : null}
+      </span>
+      <span
+        aria-hidden
+        className={`flex size-7 shrink-0 items-center justify-center rounded-full border-2 transition-colors duration-150 ${
+          checked ? 'border-primary bg-primary text-white' : 'border-plum-faint/70 bg-paper text-transparent'
+        }`}
+      >
+        <Check className="size-4" strokeWidth={3} />
+      </span>
+    </label>
+  )
+}
+
+/** The answer box of a typed-answer question. Its accessible name is the question. */
+function TypedAnswer({
+  ballot,
+  titleId,
+  value,
+  busy,
+  onChange,
+}: {
+  ballot: BallotDetail
+  titleId: string
+  value: string
+  busy: boolean
+  onChange: (value: string) => void
+}) {
+  const id = `answer-${ballot.id}`
+  const length = value.length
+  return (
+    <div
+      data-checked={value.trim() ? 'true' : undefined}
+      className={`rounded-[1.25rem] border-2 bg-paper px-4 pb-2.5 pt-3 transition-[border-color,background-color,box-shadow] duration-150 has-[:focus-visible]:shadow-[0_0_0_3px_var(--primary-ring)] ${
+        value.trim() ? 'border-primary' : 'border-sand focus-within:border-plum-faint/70'
+      } ${busy ? 'opacity-70' : ''}`}
+    >
+      <textarea
+        id={id}
+        rows={4}
+        maxLength={ANSWER_MAX}
+        value={value}
+        readOnly={busy}
+        aria-busy={busy || undefined}
+        aria-required
+        aria-labelledby={titleId}
+        aria-describedby={`${titleId}-hint ${id}-count`}
+        placeholder="Type your answer here"
+        onChange={(event) => onChange(event.target.value)}
+        className="block min-h-[7.5rem] w-full resize-y bg-transparent text-[1.05rem] leading-relaxed text-plum outline-none placeholder:text-plum-faint"
+      />
+      <p id={`${id}-count`} className={`tabular mt-1 text-right text-sm ${length > ANSWER_MAX * 0.9 ? 'font-semibold text-plum' : 'text-plum-soft'}`}>
+        {length}/{ANSWER_MAX}
+        <span className="sr-only"> characters</span>
+      </p>
+    </div>
+  )
+}
+
+function ResultsView({ result, title }: { result: BallotResult; title: string }) {
+  if (result.kind === 'text') {
+    // Typed answers are never shown to participants: only how many there were.
+    return (
+      <div className="rounded-[var(--radius-card)] border border-sand bg-paper p-4">
+        <p className="font-semibold">{title}: answers</p>
+        <p className="mt-0.5 text-sm text-plum-soft">
+          {result.answer_count} answer{result.answer_count === 1 ? '' : 's'} received. Typed answers are not shown.
+        </p>
+      </div>
+    )
+  }
+  const mcq = result.kind === 'mcq'
   const leaders = result.nominees.filter((n) => result.leaders.includes(n.nominee_id))
   return (
     <div className="rounded-[var(--radius-card)] border border-sand bg-paper p-4">
-      <p className="font-semibold">{result.title}: results</p>
+      <p className="font-semibold">{title}: results</p>
       <p className="mt-0.5 text-sm text-plum-soft">
-        {result.total_votes} vote{result.total_votes === 1 ? '' : 's'} counted.{' '}
+        {result.total_votes} {mcq ? 'answer' : 'vote'}
+        {result.total_votes === 1 ? '' : 's'} counted.{' '}
         {result.tie
           ? `Tie between ${leaders.map((l) => l.name).join(' and ')}.`
           : leaders[0]
-            ? `Most votes: ${leaders[0].name}.`
-            : 'No votes were cast.'}
+            ? `${mcq ? 'Most chosen' : 'Most votes'}: ${leaders[0].name}.`
+            : mcq
+              ? 'No answers were given.'
+              : 'No votes were cast.'}
       </p>
       <ul className="mt-3 space-y-2.5">
         {result.nominees.map((n) => (
@@ -138,28 +269,70 @@ function BallotSection({
   showTitle: boolean
   timezone: string
   round: number
-  onSelect: (nomineeId: string) => void
+  /** A nominee or option id, or the typed text of an answer. */
+  onSelect: (value: string) => void
   headingRef?: React.Ref<HTMLHeadingElement>
 }) {
   const receipt = state?.receipt ?? ballot.receipt
   const titleId = `ballot-${ballot.id}-title`
   const busy = state?.submit.phase === 'submitting' || state?.submit.phase === 'checking'
+  const question = isQuestionKind(ballot.kind)
+  // A question is always shown: it is what participants answer. A lone vote ballot's title
+  // stays for screen readers only, under the round's name.
+  const titleShown = showTitle || question
+  const sending = sentNominee(state?.submit)
   return (
     <section aria-labelledby={titleId} className="mt-8 first:mt-6">
-      <div className={showTitle ? '' : 'sr-only'}>
+      <div className={titleShown ? '' : 'sr-only'}>
         <h2 id={titleId} ref={headingRef} tabIndex={-1} className="type-display text-[1.45rem] outline-none">
           {ballot.title}
         </h2>
         {ballot.description ? <p className="mt-1 text-plum-soft">{ballot.description}</p> : null}
       </div>
       {receipt ? (
-        <div className={showTitle ? 'mt-3' : ''}>
+        <div className={titleShown ? 'mt-3' : ''}>
           {state?.note ? (
             <Notice tone="info" className="mb-3" role="status">
               {state.note}
             </Notice>
           ) : null}
-          <ReceiptStub receipt={receipt} timezone={timezone} round={round} celebrate={state?.celebrate} />
+          <ReceiptStub receipt={receipt} timezone={timezone} round={round} kind={ballot.kind} celebrate={state?.celebrate} />
+        </div>
+      ) : votable && ballot.kind === 'text' ? (
+        <div className="mt-3">
+          <p className="mb-2 text-sm text-plum-soft" id={`${titleId}-hint`}>
+            Type your answer. It is final once submitted.
+          </p>
+          <TypedAnswer
+            ballot={ballot}
+            titleId={titleId}
+            value={state?.draft ?? sentAnswer(state?.submit) ?? ''}
+            busy={busy}
+            onChange={onSelect}
+          />
+        </div>
+      ) : votable && ballot.kind === 'mcq' ? (
+        <div
+          role="radiogroup"
+          aria-labelledby={titleId}
+          aria-describedby={`${titleId}-hint`}
+          aria-required
+          className="mt-3 space-y-2.5"
+        >
+          <p className="mb-1 text-sm text-plum-soft" id={`${titleId}-hint`}>
+            Choose one answer. Your answer is final once submitted.
+          </p>
+          {ballot.nominees.map((option, index) => (
+            <AnswerOption
+              key={option.id}
+              ballot={ballot}
+              option={option}
+              index={index}
+              checked={state?.draft === option.id || (busy && sending === option.id)}
+              disabled={busy}
+              onSelect={() => onSelect(option.id)}
+            />
+          ))}
         </div>
       ) : votable ? (
         <div role="radiogroup" aria-labelledby={titleId} aria-required className={`space-y-2.5 ${showTitle ? 'mt-3' : ''}`}>
@@ -173,11 +346,36 @@ function BallotSection({
               key={nominee.id}
               ballot={ballot}
               nominee={nominee}
-              checked={state?.draft === nominee.id || (busy && 'nomineeId' in (state?.submit ?? {}) && (state?.submit as { nomineeId: string }).nomineeId === nominee.id)}
+              checked={state?.draft === nominee.id || (busy && sending === nominee.id)}
               disabled={busy}
               onSelect={() => onSelect(nominee.id)}
             />
           ))}
+        </div>
+      ) : question ? (
+        <div className="mt-3">
+          <p className="flex items-center gap-2 font-semibold text-plum-soft">
+            <CircleSlash aria-hidden className="size-4" />
+            Answers closed. No answer was recorded for you on this question.
+          </p>
+          {ballot.kind === 'mcq' && ballot.nominees.length ? (
+            <ul className="mt-3 space-y-2">
+              {ballot.nominees.map((option, index) => (
+                <li key={option.id} className="flex items-center gap-3 rounded-2xl border border-sand bg-paper/70 px-3 py-2.5">
+                  <span
+                    aria-hidden
+                    className="type-condensed flex size-10 shrink-0 items-center justify-center rounded-xl border-2 border-sand-strong bg-ivory font-bold text-plum"
+                  >
+                    {optionLetter(index)}
+                  </span>
+                  <span className="min-w-0 font-medium [overflow-wrap:anywhere]">
+                    <span className="sr-only">{optionLetter(index)}. </span>
+                    {option.name}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          ) : null}
         </div>
       ) : (
         <div className={showTitle ? 'mt-3' : ''}>
@@ -276,9 +474,15 @@ export function EventDetailView({ eventId }: { eventId: string }) {
         lastCelebrated.current = s.receipt.receipt_code
         setConfettiKey(s.receipt.receipt_code)
         const roundDone = ballots.every((b) => state[b.id]?.receipt ?? b.receipt)
+        const r = s.receipt
+        const what =
+          r.answer !== undefined && r.answer !== null
+            ? 'Answer recorded.'
+            : isAnswerReceipt(r) || isQuestionKind(ballot.kind)
+              ? `Answer recorded: ${r.nominee_name}.`
+              : `Vote recorded for ${r.nominee_name}.`
         setAnnounce(
-          `Vote recorded for ${s.receipt.nominee_name}. Receipt ${s.receipt.receipt_code}.` +
-            (roundDone ? ` Going back to the programme in ${AUTO_BACK_SECONDS} seconds.` : ''),
+          `${what} Receipt ${r.receipt_code}.` + (roundDone ? ` Going back to the programme in ${AUTO_BACK_SECONDS} seconds.` : ''),
         )
         headingRefs.current[ballot.id]?.focus({ preventScroll: true })
         const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches
@@ -296,11 +500,14 @@ export function EventDetailView({ eventId }: { eventId: string }) {
     return () => window.clearTimeout(id)
   }, [goingBack, router])
 
+  const targetQuestion = isQuestionKind(target?.kind)
   const phaseAnnouncement =
     targetState?.submit.phase === 'submitting'
-      ? 'Submitting your vote…'
+      ? targetQuestion
+        ? 'Submitting your answer…'
+        : 'Submitting your vote…'
       : targetState?.submit.phase === 'checking'
-        ? 'Checking your vote. Please keep this page open.'
+        ? `Checking your ${targetQuestion ? 'answer' : 'vote'}. Please keep this page open.`
         : targetState?.submit.phase === 'error'
           ? targetState.submit.message
           : null
@@ -347,14 +554,33 @@ export function EventDetailView({ eventId }: { eventId: string }) {
   const multi = ballots.length > 1
   const closedWhileOpen = !live && unvoted.length > 0 && (event.status === 'closed' || deadlinePassed)
   const detailCurrent = !detailStale && detail.state_version >= snapshot.state_version
-  const canSubmit = live && p.authoritative && detailCurrent && !!targetState?.draft && !targetBusy
-  const draftNominee = target?.nominees.find((n) => n.id === (targetState?.draft ?? (targetState?.submit as { nomineeId?: string })?.nomineeId))
+  const targetText = target?.kind === 'text'
+  // On a typed-answer question the draft is the text; it must not be blank once trimmed.
+  const draftText = targetText ? (targetState?.draft ?? sentAnswer(targetState?.submit) ?? '').trim() : ''
+  const hasDraft = targetText ? draftText.length > 0 : !!targetState?.draft
+  const canSubmit = live && p.authoritative && detailCurrent && hasDraft && !targetBusy
+  const draftIndex = targetText
+    ? -1
+    : (target?.nominees.findIndex((n) => n.id === (targetState?.draft ?? sentNominee(targetState?.submit))) ?? -1)
+  const draftNominee = draftIndex >= 0 ? target?.nominees[draftIndex] : undefined
+  let draftLabel: string | null = null
+  let draftPrompt = 'Choose one person'
+  if (target?.kind === 'text') {
+    draftLabel = draftText || null
+    draftPrompt = 'Type your answer'
+  } else if (target?.kind === 'mcq') {
+    draftLabel = draftNominee ? `${optionLetter(draftIndex)}. ${draftNominee.name}` : null
+    draftPrompt = 'Choose one answer'
+  } else {
+    draftLabel = draftNominee?.name ?? null
+    if (target?.kind === 'team') draftPrompt = 'Choose one team'
+  }
 
-  let submitLabel = 'Submit vote'
+  let submitLabel = targetQuestion ? 'Submit answer' : 'Submit vote'
   if (!live) submitLabel = 'Voting closed'
   else if (!p.authoritative || !detailCurrent) submitLabel = 'Waiting for connection'
   else if (targetState?.submit.phase === 'submitting') submitLabel = 'Submitting…'
-  else if (targetState?.submit.phase === 'checking') submitLabel = 'Checking your vote…'
+  else if (targetState?.submit.phase === 'checking') submitLabel = targetQuestion ? 'Checking your answer…' : 'Checking your vote…'
 
   const showBar = live && !!target
   return (
@@ -399,7 +625,7 @@ export function EventDetailView({ eventId }: { eventId: string }) {
           </div>
           <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-2">
             {allVoted ? (
-              <StatusChip kind="recorded" />
+              <StatusChip kind="recorded" label={ballots.every((b) => isQuestionKind(b.kind)) ? 'Answers recorded' : undefined} />
             ) : live ? (
               <StatusChip kind="live" />
             ) : (
@@ -432,6 +658,17 @@ export function EventDetailView({ eventId }: { eventId: string }) {
           </Notice>
         ) : null}
 
+        {ballots.length === 0 ? (
+          <div className="enter-up mt-6 flex items-center gap-4 rounded-[var(--radius-card)] border border-sand bg-paper p-5 shadow-[var(--shadow-card)]">
+            <span aria-hidden className="flex size-12 shrink-0 items-center justify-center rounded-full bg-gold-wash text-gold-deep">
+              <Drama className="size-6" />
+            </span>
+            <p className="type-display text-[1.35rem] leading-snug text-plum">
+              {event.status === 'live' ? 'No voting in this round. Enjoy the show!' : 'There was no voting in this round.'}
+            </p>
+          </div>
+        ) : null}
+
         {ballots.map((ballot) => (
           <BallotSection
             key={ballot.id}
@@ -441,9 +678,9 @@ export function EventDetailView({ eventId }: { eventId: string }) {
             showTitle={multi}
             timezone={tz}
             round={event.round}
-            onSelect={(nomineeId) => {
+            onSelect={(value) => {
               setFocusBallot(ballot.id)
-              select(ballot.id, nomineeId)
+              select(ballot.id, value)
             }}
             headingRef={(el) => {
               headingRefs.current[ballot.id] = el
@@ -458,7 +695,11 @@ export function EventDetailView({ eventId }: { eventId: string }) {
               Results
             </h2>
             {detail.results.map((r) => (
-              <ResultsView key={r.ballot_id} result={r} />
+              <ResultsView
+                key={r.ballot_id}
+                result={r}
+                title={r.title ?? ballots.find((b) => b.id === r.ballot_id)?.title ?? 'Question'}
+              />
             ))}
           </section>
         ) : null}
@@ -512,16 +753,15 @@ export function EventDetailView({ eventId }: { eventId: string }) {
               ) : targetState?.submit.phase === 'checking' ? (
                 <p className="mb-2 flex items-start gap-2 text-sm text-plum-soft">
                   <LoaderCircle aria-hidden className="mt-0.5 size-4 shrink-0 animate-spin text-primary" />
-                  The connection dropped while sending. We are confirming whether your vote was recorded. Keep this page open.
+                  The connection dropped while sending. We are confirming whether your {targetQuestion ? 'answer' : 'vote'} was
+                  recorded. Keep this page open.
                 </p>
               ) : null}
             </div>
             <div className="flex items-center gap-3">
               <div className="min-w-0 flex-1">
-                <p className="truncate text-xs text-plum-soft">{multi ? target.title : 'Your choice'}</p>
-                <p className={`truncate font-semibold ${draftNominee ? '' : 'text-plum-soft'}`}>
-                  {draftNominee?.name ?? `Choose one ${target.kind === 'team' ? 'team' : 'person'}`}
-                </p>
+                <p className="truncate text-xs text-plum-soft">{multi ? target.title : targetQuestion ? 'Your answer' : 'Your choice'}</p>
+                <p className={`truncate font-semibold ${draftLabel ? '' : 'text-plum-soft'}`}>{draftLabel ?? draftPrompt}</p>
               </div>
               <Button
                 size="lg"

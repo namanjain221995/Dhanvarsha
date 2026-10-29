@@ -384,7 +384,8 @@ async def seed_sample_content() -> None:
                         select(func.count()).select_from(Nominee).where(Nominee.ballot_id == ballot.id)
                     )
                 ).scalar_one()
-                if has_nominees or ballot.frozen_at is not None:
+                # Questions are left alone: sample teams make no sense as answers.
+                if has_nominees or ballot.frozen_at is not None or ballot.kind not in ("team", "individual"):
                     continue
                 rnd = random.Random(f"{index}-{ballot.position}")
                 if ballot.kind == "team":

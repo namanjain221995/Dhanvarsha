@@ -1,9 +1,9 @@
 'use client'
 
-import { ArrowRight, BarChart3, ChevronRight, Lock } from 'lucide-react'
+import { ArrowRight, BarChart3, ChevronRight, Drama, Lock } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import { useEffect, useRef, useState } from 'react'
-import type { EventSummary, Snapshot } from '@/lib/types'
+import { type EventSummary, isAnswerReceipt, isQuestionKind, type Receipt, type Snapshot } from '@/lib/types'
 import { type ChipKind, Countdown, EventLogo, PageColumn, StatusChip, timeLabel, titleSize } from './bits'
 import { useParticipant } from './provider'
 import { navigateWithTransition, transitionName } from './transition'
@@ -12,16 +12,43 @@ function votedCount(event: EventSummary): number {
   return event.ballots.filter((b) => b.voted).length
 }
 
+/**
+ * What a round asks of participants. A ballot without a kind (an older server) counts as a
+ * vote. Rounds with only questions are "answered"; rounds with no ballots have no voting.
+ */
+function roundAsks(event: EventSummary): { votes: boolean; questions: boolean } {
+  return {
+    votes: event.ballots.some((b) => !isQuestionKind(b.kind)),
+    questions: event.ballots.some((b) => isQuestionKind(b.kind)),
+  }
+}
+
 function chipFor(event: EventSummary): { kind: ChipKind; label?: string } {
   const voted = votedCount(event)
   const total = event.ballots.length
+  const asks = roundAsks(event)
   if (event.status === 'upcoming') return { kind: 'upcoming' }
-  if (total > 0 && voted === total) return { kind: 'recorded' }
+  if (total > 0 && voted === total) return { kind: 'recorded', label: asks.votes ? undefined : 'Answers recorded' }
   if (event.status === 'live') {
-    if (voted > 0) return { kind: 'partial', label: `${voted} of ${total} voted` }
+    if (voted > 0) return { kind: 'partial', label: `${voted} of ${total} ${asks.votes ? 'voted' : 'answered'}` }
     return { kind: 'live' }
   }
-  return { kind: 'closed' }
+  return { kind: 'closed', label: total === 0 ? 'Closed' : undefined }
+}
+
+/** "2 votes", "3 answers" or "1 vote and 2 answers". */
+function sentLabel(receipts: Receipt[]): string {
+  const answers = receipts.filter(isAnswerReceipt).length
+  const votes = receipts.length - answers
+  const voteText = `${votes} vote${votes === 1 ? '' : 's'}`
+  const answerText = `${answers} answer${answers === 1 ? '' : 's'}`
+  if (!answers) return voteText
+  return votes ? `${voteText} and ${answerText}` : answerText
+}
+
+/** "2 votes cast", or with answers "1 vote and 2 answers". */
+function tallyLabel(receipts: Receipt[]): string {
+  return receipts.some(isAnswerReceipt) ? sentLabel(receipts) : `${sentLabel(receipts)} cast`
 }
 
 function useTransitionLink() {
@@ -38,8 +65,23 @@ function LiveFeature({ event, snapshot }: { event: EventSummary; snapshot: Snaps
   const voted = votedCount(event)
   const total = event.ballots.length
   const allVoted = total > 0 && voted === total
+  const asks = roundAsks(event)
+  const noVoting = total === 0
   const onClick = useTransitionLink()
   const href = `/event/${event.id}`
+  // "Vote now" when anything in the round is a vote, "Answer now" when it only has questions.
+  const cta = allVoted
+    ? asks.votes
+      ? 'View your vote'
+      : 'View your answers'
+    : voted > 0
+      ? asks.votes
+        ? 'Continue voting'
+        : 'Continue'
+      : asks.votes
+        ? 'Vote now'
+        : 'Answer now'
+  const noun = asks.votes ? (asks.questions ? 'ballots and questions' : 'ballots') : 'questions'
   return (
     <a
       href={href}
@@ -47,7 +89,10 @@ function LiveFeature({ event, snapshot }: { event: EventSummary; snapshot: Snaps
       className="enter-up block rounded-[var(--radius-hero)] border border-primary/25 bg-paper p-5 shadow-[var(--shadow-lift)] outline-offset-4 transition-transform duration-150 active:scale-[0.99] sm:p-6"
     >
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <StatusChip kind={allVoted ? 'recorded' : 'live'} label={allVoted ? 'Vote recorded' : 'Live now'} />
+        <StatusChip
+          kind={allVoted ? 'recorded' : 'live'}
+          label={allVoted ? (asks.votes ? 'Vote recorded' : 'Answers recorded') : 'Live now'}
+        />
         <span className="text-sm font-semibold text-plum-soft">
           Round {event.round} of {snapshot.event_count}
         </span>
@@ -64,7 +109,7 @@ function LiveFeature({ event, snapshot }: { event: EventSummary; snapshot: Snaps
       {event.voting_deadline_at ? (
         <dl className="mt-6 grid grid-cols-2 gap-4 border-t border-sand pt-4">
           <div>
-            <dt className="text-sm text-plum-soft">Voting closes</dt>
+            <dt className="text-sm text-plum-soft">{asks.votes ? 'Voting closes' : 'Round closes'}</dt>
             <dd className="tabular mt-0.5 font-semibold">{timeLabel(event.voting_deadline_at, tz)}</dd>
           </div>
           <div>
@@ -77,18 +122,27 @@ function LiveFeature({ event, snapshot }: { event: EventSummary; snapshot: Snaps
       ) : null}
       {total > 1 ? (
         <p className="mt-4 text-sm text-plum-soft">
-          {total} ballots in this round. {voted > 0 ? `You have voted on ${voted}.` : ''}
+          {total} {noun} in this round.{' '}
+          {voted > 0 ? `You have ${asks.votes && !asks.questions ? 'voted on' : 'answered'} ${voted}.` : ''}
         </p>
       ) : null}
-      <span
-        data-variant={allVoted ? undefined : 'primary'}
-        className={`mt-5 flex min-h-13 w-full items-center justify-center gap-2 rounded-full text-base font-semibold ${
-          allVoted ? 'border border-plum-faint/60 text-plum' : 'bg-primary text-white'
-        }`}
-      >
-        {allVoted ? 'View your vote' : voted > 0 ? 'Continue voting' : 'Vote now'}
-        <ArrowRight aria-hidden className="size-4" />
-      </span>
+      {noVoting ? (
+        // The card still opens the round page; there is just nothing to vote on.
+        <p className="mt-5 flex min-h-13 items-center justify-center gap-2 rounded-full border border-sand bg-gold-wash/60 px-4 text-base font-semibold text-plum">
+          <Drama aria-hidden className="size-5 shrink-0 text-gold-deep" />
+          No voting in this round
+        </p>
+      ) : (
+        <span
+          data-variant={allVoted ? undefined : 'primary'}
+          className={`mt-5 flex min-h-13 w-full items-center justify-center gap-2 rounded-full text-base font-semibold ${
+            allVoted ? 'border border-plum-faint/60 text-plum' : 'bg-primary text-white'
+          }`}
+        >
+          {cta}
+          <ArrowRight aria-hidden className="size-4" />
+        </span>
+      )}
     </a>
   )
 }
@@ -125,15 +179,19 @@ function WaitingCard({ snapshot }: { snapshot: Snapshot }) {
 function ThankYou({ snapshot }: { snapshot: Snapshot }) {
   const tz = snapshot.programme.timezone
   const closed = snapshot.phase === 'access_closed'
+  const count = snapshot.receipts.length
+  const answered = snapshot.receipts.some(isAnswerReceipt)
   return (
     <section className="enter-up rounded-[var(--radius-hero)] border border-sand bg-paper p-6 shadow-[var(--shadow-card)]">
       <div aria-hidden className="h-[3px] w-14 rounded-full bg-gold" />
       <h2 className="type-display mt-5 text-[2.2rem]">Thank you for voting</h2>
       <p className="mt-2 text-plum-soft">
         {closed ? 'The programme has closed.' : 'Every round has finished.'}{' '}
-        {snapshot.receipts.length
-          ? `You voted on ${snapshot.receipts.length} ballot${snapshot.receipts.length === 1 ? '' : 's'}. Your votes are stored and final.`
-          : 'No votes were recorded for your account.'}
+        {!count
+          ? 'No votes were recorded for your account.'
+          : answered
+            ? `You sent ${sentLabel(snapshot.receipts)}. Everything you sent is stored and final.`
+            : `You voted on ${count} ballot${count === 1 ? '' : 's'}. Your votes are stored and final.`}
       </p>
       {snapshot.receipts.length ? (
         <ul className="mt-5 divide-y divide-sand border-t border-sand">
@@ -143,7 +201,7 @@ function ThankYou({ snapshot }: { snapshot: Snapshot }) {
                 <p className="truncate text-sm text-plum-soft">
                   {r.event_name}, {r.ballot_title}
                 </p>
-                <p className="truncate font-semibold">{r.nominee_name}</p>
+                <p className="truncate font-semibold">{r.nominee_name ?? r.answer}</p>
               </div>
               <div className="shrink-0 text-right">
                 <p className="tabular text-sm font-semibold">{r.receipt_code}</p>
@@ -283,7 +341,7 @@ export function Lobby() {
               All rounds
             </h2>
             <span className="text-sm text-plum-soft">
-              {snapshot.receipts.length} vote{snapshot.receipts.length === 1 ? '' : 's'} cast
+              {tallyLabel(snapshot.receipts)}
             </span>
           </div>
           <ol className="mt-3 space-y-2.5">

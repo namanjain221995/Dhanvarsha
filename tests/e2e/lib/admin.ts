@@ -1,5 +1,12 @@
 import { type APIRequestContext, expect, request } from '@playwright/test'
 
+export type BallotKind = 'team' | 'individual' | 'mcq' | 'text'
+
+/** One ballot of a round made by `createRound`: a vote, or a question with its answer options. */
+export type RoundBallot = { kind: BallotKind; title: string; options?: string[] }
+
+export type TypedAnswer = { participant_name: string; participant_email: string; answer: string; created_at: string }
+
 /** Organiser actions through the real admin API (same-origin headers, CSRF). */
 export class Admin {
   private constructor(
@@ -68,6 +75,46 @@ export class Admin {
     return created.event.id
   }
 
+  /**
+   * Create a round with any mix of ballots: votes (team, individual), multiple-choice
+   * questions (mcq, with `options`) and typed-answer questions (text). No ballots at all makes
+   * a round without voting.
+   */
+  async createRound(name: string, ballots: RoundBallot[]) {
+    const [first, ...rest] = ballots
+    const created = await this.call<{ event: { id: string; ballots: { id: string }[] } }>('post', '/events', {
+      name,
+      description: 'Created by the browser test suite.',
+      rules: 'One answer per question. Answers are final.',
+      ballot_kind: first ? first.kind : 'none',
+      ...(first ? { ballot_title: first.title } : {}),
+    })
+    const ballotIds = first ? [created.event.ballots[0]!.id] : []
+    for (const ballot of rest) {
+      const made = await this.call<{ id: string }>('post', `/events/${created.event.id}/ballots`, {
+        title: ballot.title,
+        kind: ballot.kind,
+      })
+      ballotIds.push(made.id)
+    }
+    for (const [index, ballot] of ballots.entries()) {
+      for (const option of ballot.options ?? []) await this.call('post', `/ballots/${ballotIds[index]}/nominees`, { name: option })
+    }
+    return { eventId: created.event.id, ballotIds }
+  }
+
+  /** Events open and voters sign in only inside the programme access window: keep it open for a while. */
+  async ensureAccessOpen() {
+    const p = (await this.programme()) as { login_phase?: string; login_closes_at?: string | null }
+    const closesSoon = !p.login_closes_at || Date.parse(p.login_closes_at) < Date.now() + 2 * 3600_000
+    if (p.login_phase !== 'open' || closesSoon) {
+      await this.patchProgramme({
+        login_opens_at: new Date(Date.now() - 3600_000).toISOString(),
+        login_closes_at: new Date(Date.now() + 8 * 3600_000).toISOString(),
+      })
+    }
+  }
+
   async ensureRunning() {
     const p = await this.programme()
     if (p.ended_at) {
@@ -129,10 +176,19 @@ export class Admin {
   }
 
   results(eventId: string) {
-    return this.call<{ events: { ballots: { total_votes: number; nominees: { name: string; votes: number }[] }[] }[] }>(
-      'get',
-      `/results?event_id=${eventId}`,
-    )
+    return this.call<{
+      events: {
+        ballots: {
+          title: string
+          kind: BallotKind
+          total_votes: number
+          nominees: { name: string; votes: number }[]
+          /** Typed-answer questions only. */
+          answer_count?: number
+          answers?: TypedAnswer[]
+        }[]
+      }[]
+    }>('get', `/results?event_id=${eventId}`)
   }
 
   async dispose() {

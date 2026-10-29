@@ -77,20 +77,25 @@ async def _open_events(db: AsyncSession, programme_id: uuid.UUID) -> list[Event]
 
 
 async def _ballot_problems(db: AsyncSession, event_id: uuid.UUID) -> str | None:
+    """Why the event cannot open yet, or None. A round with no ballots may open (a show
+    with no voting), and a typed-answer question needs nothing before it opens."""
     rows = (
         await db.execute(
-            select(Ballot.id, Ballot.title, func.count(Nominee.id).label("n"))
+            select(Ballot.id, Ballot.title, Ballot.kind, func.count(Nominee.id).label("n"))
             .outerjoin(Nominee, Nominee.ballot_id == Ballot.id)
             .where(Ballot.event_id == event_id)
-            .group_by(Ballot.id, Ballot.title)
+            .group_by(Ballot.id, Ballot.title, Ballot.kind, Ballot.position, Ballot.created_at)
+            .order_by(Ballot.position, Ballot.created_at)
         )
     ).all()
-    if not rows:
-        return "Add at least one ballot before opening this event."
-    empty = [r.title for r in rows if r.n == 0]
+    problems = []
+    empty = [r.title for r in rows if r.kind in ("team", "individual") and r.n == 0]
     if empty:
-        return f"Add nominees to: {', '.join(empty)}."
-    return None
+        problems.append(f"Add nominees to: {', '.join(empty)}.")
+    short = [r.title for r in rows if r.kind == "mcq" and r.n < 2]
+    if short:
+        problems.append(f"Add at least two answers to: {', '.join(short)}.")
+    return " ".join(problems) or None
 
 
 def _suspend_schedule(programme: Programme, now: datetime) -> bool:

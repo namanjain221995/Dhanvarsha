@@ -29,7 +29,17 @@ export type LinkEntry = { ok: boolean; reused_session: boolean }
 
 export type EventStatus = 'live' | 'upcoming' | 'closed'
 
-export type BallotSummary = { id: string; title: string; voted: boolean }
+/**
+ * team / individual: a vote for one nominee. mcq: a multiple-choice question whose answer
+ * options are nominees. text: a question answered by typing (no nominees).
+ */
+export type BallotKind = 'team' | 'individual' | 'mcq' | 'text'
+
+/** Questions (mcq, text) are answered rather than voted on; the wording on screen follows. */
+export const isQuestionKind = (kind: BallotKind | string | null | undefined): boolean => kind === 'mcq' || kind === 'text'
+
+/** `kind` is optional: older servers sent only id, title and voted. */
+export type BallotSummary = { id: string; title: string; voted: boolean; kind?: BallotKind }
 
 export type EventSummary = {
   id: string
@@ -51,12 +61,20 @@ export type Receipt = {
   receipt_code: string
   ballot_id: string
   event_id: string
-  nominee_id: string
-  nominee_name: string
+  /** Null for a typed answer. */
+  nominee_id: string | null
+  nominee_name: string | null
+  /** The typed text of an answer to a typed-answer question, otherwise null. */
+  answer?: string | null
+  ballot_kind?: BallotKind
   ballot_title: string
   event_name: string
   accepted_at: string
 }
+
+/** A receipt for an answer to a question (mcq or text) rather than a vote. */
+export const isAnswerReceipt = (receipt: Receipt): boolean =>
+  isQuestionKind(receipt.ballot_kind) || (receipt.answer !== undefined && receipt.answer !== null)
 
 export type Snapshot = {
   server_time: string
@@ -86,8 +104,9 @@ export type Nominee = {
 export type BallotDetail = {
   id: string
   title: string
-  kind: 'team' | 'individual'
+  kind: BallotKind
   description: string
+  /** Empty for typed-answer questions. */
   nominees: Nominee[]
   receipt: Receipt | null
 }
@@ -101,10 +120,10 @@ export type NomineeResult = {
   leading: boolean
 }
 
-export type BallotResult = {
+export type VoteBallotResult = {
   ballot_id: string
   title: string
-  kind: string
+  kind: 'team' | 'individual' | 'mcq'
   nominees: NomineeResult[]
   total_votes: number
   eligible_voters: number
@@ -112,6 +131,16 @@ export type BallotResult = {
   leaders: string[]
   tie: boolean
 }
+
+/** Published results of a typed-answer question: only how many answered, never the texts. */
+export type TextBallotResult = {
+  ballot_id: string
+  kind: 'text'
+  answer_count: number
+  title?: string
+}
+
+export type BallotResult = VoteBallotResult | TextBallotResult
 
 export type EventDetail = {
   server_time: string
