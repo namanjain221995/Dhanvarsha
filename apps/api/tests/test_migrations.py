@@ -1,6 +1,6 @@
-"""Migrations 0006 (sign-in links), 0007 (question ballots) and 0008 (the opening page),
-each on a throwaway database of its own: additive on the way up, and a downgrade that
-refuses to destroy data the previous schema cannot hold."""
+"""Migrations 0006 (sign-in links), 0007 (question ballots), 0008 (the opening page) and
+0009 (opening-page media), each on a throwaway database of its own: additive on the way
+up, and a downgrade that refuses to destroy data the previous schema cannot hold."""
 
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ from stagevote.config import get_settings
 from stagevote.db import asyncpg_dsn, build_engine
 from stagevote.security import new_token, token_hash
 
-HEAD = "0008"
+HEAD = "0009"
 
 LINK_COLUMNS = (
     "SELECT column_name, data_type, is_nullable FROM information_schema.columns "
@@ -338,3 +338,79 @@ async def test_0008_adds_the_opening_page_and_drops_it_on_downgrade(scratch: Dat
         await app.close()
         await owner.close()
         await engine.dispose()
+
+
+ASSET_NAME_COLUMN = (
+    "SELECT data_type, character_maximum_length, is_nullable FROM information_schema.columns "
+    "WHERE table_name = 'assets' AND column_name = 'original_name'"
+)
+ASSET_KIND_CHECKS = (
+    "SELECT conname FROM pg_constraint WHERE conrelid = 'assets'::regclass AND contype = 'c' ORDER BY conname"
+)
+INSERT_ASSET = (
+    "INSERT INTO assets (id, kind, storage_key, content_type, width, height, byte_size, sha256{extra}) "
+    "VALUES ($1, $2, $3, $4, 0, 0, 10, repeat('0', 64){extra_value})"
+)
+
+
+async def test_0009_adds_opening_media_and_refuses_to_drop_it(scratch: DatabaseInfo) -> None:
+    await alembic(scratch, "0008")
+    owner = await connect(scratch.owner_url)
+    app = await connect(scratch.app_url)
+    try:
+        # A picture uploaded under the previous release; the new kind does not fit yet.
+        picture = uuid.uuid4()
+        await owner.execute(
+            INSERT_ASSET.format(extra="", extra_value=""),
+            picture,
+            "event_logo",
+            f"{picture.hex}.webp",
+            "image/webp",
+        )
+        assert [r["conname"] for r in await owner.fetch(ASSET_KIND_CHECKS)] == ["assets_kind_check"]
+        with pytest.raises(asyncpg.CheckViolationError):
+            await owner.execute(
+                INSERT_ASSET.format(extra="", extra_value=""),
+                uuid.uuid4(),
+                "opening_media",
+                f"{uuid.uuid4().hex}.mp4",
+                "video/mp4",
+            )
+
+        await alembic(scratch, "0009")
+        assert tuple(await owner.fetchrow(ASSET_NAME_COLUMN)) == ("character varying", 255, "YES")
+        assert [r["conname"] for r in await owner.fetch(ASSET_KIND_CHECKS)] == ["ck_assets_kind"]
+        # Additive: the old picture is untouched and has no file name.
+        row = await owner.fetchrow("SELECT kind, original_name FROM assets WHERE id = $1", picture)
+        assert (row["kind"], row["original_name"]) == ("event_logo", None)
+
+        # The runtime role stores a video through its existing table grants; unknown kinds still fail.
+        video = uuid.uuid4()
+        named = INSERT_ASSET.format(extra=", original_name", extra_value=", $5")
+        await app.execute(named, video, "opening_media", f"{video.hex}.mp4", "video/mp4", "Opening film.mp4")
+        assert (
+            await app.fetchval("SELECT original_name FROM assets WHERE id = $1", video) == "Opening film.mp4"
+        )
+        with pytest.raises(asyncpg.CheckViolationError):
+            await app.execute(named, uuid.uuid4(), "poster", f"{uuid.uuid4().hex}.webp", "image/webp", "x")
+
+        # A video the page may show blocks the downgrade, which then changes nothing.
+        with pytest.raises(RuntimeError, match="refusing to downgrade"):
+            await alembic(scratch, "0008", downgrade=True)
+        assert await owner.fetchval("SELECT version_num FROM alembic_version") == "0009"
+        assert await owner.fetchval("SELECT count(*) FROM assets WHERE id = $1", video) == 1
+
+        # Without one, the downgrade restores the previous schema and its check.
+        await owner.execute("DELETE FROM assets WHERE id = $1", video)
+        await alembic(scratch, "0008", downgrade=True)
+        assert await owner.fetchval("SELECT version_num FROM alembic_version") == "0008"
+        assert await owner.fetchrow(ASSET_NAME_COLUMN) is None
+        assert [r["conname"] for r in await owner.fetch(ASSET_KIND_CHECKS)] == ["assets_kind_check"]
+        assert await owner.fetchval("SELECT kind FROM assets WHERE id = $1", picture) == "event_logo"
+
+        await alembic(scratch, "head")
+        assert await owner.fetchval("SELECT version_num FROM alembic_version") == HEAD
+        assert [r["conname"] for r in await owner.fetch(ASSET_KIND_CHECKS)] == ["ck_assets_kind"]
+    finally:
+        await app.close()
+        await owner.close()

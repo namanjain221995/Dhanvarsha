@@ -1,7 +1,7 @@
 """The opening showcase page: the built-in page, the organiser's editor and the public page.
 
-The public page needs no sign-in and shows only titles, links and image URLs. The editor
-saves the whole page at once and shares the programme's settings_version, so two
+The public page needs no sign-in and shows only titles, links and image and video URLs. The
+editor saves the whole page at once and shares the programme's settings_version, so two
 organisers (or this page and the programme settings form) cannot overwrite each other.
 """
 
@@ -10,6 +10,7 @@ from __future__ import annotations
 import copy
 import io
 import json
+import re
 import uuid
 from typing import Any
 
@@ -21,6 +22,8 @@ from stagevote.services.opening import DEFAULT_CARDS, ICON_KEYS
 
 DEFAULT_TITLES = [title for title, _ in DEFAULT_CARDS]
 DEFAULT_ICONS = [icon for _, icon in DEFAULT_CARDS]
+# What a save request carries for each card.
+CARD_KEYS = ("id", "title", "icon", "image_asset_id", "link", "media_asset_id")
 
 
 async def _name(world: World, name: str, description: str = "") -> None:
@@ -56,10 +59,9 @@ def _body(editor: dict[str, Any], **changes: Any) -> dict[str, Any]:
         "year": page["year"],
         "tagline": page["tagline"],
         "button_label": page["button_label"],
+        "hidden": page["hidden"],
         "logo_asset_id": page["logo_asset_id"],
-        "cards": [
-            {k: card[k] for k in ("id", "title", "icon", "image_asset_id", "link")} for card in page["cards"]
-        ],
+        "cards": [{k: card.get(k) for k in CARD_KEYS} for card in page["cards"]],
     }
     body.update(changes)
     return body
@@ -85,20 +87,32 @@ def _fields(resp: Any) -> list[str]:
 async def test_built_in_page_comes_from_the_programme_name_and_description(world: World) -> None:
     await _name(world, "Dhanvarsha 2026", "An evening of games, honours and gold.")
     public = await _public(world)
-    assert set(public) == {"title", "year", "tagline", "button_label", "logo_url", "cards", "updated_at"}
+    assert set(public) == {
+        "title",
+        "year",
+        "tagline",
+        "button_label",
+        "hidden",
+        "reveal_epoch",
+        "logo_url",
+        "cards",
+        "updated_at",
+    }
     assert (public["title"], public["year"], public["tagline"], public["button_label"]) == (
         "Dhanvarsha",
         "2026",
         "An evening of games, honours and gold.",
         "PLAY GAME",
     )
+    # The cards start face down, in the first reveal epoch.
+    assert (public["hidden"], public["reveal_epoch"]) == (True, 0)
     assert public["logo_url"] is None and public["updated_at"]
     assert [c["id"] for c in public["cards"]] == [f"default-{n}" for n in range(1, 14)]
     assert [c["title"] for c in public["cards"]] == DEFAULT_TITLES
     assert [c["icon"] for c in public["cards"]] == DEFAULT_ICONS
     assert public["cards"][7]["title"] == "Leader\u2019s Challenge \u2014 Managers\u2019 Catan Game"
-    assert all(c["image_url"] is None and c["link"] == "" for c in public["cards"])
-    assert set(public["cards"][0]) == {"id", "title", "icon", "image_url", "link"}
+    assert all(c["image_url"] is None and c["link"] == "" and c["media"] is None for c in public["cards"])
+    assert set(public["cards"][0]) == {"id", "title", "icon", "image_url", "link", "media"}
 
     admin = await world.admin()
     editor = await _editor(admin)
@@ -106,6 +120,7 @@ async def test_built_in_page_comes_from_the_programme_name_and_description(world
     assert editor["opening"] == editor["defaults"]
     assert editor["icons"] == list(ICON_KEYS)
     assert editor["settings_version"] == await admin.settings_version()
+    assert (editor["opening"]["hidden"], editor["opening"]["reveal_epoch"]) == (True, 0)
     assert (editor["opening"]["logo_asset_id"], editor["opening"]["logo_url"]) == (None, None)
     assert editor["opening"]["cards"][0] == {
         "id": "default-1",
@@ -114,6 +129,8 @@ async def test_built_in_page_comes_from_the_programme_name_and_description(world
         "image_asset_id": None,
         "image_url": None,
         "link": "",
+        "media_asset_id": None,
+        "media": None,
     }
 
     # An unedited page follows the programme: a name without a year has no year line.
@@ -141,7 +158,7 @@ async def test_saved_page_is_public_and_keeps_card_order(world: World) -> None:
         year="Season 2",
         tagline="  Games, honours\r\nand gold.  ",
         button_label="LET'S PLAY",
-        cards=[{k: c[k] for k in ("id", "title", "icon", "image_asset_id", "link")} for c in cards],
+        cards=[{k: c.get(k) for k in CARD_KEYS} for c in cards],
     )
     resp = await admin.put("/opening", body)
     assert resp.status_code == 200, resp.text
@@ -173,6 +190,7 @@ async def test_saved_page_is_public_and_keeps_card_order(world: World) -> None:
         "icon": "crown",
         "image_url": None,
         "link": "/vote",
+        "media": None,
     }
 
     # Saved values no longer follow the programme name; the built-in page still does.
@@ -289,7 +307,16 @@ async def test_page_fields_are_checked(world: World) -> None:
 
     # The URLs the editor loaded may be sent back; they are ignored.
     echoed = _body(editor, logo_url="/media/elsewhere.webp", cards=editor["opening"]["cards"][:1])
-    assert set(echoed["cards"][0]) == {"id", "title", "icon", "image_asset_id", "image_url", "link"}
+    assert set(echoed["cards"][0]) == {
+        "id",
+        "title",
+        "icon",
+        "image_asset_id",
+        "image_url",
+        "link",
+        "media_asset_id",
+        "media",
+    }
     resp = await admin.put("/opening", echoed)
     assert resp.status_code == 200, resp.text
     assert resp.json()["opening"]["logo_url"] is None
@@ -297,12 +324,17 @@ async def test_page_fields_are_checked(world: World) -> None:
         "SELECT opening FROM programmes WHERE id = :p", p=world.programme_id
     )
     assert "logo_url" not in stored and "image_url" not in stored["cards"][0]
+    assert "media" not in stored["cards"][0] and stored["cards"][0]["media_asset_id"] is None
     editor = resp.json()
 
     # The whole page is sent: a missing value is refused, not quietly blanked.
     body = _body(editor)
     del body["year"]
     assert _fields(await admin.put("/opening", body)) == ["year"]
+    body = _body(editor)
+    del body["hidden"]
+    assert _fields(await admin.put("/opening", body)) == ["hidden"]
+    assert _fields(await admin.put("/opening", _body(editor, hidden="sometimes"))) == ["hidden"]
 
     # Card ids are the editor's keys: two cards cannot share one.
     resp = await admin.put(
@@ -443,6 +475,7 @@ async def test_editor_needs_an_organiser_and_the_public_page_does_not(world: Wor
     assert_error(await anonymous.get(f"{ADMIN_API}/opening"), 401, "UNAUTHENTICATED")
     assert_error(await anonymous.put(f"{ADMIN_API}/opening", json={}), 401, "UNAUTHENTICATED")
     assert_error(await anonymous.delete(f"{ADMIN_API}/opening"), 401, "UNAUTHENTICATED")
+    assert_error(await anonymous.post(f"{ADMIN_API}/opening/hide-all", json={}), 401, "UNAUTHENTICATED")
     assert (await anonymous.get(f"{API}/public/opening")).status_code == 200
 
     admin = await world.admin()
@@ -454,6 +487,9 @@ async def test_editor_needs_an_organiser_and_the_public_page_does_not(world: Wor
         headers={"X-CSRF-Token": "wrong"},
     )
     assert_error(resp, 403, "CSRF_FAILED")
+    resp = await admin.http.post(f"{ADMIN_API}/opening/hide-all", json={}, headers={"X-CSRF-Token": "wrong"})
+    assert_error(resp, 403, "CSRF_FAILED")
+    assert (await _public(world))["reveal_epoch"] == 0
 
 
 async def test_unexpected_stored_values_fall_back_to_the_built_in_page(world: World) -> None:
@@ -464,7 +500,7 @@ async def test_unexpected_stored_values_fall_back_to_the_built_in_page(world: Wo
         "tagline": "Hand edited",
         "logo_asset_id": "not-a-uuid",
         "cards": [
-            {"id": "a", "title": "Known", "icon": "trophy", "link": "/vote"},
+            {"id": "a", "title": "Known", "icon": "trophy", "link": "/vote", "media_asset_id": "not-a-uuid"},
             {"id": "b", "title": "Retired icon", "icon": "no-such-icon", "link": "javascript:alert(1)"},
             {"id": "", "title": "No id"},
             "junk",
@@ -484,8 +520,8 @@ async def test_unexpected_stored_values_fall_back_to_the_built_in_page(world: Wo
     )
     assert public["logo_url"] is None
     assert public["cards"] == [
-        {"id": "a", "title": "Known", "icon": "trophy", "image_url": None, "link": "/vote"},
-        {"id": "b", "title": "Retired icon", "icon": "star", "image_url": None, "link": ""},
+        {"id": "a", "title": "Known", "icon": "trophy", "image_url": None, "link": "/vote", "media": None},
+        {"id": "b", "title": "Retired icon", "icon": "star", "image_url": None, "link": "", "media": None},
     ]
     # The editor loads the same page, so saving it repairs the row.
     admin = await world.admin()
@@ -493,3 +529,214 @@ async def test_unexpected_stored_values_fall_back_to_the_built_in_page(world: Wo
     assert resp.status_code == 200, resp.text
     row = await world.factory.fetchval("SELECT opening FROM programmes WHERE id = :p", p=world.programme_id)
     assert row["title"] == "Dhanvarsha" and [c["id"] for c in row["cards"]] == ["a", "b"]
+
+
+async def test_the_organiser_chooses_hidden_or_visible_cards(world: World) -> None:
+    admin = await world.admin()
+    editor = await _editor(admin)
+    assert editor["opening"]["hidden"] is True and editor["defaults"]["hidden"] is True
+
+    resp = await admin.put("/opening", _body(editor, hidden=False))
+    assert resp.status_code == 200, resp.text
+    saved = resp.json()
+    assert saved["opening"]["hidden"] is False and saved["defaults"]["hidden"] is True
+    assert (await _public(world))["hidden"] is False
+    stored = await world.factory.fetchval(
+        "SELECT opening FROM programmes WHERE id = :p", p=world.programme_id
+    )
+    assert (stored["hidden"], stored["reveal_epoch"]) == (False, 0)
+
+    resp = await admin.put("/opening", _body(saved, hidden=True))
+    assert resp.status_code == 200, resp.text
+    assert (await _public(world))["hidden"] is True
+
+
+async def test_hide_all_raises_the_reveal_epoch_and_keeps_the_page(world: World) -> None:
+    await _name(world, "Dhanvarsha 2026")
+    admin = await world.admin()
+    editor = await _editor(admin)
+    resp = await admin.put("/opening", _body(editor, title="Game Night", hidden=True))
+    assert resp.status_code == 200, resp.text
+    saved = resp.json()
+
+    # No settings_version: the button works whatever the editor last loaded.
+    resp = await admin.post("/opening/hide-all")
+    assert resp.status_code == 200, resp.text
+    hidden = resp.json()
+    assert set(hidden) == {"opening", "defaults", "icons", "settings_version"}
+    assert hidden["opening"]["reveal_epoch"] == 1
+    assert hidden["opening"]["title"] == "Game Night"
+    # The page's version is unchanged, so unsaved edits in an open editor can still be saved.
+    assert hidden["settings_version"] == saved["settings_version"]
+    assert hidden == await _editor(admin)
+    public = await _public(world)
+    assert (public["title"], public["hidden"], public["reveal_epoch"]) == ("Game Night", True, 1)
+
+    resp = await admin.post("/opening/hide-all")
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["opening"]["reveal_epoch"] == 2
+
+    # Saving the page keeps the stored epoch, whatever the request says about it.
+    resp = await admin.put("/opening", _body(hidden, button_label="LET'S GO", reveal_epoch=0))
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["opening"]["reveal_epoch"] == 2
+    assert (await _public(world))["reveal_epoch"] == 2
+
+    # Going back to the built-in page keeps it too: the epoch never goes back.
+    resp = await admin.delete(f"/opening?settings_version={resp.json()['settings_version']}")
+    assert resp.status_code == 200, resp.text
+    reset = resp.json()
+    assert reset["opening"] == reset["defaults"] and reset["opening"]["reveal_epoch"] == 2
+    assert await world.factory.fetchval(
+        "SELECT opening FROM programmes WHERE id = :p", p=world.programme_id
+    ) == {"reveal_epoch": 2}
+    public = await _public(world)
+    assert (public["title"], public["hidden"], public["reveal_epoch"]) == ("Dhanvarsha", True, 2)
+
+    actions = await world.factory.fetch(
+        "SELECT action, details FROM audit_log WHERE programme_id = :p AND action LIKE 'opening.%' "
+        "ORDER BY id",
+        p=world.programme_id,
+    )
+    assert [(a.action, a.details) for a in actions] == [
+        ("opening.updated", {"cards": 13}),
+        ("opening.cards_hidden", {"reveal_epoch": 1}),
+        ("opening.cards_hidden", {"reveal_epoch": 2}),
+        ("opening.updated", {"cards": 13}),
+        ("opening.reset", {}),
+    ]
+
+
+async def test_a_hand_edited_reveal_epoch_falls_back_to_zero(world: World) -> None:
+    for value in ("3", -1, True, 2.5, None):
+        await world.factory.execute(
+            "UPDATE programmes SET opening = CAST(:o AS jsonb) WHERE id = :p",
+            o=json.dumps({"hidden": "yes", "reveal_epoch": value}),
+            p=world.programme_id,
+        )
+        public = await _public(world)
+        assert (public["hidden"], public["reveal_epoch"]) == (True, 0), value
+    admin = await world.admin()
+    resp = await admin.post("/opening/hide-all")
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["opening"]["reveal_epoch"] == 1
+
+
+MP4 = b"\x00\x00\x00\x18ftypmp42" + bytes(2000)
+
+
+async def _media(admin: AdminClient, data: bytes, name: str, content_type: str) -> dict[str, Any]:
+    resp = await admin.upload_media(data, name, content_type)
+    assert resp.status_code == 201, resp.text
+    body: dict[str, Any] = resp.json()
+    return body
+
+
+def _png() -> bytes:
+    buf = io.BytesIO()
+    Image.new("RGB", (96, 64), (10, 20, 60)).save(buf, format="PNG")
+    return buf.getvalue()
+
+
+async def test_a_card_button_can_show_an_image_or_a_video(world: World) -> None:
+    admin = await world.admin()
+    video = await _media(admin, MP4, "Opening film.mp4", "video/mp4")
+    image = await _media(admin, _png(), "Stage photo.png", "image/png")
+    editor = await _editor(admin)
+    body = _body(editor)
+    body["cards"][0]["media_asset_id"] = video["id"]
+    body["cards"][1]["media_asset_id"] = image["id"]
+    # The link stays saved; the page uses it only when the card has no image or video.
+    body["cards"][1]["link"] = "https://example.com/kept"
+    resp = await admin.put("/opening", body)
+    assert resp.status_code == 200, resp.text
+    saved = resp.json()
+    assert saved == await _editor(admin)
+    cards = saved["opening"]["cards"]
+    assert cards[0]["media_asset_id"] == video["id"]
+    assert cards[0]["media"] == {
+        "url": video["url"],
+        "type": "video",
+        "name": "Opening film.mp4",
+        "byte_size": len(MP4),
+    }
+    assert re.fullmatch(r"/media/[a-f0-9]{32}\.mp4", cards[0]["media"]["url"])
+    assert cards[1]["media"] == {
+        "url": image["url"],
+        "type": "image",
+        "name": "Stage photo.png",
+        "byte_size": image["byte_size"],
+    }
+    assert cards[1]["link"] == "https://example.com/kept"
+    assert (cards[2]["media_asset_id"], cards[2]["media"]) == (None, None)
+    assert saved["defaults"]["cards"][0]["media"] is None
+
+    public = await _public(world)
+    assert public["cards"][0]["media"] == {"url": video["url"], "type": "video"}
+    assert public["cards"][1]["media"] == {"url": image["url"], "type": "image"}
+    assert public["cards"][1]["link"] == "https://example.com/kept"
+    assert public["cards"][2]["media"] is None
+    # No asset ids, file names or sizes in public output.
+    text = json.dumps(public)
+    for private in (video["id"], image["id"], "Opening film", "Stage photo", "byte_size", "media_asset_id"):
+        assert private not in text
+
+    stored = await world.factory.fetchval(
+        "SELECT opening FROM programmes WHERE id = :p", p=world.programme_id
+    )
+    assert stored["cards"][0]["media_asset_id"] == video["id"] and "media" not in stored["cards"][0]
+
+    # The editor may send the cards back as it loaded them, "media" included: it is ignored.
+    resp = await admin.put("/opening", _body(saved, cards=saved["opening"]["cards"]))
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["opening"]["cards"][0]["media"] == cards[0]["media"]
+
+    # Removing the media from a card keeps the file on the server.
+    body = _body(resp.json())
+    body["cards"][0]["media_asset_id"] = None
+    resp = await admin.put("/opening", body)
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["opening"]["cards"][0]["media"] is None
+    assert (await _public(world))["cards"][0]["media"] is None
+    assert await world.factory.fetchval("SELECT count(*) FROM assets WHERE id = :i", i=video["id"]) == 1
+
+
+async def test_card_media_must_be_an_uploaded_image_or_video(world: World) -> None:
+    admin = await world.admin()
+    picture = await _upload(admin, "event_logo")
+    video = await _media(admin, MP4, "clip.mp4", "video/mp4")
+    editor = await _editor(admin)
+
+    for value, words in (
+        (picture, "image or video of card 2 was not uploaded for its button"),
+        (str(uuid.uuid4()), "image or video of card 2 was not found"),
+    ):
+        body = _body(editor)
+        body["cards"][1]["media_asset_id"] = value
+        error = assert_error(await admin.put("/opening", body), 422, "VALIDATION_FAILED")
+        assert error["details"]["fields"] == [
+            {"field": "cards.1.media_asset_id", "message": error["message"]}
+        ]
+        assert words in error["message"], error["message"]
+
+    body = _body(editor)
+    body["cards"][0]["media_asset_id"] = "not-a-uuid"
+    assert _fields(await admin.put("/opening", body)) == ["cards.0.media_asset_id"]
+
+    # A video is neither a card picture nor a logo.
+    body = _body(editor)
+    body["cards"][0]["image_asset_id"] = video["id"]
+    assert _fields(await admin.put("/opening", body)) == ["cards.0.image_asset_id"]
+    assert _fields(await admin.put("/opening", _body(editor, logo_asset_id=video["id"]))) == ["logo_asset_id"]
+
+    # The media kind cannot be uploaded through the single-request picture upload.
+    resp = await admin.http.post(
+        f"{ADMIN_API}/assets",
+        data={"kind": "opening_media"},
+        files={"file": ("picture.png", _png(), "image/png")},
+        headers={"X-CSRF-Token": admin.csrf},
+    )
+    assert_error(resp, 422, "VALIDATION_FAILED")
+
+    # The refused saves changed nothing.
+    assert (await _editor(admin))["settings_version"] == editor["settings_version"]

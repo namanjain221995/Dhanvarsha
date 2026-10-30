@@ -566,6 +566,33 @@ class AdminClient:
         assert resp.status_code == 200, resp.text
         return int(resp.json()["settings_version"])
 
+    # ---- chunked media uploads (opening-page images and videos) ------------------
+
+    async def start_media(self, name: str, size: int, content_type: str = "video/mp4") -> httpx.Response:
+        return await self.post("/media/uploads", {"name": name, "size": size, "content_type": content_type})
+
+    async def media_chunk(self, upload_id: str, offset: int, data: bytes) -> httpx.Response:
+        """One chunk, sent as the browser sends it: the raw bytes as the request body."""
+        return await self.http.put(
+            f"{ADMIN_API}/media/uploads/{upload_id}",
+            params={"offset": offset},
+            content=data,
+            headers={"X-CSRF-Token": self.csrf, "Content-Type": "application/octet-stream"},
+        )
+
+    async def upload_media(
+        self, data: bytes, name: str, content_type: str = "video/mp4", *, chunk: int = 64 * 1024
+    ) -> httpx.Response:
+        """The whole flow (start, chunks of `chunk` bytes, complete); returns the completion."""
+        resp = await self.start_media(name, len(data), content_type)
+        assert resp.status_code == 201, resp.text
+        upload_id = resp.json()["upload_id"]
+        for offset in range(0, len(data), chunk):
+            sent = await self.media_chunk(upload_id, offset, data[offset : offset + chunk])
+            assert sent.status_code == 200, sent.text
+            assert sent.json() == {"received": min(offset + chunk, len(data))}
+        return await self.post(f"/media/uploads/{upload_id}/complete")
+
 
 class World:
     """Everything one test needs: a fresh active programme, clients and the factory."""

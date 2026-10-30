@@ -14,7 +14,7 @@ $COMPOSE exec -T db pg_dump -U postgres --format=custom --no-owner --no-privileg
 echo "Archiving media..."
 PROJECT="$($COMPOSE config --format json 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin)["name"])' 2>/dev/null || echo stagevote)"
 docker run --rm -v "${PROJECT}_media:/media:ro" -v "$PWD/backups:/backup" alpine:3.22 \
-  sh -c "tar czf /backup/media-$STAMP.tgz -C /media . && chown $(id -u):$(id -g) /backup/media-$STAMP.tgz"
+  sh -c "tar czf /backup/media-$STAMP.tgz --exclude=./.uploads -C /media . && chown $(id -u):$(id -g) /backup/media-$STAMP.tgz"
 chmod 600 "backups/stagevote-$STAMP.dump" "backups/media-$STAMP.tgz"
 echo "Backup written:"
 ls -l "backups/stagevote-$STAMP.dump" "backups/media-$STAMP.tgz"

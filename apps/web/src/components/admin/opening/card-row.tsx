@@ -6,16 +6,20 @@ import { OpeningIcon, openingIconLabel } from '@/components/participant/opening-
 import { controlClass, InputField } from '../form'
 import { IconButton } from '../primitives'
 import { CircleImageField, OpeningCircle, type ImageRef } from './circle-image-field'
+import { MediaField, type MediaRef } from './media-field'
 
-export type CardDraft = { id: string; title: string; icon: string; image: ImageRef; link: string }
+export type CardDraft = { id: string; title: string; icon: string; image: ImageRef; link: string; media: MediaRef }
 
-/** Field errors of one card, by field name (title, icon, link, image_asset_id). */
-export type CardErrors = Partial<Record<'title' | 'icon' | 'link' | 'image_asset_id', string>>
+/** Field errors of one card, by field name (title, icon, link, image_asset_id, media_asset_id). */
+export type CardErrors = Partial<Record<'title' | 'icon' | 'link' | 'image_asset_id' | 'media_asset_id', string>>
 
 /** Ids of the row's controls, so focus can follow a card that moved. */
 export const cardControlId = (cardId: string, control: 'title' | 'up' | 'down' | 'delete') => `opening-card-${control}-${cardId}`
 
-/** One card of the opening page in the editor: its title, icon or picture, link and place in the order. */
+/**
+ * One card of the opening page in the editor: its title, icon or picture, what its button does
+ * (a picture or video shown full screen, or a link) and its place in the order.
+ */
 export function CardRow({
   card,
   position,
@@ -139,6 +143,7 @@ export function CardRow({
             placeholder="https://… or /path"
             value={card.link}
             maxLength={500}
+            hint="Used only when the card has no image or video."
             error={errors.link}
             onChange={(e) => onChange({ link: e.target.value })}
           />
@@ -152,6 +157,9 @@ export function CardRow({
             error={errors.image_asset_id}
             onChange={(image) => onChange({ image })}
           />
+          <div className="md:col-span-2">
+            <MediaField media={card.media} error={errors.media_asset_id} onChange={(media) => onChange({ media })} />
+          </div>
         </div>
       </div>
     </li>

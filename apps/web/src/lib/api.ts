@@ -38,6 +38,8 @@ export type RequestOptions = {
   method?: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE'
   body?: unknown
   form?: FormData
+  /** Sent as it is (application/octet-stream), e.g. one chunk of a large upload. */
+  raw?: Blob
   timeoutMs?: number
   signal?: AbortSignal
   idempotencyKey?: string
@@ -66,6 +68,9 @@ async function request<T>(scope: Scope, path: string, options: RequestOptions = 
   let body: BodyInit | undefined
   if (options.form) {
     body = options.form
+  } else if (options.raw) {
+    headers['Content-Type'] = 'application/octet-stream'
+    body = options.raw
   } else if (options.body !== undefined) {
     headers['Content-Type'] = 'application/json'
     body = JSON.stringify(options.body)

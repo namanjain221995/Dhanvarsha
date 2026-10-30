@@ -167,6 +167,9 @@ export type ProgrammeSettings = {
 }
 
 export type UploadedAsset = { id: string; url: string; width: number; height: number }
+
+/** POST /admin/media/uploads/{id}/complete: an opening_media asset (videos have width = height = 0). */
+export type UploadedMedia = AdminOpeningMedia & { id: string; width: number; height: number }
 export type AssetKind = 'programme_logo' | 'banner' | 'event_logo' | 'nominee_photo'
 
 // ---- opening page -------------------------------------------------------------
@@ -180,9 +183,16 @@ export type AdminOpeningCard = {
   /** An uploaded picture (kind event_logo) shown in the circle instead of the icon. */
   image_asset_id: string | null
   image_url: string | null
-  /** "", an http(s) URL or a path on this site starting with "/". */
+  /** "", an http(s) URL or a path on this site starting with "/". Used only without media. */
   link: string
+  /** An uploaded picture or video (kind opening_media) the button shows full screen. */
+  media_asset_id: string | null
+  /** What `media_asset_id` points to (GET only; saving sends the id). */
+  media?: AdminOpeningMedia | null
 }
+
+/** A card's uploaded picture or video as the editor shows it. */
+export type AdminOpeningMedia = { url: string; type: 'image' | 'video'; name: string; byte_size: number }
 
 /** The page's content: what is saved, merged over the defaults (or the defaults themselves). */
 export type OpeningContent = {
@@ -190,13 +200,20 @@ export type OpeningContent = {
   year: string
   tagline: string
   button_label: string
+  /** The cards start face down and are scratched open on the screen (the default). */
+  hidden: boolean
+  /** Read-only: raised by POST /admin/opening/hide-all; saving keeps the stored value. */
+  reveal_epoch: number
   /** An uploaded logo (kind programme_logo); null shows the built-in TechSara mark. */
   logo_asset_id: string | null
   logo_url: string | null
   cards: AdminOpeningCard[]
 }
 
-/** GET, PUT and DELETE /admin/opening. `settings_version` is the programme's (optimistic concurrency). */
+/**
+ * GET, PUT and DELETE /admin/opening, and POST /admin/opening/hide-all. `settings_version` is the
+ * programme's (optimistic concurrency); hiding the cards again leaves it unchanged.
+ */
 export type AdminOpening = {
   opening: OpeningContent
   defaults: OpeningContent

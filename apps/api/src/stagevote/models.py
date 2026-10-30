@@ -41,6 +41,8 @@ ANSWER_MAX_LENGTH = 500
 EMAIL_JOB_KINDS = ("invitation", "login_reminder", "password_reset", "test")
 EMAIL_JOB_STATUSES = ("queued", "processing", "accepted", "failed", "unknown", "superseded", "cancelled")
 SCHEDULE_JOB_STATUSES = ("pending", "done", "skipped", "missed", "stale", "failed")
+# opening_media is the image or video an opening-page card shows full screen.
+ASSET_KINDS = ("programme_logo", "banner", "event_logo", "nominee_photo", "opening_media")
 
 
 def _in(column: str, values: tuple[str, ...]) -> str:
@@ -67,9 +69,7 @@ def updated_at_col() -> Mapped[datetime]:
 
 class Asset(Base):
     __tablename__ = "assets"
-    __table_args__ = (
-        CheckConstraint(_in("kind", ("programme_logo", "banner", "event_logo", "nominee_photo"))),
-    )
+    __table_args__ = (CheckConstraint(_in("kind", ASSET_KINDS), name="ck_assets_kind"),)
 
     id: Mapped[uuid.UUID] = uuid_pk()
     kind: Mapped[str] = mapped_column(String(32), nullable=False)
@@ -79,6 +79,8 @@ class Asset(Base):
     height: Mapped[int] = mapped_column(Integer, nullable=False)
     byte_size: Mapped[int] = mapped_column(Integer, nullable=False)
     sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    # The uploaded file's name, shown to the organiser (opening_media only).
+    original_name: Mapped[str | None] = mapped_column(String(255))
     created_by_admin_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("admin_users.id", ondelete="SET NULL")
     )

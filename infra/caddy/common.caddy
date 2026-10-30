@@ -27,12 +27,32 @@ handle @socket {
 	}
 }
 
+# Uploaded files only: random names written by the API, never a page. The sandbox CSP keeps a
+# file from running as a document even if a browser were to render it as one. file_server
+# answers Range requests, which video seeking needs; .uploads/ (unfinished uploads) never
+# matches these names.
 handle_path /media/* {
 	root * /srv/media
+	header {
+		Content-Security-Policy "default-src 'none'; sandbox"
+		X-Content-Type-Options nosniff
+	}
 	@image path_regexp ^/[a-f0-9]{32}\.webp$
 	handle @image {
 		header Cache-Control "public, max-age=31536000, immutable"
 		header Content-Type image/webp
+		file_server
+	}
+	@mp4 path_regexp ^/[a-f0-9]{32}\.mp4$
+	handle @mp4 {
+		header Cache-Control "public, max-age=31536000, immutable"
+		header Content-Type video/mp4
+		file_server
+	}
+	@webm path_regexp ^/[a-f0-9]{32}\.webm$
+	handle @webm {
+		header Cache-Control "public, max-age=31536000, immutable"
+		header Content-Type video/webm
 		file_server
 	}
 	respond 404

@@ -17,6 +17,7 @@ from .api import (
     admin_email,
     admin_events,
     admin_live,
+    admin_media,
     admin_participants,
     admin_results,
     opening,
@@ -34,11 +35,14 @@ from .errors import (
 from .live import routes as live_routes
 from .live.hub import LiveHub, set_hub
 from .logging import configure_logging, get_logger, request_id_var
+from .services.media import CHUNK_SIZE
 
 log = get_logger("stagevote.http")
 _REQUEST_ID = re.compile(r"^[A-Za-z0-9._-]{8,64}$")
 MAX_JSON_BYTES = 2_000_000
 MAX_UPLOAD_BYTES_SLACK = 64 * 1024
+# PUT /api/v1/admin/media/uploads/{id}: one chunk of an opening-page image or video.
+_MEDIA_CHUNK_PATH = re.compile(r"/api/v1/admin/media/uploads/[^/]+")
 
 
 def create_app(*, start_hub: bool = True) -> FastAPI:
@@ -83,11 +87,13 @@ def create_app(*, start_hub: bool = True) -> FastAPI:
         started = time.perf_counter()
         try:
             length = int(request.headers.get("content-length") or 0)
-            limit = (
-                settings.max_upload_bytes + MAX_UPLOAD_BYTES_SLACK
-                if request.url.path.endswith("/assets")
-                else MAX_JSON_BYTES
-            )
+            path = request.url.path
+            if path.endswith("/assets"):
+                limit = settings.max_upload_bytes + MAX_UPLOAD_BYTES_SLACK
+            elif request.method == "PUT" and _MEDIA_CHUNK_PATH.fullmatch(path):
+                limit = CHUNK_SIZE + MAX_UPLOAD_BYTES_SLACK
+            else:
+                limit = MAX_JSON_BYTES
             if length > limit:
                 response: Response = await app_error_handler(
                     request, AppError("PAYLOAD_TOO_LARGE", "The request is too large.", 413)
@@ -126,6 +132,7 @@ def create_app(*, start_hub: bool = True) -> FastAPI:
     app.include_router(admin_participants.router)
     app.include_router(admin_results.router)
     app.include_router(admin_email.router)
+    app.include_router(admin_media.admin)
     app.include_router(opening.router)
     app.include_router(opening.admin)
     app.include_router(live_routes.router)

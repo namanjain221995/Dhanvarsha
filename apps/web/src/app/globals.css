@@ -899,32 +899,32 @@ html:has([data-scene='opening']) body {
   }
 }
 /*
- * Projectors and LED walls (1920 × 1080, 1920 × 872, 3840 × 1745…): seven columns, so 13 cards
- * make two rows, and one unit (--u) for every size. The page needs about 50 units of height and
- * 100 of width, so --u is the smaller of 1vw and 1/54 of the height: it always fits.
+ * Landscape screens (laptops, projectors, the LED wall; in full screen or not): the whole page
+ * fits on one screen. opening-page.tsx picks the column count that gives the biggest cards for
+ * the number of cards and this screen, and sets --fit-cols and --fit-rows. One unit (--u) sizes
+ * everything: the smaller of what the width and the height allow (the constants match FIT_* in
+ * opening-page.tsx).
  */
-@media (min-width: 1600px) and (min-aspect-ratio: 3/2), (min-width: 1200px) and (min-aspect-ratio: 2/1) {
-  [data-scene='opening'] {
-    --u: min(1vw, 1.85vh);
-    --pad-x: calc(2.5 * var(--u));
-    --pad-top: calc(1.8 * var(--u));
-    --pad-bottom: calc(1.8 * var(--u));
-    --emblem: calc(6.2 * var(--u));
-    --emblem-gap: calc(0.7 * var(--u));
-    --title: calc(4.2 * var(--u));
-    --year: calc(1.35 * var(--u));
-    --rule: calc(6 * var(--u));
-    --tagline: calc(1.1 * var(--u));
-    --tagline-lines: 2;
-    --head-gap: calc(2 * var(--u));
-    --cols: 7;
-    --gap: var(--u);
-    --card-pad: calc(1.25 * var(--u)) calc(0.9 * var(--u)) calc(1.2 * var(--u));
-    --card-radius: var(--u);
-    --disc: calc(4.6 * var(--u));
-    --card-title: calc(1.02 * var(--u));
-    --play: calc(0.76 * var(--u));
-  }
+[data-scene='opening'][data-fit] {
+  --u: min(calc(100vw / (4 + var(--fit-cols) * 13.7)), calc(100dvh / (24 + var(--fit-rows) * 15.5)));
+  --pad-x: calc(2.5 * var(--u));
+  --pad-top: calc(1.8 * var(--u));
+  --pad-bottom: calc(1.8 * var(--u));
+  --emblem: calc(6.2 * var(--u));
+  --emblem-gap: calc(0.7 * var(--u));
+  --title: calc(4.2 * var(--u));
+  --year: calc(1.35 * var(--u));
+  --rule: calc(6 * var(--u));
+  --tagline: calc(1.1 * var(--u));
+  --tagline-lines: 2;
+  --head-gap: calc(2 * var(--u));
+  --cols: var(--fit-cols);
+  --gap: var(--u);
+  --card-pad: calc(1.25 * var(--u)) calc(0.9 * var(--u)) calc(1.2 * var(--u));
+  --card-radius: var(--u);
+  --disc: calc(4.6 * var(--u));
+  --card-title: calc(1.02 * var(--u));
+  --play: calc(0.76 * var(--u));
 }
 /* On big screens the coins and stars grow with the page instead of looking like specks. */
 @media (min-width: 1600px) and (min-height: 760px) {
@@ -1091,7 +1091,7 @@ html:has([data-scene='opening']) body {
   height: 1px;
   background: linear-gradient(90deg, rgb(255 241 181 / 0), #fff1b5, rgb(255 241 181 / 0));
 }
-.opening-card:has(> a.opening-play:hover) {
+.opening-card:has(> :is(a, button).opening-play:hover) {
   border-color: rgb(246 210 107 / 0.75);
 }
 /* The icon: a gold ring around a navy disc. */
@@ -1204,16 +1204,16 @@ html:has([data-scene='opening']) body {
   cursor: default;
   user-select: none;
 }
-a.opening-play {
+:is(a, button).opening-play {
   cursor: pointer;
   transition:
     filter 150ms,
     transform 150ms;
 }
-a.opening-play:hover {
+:is(a, button).opening-play:hover {
   filter: brightness(1.07);
 }
-a.opening-play:active {
+:is(a, button).opening-play:active {
   transform: translateY(1px);
 }
 .opening-play-chevron {
@@ -1221,6 +1221,631 @@ a.opening-play:active {
   height: 1.3em;
   flex-shrink: 0;
   margin-right: -0.2em;
+}
+
+/*
+ * The game-show reveal on the opening page (opening-page.tsx, opening-card-face.tsx,
+ * reveal-stage.tsx, scratch-foil.tsx): face-down cards in gold foil, the big card in the middle
+ * of the screen, its scratch foil and the reveal. Everything that moves animates transform or
+ * opacity only. Sizes inside a card follow the card's width (container units), so the small
+ * card in the grid and the big one are the same picture at two sizes.
+ */
+
+/* A face-down card keeps a revealed card's size: the face's parts are there, invisible. */
+.opening-ghost {
+  visibility: hidden;
+}
+.opening-card[data-face] {
+  transition:
+    border-color 150ms,
+    translate 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.opening-card[data-face='down'] {
+  border-color: rgb(255 226 140 / 0.72);
+  box-shadow:
+    inset 0 1px 0 rgb(255 241 181 / 0.16),
+    0 1.4em 2.6em -1.4em rgb(0 0 0 / 0.85),
+    0 0 2.6em -0.9em rgb(242 193 78 / 0.5);
+}
+@media (hover: hover) {
+  .opening-card[data-face]:hover {
+    translate: 0 -0.35em;
+    border-color: rgb(255 236 170 / 0.95);
+  }
+}
+/* Out in the middle of the screen: its place stays, empty. */
+.opening-card[data-away] {
+  visibility: hidden;
+}
+/* The whole card is one button. A revealed face's link or media button stays clickable on top. */
+.opening-card-hit {
+  position: absolute;
+  inset: -1px;
+  z-index: 0;
+  border-radius: var(--card-radius);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  /* Focus returns here the moment the card's place shows again: its visibility must not lag
+     behind in a transition (the reduced-motion rule gives every property a tiny one). */
+  transition-property: none;
+}
+.opening-card-hit:focus-visible {
+  outline: 3px solid #f2c14e;
+  outline-offset: 3px;
+}
+.opening-card[data-face] > .opening-icon,
+.opening-card[data-face] > .opening-card-head,
+.opening-card[data-face] > .opening-play {
+  position: relative;
+  z-index: 1;
+  pointer-events: none;
+}
+.opening-card[data-face] > :is(a, button).opening-play {
+  pointer-events: auto;
+}
+
+/* ---- the back: gold foil and the TechSara mark ----------------------------------------- */
+.reveal-back {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  /* Its children size themselves in --b: the card's width, or less on a card wider than tall. */
+  --b: min(1cqw, 0.86cqh);
+  container-type: size;
+  border-radius: calc(var(--card-radius) - 1px);
+  pointer-events: none;
+  user-select: none;
+  background:
+    radial-gradient(120% 70% at 28% 0%, rgb(255 251 230 / 0.6) 0%, rgb(255 251 230 / 0) 60%),
+    radial-gradient(90% 70% at 82% 108%, rgb(110 66 6 / 0.5) 0%, rgb(110 66 6 / 0) 72%),
+    repeating-linear-gradient(118deg, rgb(255 255 255 / 0.07) 0 1px, rgb(255 255 255 / 0) 1px 4px),
+    linear-gradient(135deg, #b47c18 0%, #eebf4c 18%, #fff0b0 33%, #dcaa3e 48%, #b98019 62%, #f5d06a 78%, #fff3c4 90%, #c48b22 100%);
+  box-shadow:
+    inset 0 0 0 1px rgb(255 244 205 / 0.55),
+    inset 0 -1.5em 2.5em -1.5em rgb(96 58 6 / 0.5);
+}
+.reveal-back-frame {
+  position: absolute;
+  inset: 4.5cqw;
+  border: max(1px, 0.55cqw) solid rgb(104 64 6 / 0.5);
+  border-radius: 3.5cqw;
+  box-shadow:
+    inset 0 0 0 max(1px, 0.4cqw) rgb(255 246 214 / 0.4),
+    0 0 0 max(1px, 0.4cqw) rgb(255 246 214 / 0.35);
+}
+/* A small gold diamond in the middle of the frame's top and bottom. */
+.reveal-back-frame::before,
+.reveal-back-frame::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  width: 3.2cqw;
+  height: 3.2cqw;
+  margin-left: -1.6cqw;
+  border: max(1px, 0.4cqw) solid rgb(104 64 6 / 0.6);
+  background: linear-gradient(135deg, #fff6d6, #d9a43a 60%, #9a6610);
+  transform: rotate(45deg);
+}
+.reveal-back-frame::before {
+  top: -1.9cqw;
+}
+.reveal-back-frame::after {
+  bottom: -1.9cqw;
+}
+/* Light sweeping across the foil now and then, card after card along the grid. */
+.reveal-back-shine {
+  position: absolute;
+  inset: -20% -80%;
+  background: linear-gradient(
+    105deg,
+    rgb(255 255 255 / 0) 42%,
+    rgb(255 255 255 / 0.16) 46%,
+    rgb(255 252 236 / 0.72) 50%,
+    rgb(255 255 255 / 0.16) 54%,
+    rgb(255 255 255 / 0) 58%
+  );
+  transform: translateX(-60%);
+  animation: sv-reveal-shine 7s cubic-bezier(0.45, 0.05, 0.4, 1) var(--shine-delay, 0s) infinite;
+}
+@keyframes sv-reveal-shine {
+  0% {
+    transform: translateX(-60%);
+  }
+  30%,
+  100% {
+    transform: translateX(60%);
+  }
+}
+.reveal-twinkle {
+  position: absolute;
+  width: calc(11 * var(--b) * var(--twinkle-size, 1));
+  height: calc(11 * var(--b) * var(--twinkle-size, 1));
+  margin: calc(-5.5 * var(--b) * var(--twinkle-size, 1)) 0 0 calc(-5.5 * var(--b) * var(--twinkle-size, 1));
+  opacity: 0;
+  animation: sv-star-flare var(--cycle, 4s) ease-in-out var(--delay, 0s) infinite;
+}
+.reveal-twinkle::before {
+  content: '';
+  position: absolute;
+  inset: -30%;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgb(255 255 255 / 0.8) 0%, rgb(255 246 210 / 0.3) 24%, rgb(255 246 210 / 0) 55%);
+}
+.reveal-twinkle::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(closest-side, #fff 0%, #fffdf3 30%, rgb(255 248 220 / 0.9) 55%, rgb(255 248 220 / 0) 100%);
+  clip-path: polygon(50% 0, 54% 46%, 100% 50%, 54% 54%, 50% 100%, 46% 54%, 0 50%, 46% 46%);
+}
+/* The TechSara mark in a gold ring, on the night blue of the stage. */
+.reveal-back-mark {
+  position: relative;
+  display: flex;
+  width: calc(46 * var(--b));
+  height: calc(46 * var(--b));
+  padding: calc(1.6 * var(--b));
+  border-radius: 50%;
+  background: conic-gradient(from 210deg, #fff0b8, #dba62d, #8a6410, #f4cb52, #fff0b8);
+  box-shadow:
+    0 0 0 max(1px, calc(0.5 * var(--b))) rgb(104 64 6 / 0.5),
+    0 calc(1.6 * var(--b)) calc(3.2 * var(--b)) calc(-1 * var(--b)) rgb(74 44 4 / 0.75);
+}
+.reveal-back-disc {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: radial-gradient(circle at 50% 32%, #1d3c9e 0%, #0c1d5e 58%, #060f36 100%);
+  box-shadow:
+    inset 0 0 0 max(1px, 0.3cqw) rgb(242 193 78 / 0.35),
+    inset 0 -1cqw 2cqw rgb(0 0 0 / 0.4);
+}
+.reveal-back-disc img {
+  width: 80%;
+  height: 80%;
+  object-fit: contain;
+  -webkit-user-drag: none;
+}
+/* ---- the big card --------------------------------------------------------------------- */
+.reveal-dialog {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  overscroll-behavior: contain;
+  background: transparent;
+  color: #eef0ff;
+}
+.reveal-dialog[open] {
+  display: grid;
+  place-items: center;
+}
+.reveal-dialog::backdrop {
+  background: transparent;
+}
+.reveal-backdrop {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(60% 55% at 50% 46%, rgb(22 44 130 / 0.45) 0%, rgb(22 44 130 / 0) 100%),
+    rgb(3 8 30 / 0.76);
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+}
+.reveal-stage {
+  position: relative;
+  z-index: 1;
+}
+/* Gold light behind the card the moment it is revealed. */
+.reveal-aura {
+  position: absolute;
+  inset: -24%;
+  border-radius: 50%;
+  /* The card hides the middle: the light shows as a halo just outside its edges. */
+  background: radial-gradient(closest-side, rgb(255 236 170 / 0.95) 58%, rgb(242 193 78 / 0.4) 78%, rgb(242 193 78 / 0) 100%);
+  opacity: 0;
+  pointer-events: none;
+}
+.reveal-card {
+  --card-radius: var(--big-radius, 1.5rem);
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  container-type: size;
+  border: 1px solid rgb(255 226 140 / 0.75);
+  border-radius: var(--card-radius);
+  background:
+    linear-gradient(180deg, rgb(255 255 255 / 0.08) 0%, rgb(255 255 255 / 0) 34%),
+    linear-gradient(180deg, #172c78 0%, #08113a 100%);
+  box-shadow:
+    inset 0 1px 0 rgb(255 241 181 / 0.2),
+    0 2.5rem 5rem -1.5rem rgb(0 0 0 / 0.9),
+    0 0 4.5rem -1rem rgb(242 193 78 / 0.5);
+  transform-origin: 50% 50%;
+  will-change: transform;
+}
+/* The face, laid out like a grid card's in units of the big card (k: the card's width, or
+   less when the card is wider than the face needs). */
+.reveal-face {
+  --k: min(1cqw, 0.88cqh);
+  --disc: calc(36 * var(--k));
+  --play: calc(5.6 * var(--k));
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: calc(9 * var(--k)) calc(7 * var(--k)) calc(8.5 * var(--k));
+  font-size: calc(7.6 * var(--k));
+  text-align: center;
+}
+.reveal-face .opening-card-title {
+  overflow-wrap: break-word;
+}
+/* Focus lands on the title after a reveal so screen readers read it; it is not a control. */
+.reveal-face .opening-card-title:focus {
+  outline: none;
+}
+.reveal-foil,
+.reveal-flight {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  border-radius: calc(var(--card-radius) - 1px);
+}
+.reveal-flight {
+  pointer-events: none;
+}
+.reveal-foil-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  font-family: var(--font-cinzel), 'Times New Roman', serif;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  /* A small gold coin to scratch with. */
+  cursor:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='12.5' fill='%23e3ad35' stroke='%237d5208' stroke-width='2'/%3E%3Ccircle cx='16' cy='16' r='8.5' fill='none' stroke='%23fff2bf' stroke-width='1.4'/%3E%3Cellipse cx='12' cy='10.5' rx='4' ry='1.6' fill='%23fff' opacity='.6' transform='rotate(-30 12 10.5)'/%3E%3C/svg%3E")
+      16 16,
+    crosshair;
+}
+/* The hint: a coin rubbing to and fro over the foil until the first scratch. */
+.reveal-hint {
+  position: absolute;
+  left: 50%;
+  top: 74%;
+  width: 18cqw;
+  height: 18cqw;
+  margin: -9cqw 0 0 -9cqw;
+  pointer-events: none;
+  transition: opacity 250ms ease-out;
+}
+.reveal-hint[data-gone] {
+  opacity: 0;
+}
+/* The track the coin leaves. */
+.reveal-hint::before {
+  content: '';
+  position: absolute;
+  left: -40%;
+  right: -40%;
+  top: 46%;
+  height: 34%;
+  border-bottom: max(2px, 0.9cqw) solid rgb(27 31 77 / 0.28);
+  border-radius: 0 0 50% 50%;
+  transform: rotate(-8deg);
+}
+.reveal-hint-coin {
+  position: absolute;
+  inset: 0;
+  filter: drop-shadow(0 1.2cqw 1.4cqw rgb(60 36 4 / 0.6));
+  animation: sv-reveal-rub 1.5s ease-in-out infinite;
+}
+.reveal-hint-coin svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+@keyframes sv-reveal-rub {
+  0%,
+  100% {
+    transform: translate(-38%, 4%) rotate(-24deg);
+  }
+  50% {
+    transform: translate(38%, -6%) rotate(16deg);
+  }
+}
+.reveal-actions {
+  position: absolute;
+  top: calc(100% + clamp(0.6rem, 2.4vh, 1.75rem));
+  left: 50%;
+  display: flex;
+  min-width: max-content;
+  justify-content: center;
+  translate: -50% 0;
+}
+/* "Reveal": a small gold text button, for the keyboard and when nobody wants to scratch. */
+.reveal-button {
+  display: inline-flex;
+  min-height: 2.75rem;
+  align-items: center;
+  padding: 0.35em 1em 0.35em 1.25em;
+  border-radius: 999px;
+  color: #f6d26b;
+  font-family: var(--font-cinzel), 'Times New Roman', serif;
+  font-size: clamp(0.9rem, 0.55rem + 0.6vw, 2.4rem);
+  font-weight: 700;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  text-decoration: underline;
+  text-decoration-color: rgb(246 210 107 / 0.45);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.4em;
+  text-shadow: 0 1px 10px rgb(5 12 44 / 0.9);
+  transition:
+    color 150ms,
+    background-color 150ms;
+}
+.reveal-button:hover {
+  color: #fff1b5;
+  background: rgb(242 193 78 / 0.1);
+  text-decoration-color: #fff1b5;
+}
+.reveal-close {
+  position: absolute;
+  top: max(1rem, env(safe-area-inset-top));
+  right: max(1rem, env(safe-area-inset-right));
+  z-index: 2;
+  display: flex;
+  width: clamp(2.75rem, 2.6vw, 6rem);
+  height: clamp(2.75rem, 2.6vw, 6rem);
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgb(242 193 78 / 0.55);
+  border-radius: 50%;
+  background: rgb(8 17 58 / 0.72);
+  color: #f6d26b;
+  box-shadow: 0 0.6rem 1.6rem -0.6rem rgb(0 0 0 / 0.8);
+  transition:
+    background-color 150ms,
+    border-color 150ms;
+}
+.reveal-close:hover {
+  border-color: #f6d26b;
+  background: rgb(21 40 112 / 0.92);
+}
+.reveal-close svg {
+  width: 48%;
+  height: 48%;
+}
+.reveal-burst {
+  position: fixed;
+  inset: 0;
+  z-index: 3;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .reveal-back-shine,
+  .reveal-twinkle {
+    display: none;
+  }
+  .reveal-hint-coin {
+    animation: none !important;
+    transform: rotate(-16deg);
+  }
+  .opening-card[data-face]:hover {
+    translate: none;
+  }
+}
+
+/*
+ * Presenting the opening page (fullscreen.tsx, media-viewer.tsx): the small full-screen button
+ * in the corner, and the viewer that shows a card's picture or video on black. In full screen,
+ * after a moment without the pointer moving (data-idle), the controls fade and the cursor hides.
+ */
+
+/* A small round button: a gold ring on translucent navy, quiet on a projector. */
+.opening-round {
+  display: flex;
+  width: clamp(2.25rem, 2.1vw, 3.75rem);
+  height: clamp(2.25rem, 2.1vw, 3.75rem);
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgb(242 193 78 / 0.55);
+  border-radius: 50%;
+  background: rgb(8 17 58 / 0.55);
+  color: #f6d26b;
+  box-shadow: 0 0.5rem 1.4rem -0.6rem rgb(0 0 0 / 0.8);
+  cursor: pointer;
+  transition:
+    opacity 400ms ease,
+    background-color 150ms,
+    border-color 150ms;
+}
+.opening-round:hover {
+  border-color: #f6d26b;
+  background: rgb(21 40 112 / 0.88);
+}
+.opening-round svg {
+  width: 46%;
+  height: 46%;
+}
+.opening-fullscreen {
+  position: fixed;
+  top: max(0.75rem, env(safe-area-inset-top));
+  right: max(0.75rem, env(safe-area-inset-right));
+  z-index: 20;
+}
+[data-scene='opening'][data-fullscreen][data-idle] .opening-fullscreen:not(:focus-visible) {
+  opacity: 0;
+  pointer-events: none;
+}
+/* Never outside full screen: a laptop's cursor must not vanish under someone's hand. */
+[data-scene='opening'][data-fullscreen][data-idle],
+[data-scene='opening'][data-fullscreen][data-idle] * {
+  cursor: none !important;
+}
+
+/* ---- the media viewer ------------------------------------------------------------------ */
+.media-viewer {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  overscroll-behavior: contain;
+  background: #000;
+  color: #eef0ff;
+}
+.media-viewer::backdrop {
+  background: #000;
+}
+/* The picture or video, the spinner, the message and the play button share the middle. */
+.media-viewer-stage {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  container-type: size;
+}
+.media-viewer-stage > * {
+  grid-area: 1 / 1;
+}
+/* As large as the screen allows. Until its shape is known it fills the screen (contained);
+   then it takes exactly its own box, so the black around it is the stage and closes. */
+.media-viewer-media {
+  display: block;
+  width: 100cqw;
+  height: 100cqh;
+  max-width: 100cqw;
+  max-height: 100cqh;
+  object-fit: contain;
+  background: transparent;
+}
+.media-viewer-media[data-fit] {
+  width: min(100cqw, calc(100cqh * var(--ratio)));
+  height: auto;
+  aspect-ratio: var(--ratio);
+}
+.media-viewer-media:focus-visible {
+  outline: 2px solid rgb(242 193 78 / 0.7);
+  outline-offset: -2px;
+}
+.media-viewer[data-failed] .media-viewer-media {
+  visibility: hidden;
+}
+.media-viewer-chrome {
+  transition: opacity 400ms ease;
+}
+/* Like the full-screen button: only in full screen (a phone without it keeps its close button). */
+[data-fullscreen] .media-viewer[data-idle]:not([data-attention]) .media-viewer-chrome:not(:focus-visible) {
+  opacity: 0;
+}
+[data-fullscreen] .media-viewer[data-idle]:not([data-attention]) .media-viewer-close:not(:focus-visible) {
+  pointer-events: none;
+}
+[data-fullscreen] .media-viewer[data-idle]:not([data-attention]),
+[data-fullscreen] .media-viewer[data-idle]:not([data-attention]) * {
+  cursor: none !important;
+}
+.media-viewer-close {
+  position: absolute;
+  top: max(0.75rem, env(safe-area-inset-top));
+  right: max(0.75rem, env(safe-area-inset-right));
+  z-index: 2;
+}
+/* The card's title, small, bottom left; above the video's own controls bar. */
+.media-viewer-title {
+  position: absolute;
+  left: max(1rem, env(safe-area-inset-left));
+  bottom: max(0.9rem, env(safe-area-inset-bottom));
+  z-index: 2;
+  max-width: min(60%, 42rem);
+  overflow: hidden;
+  font-family: var(--font-cinzel), 'Times New Roman', serif;
+  font-size: clamp(0.8rem, 0.55rem + 0.55vw, 1.6rem);
+  font-weight: 700;
+  line-height: 1.3;
+  letter-spacing: 0.06em;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+  color: #f6d26b;
+  text-shadow: 0 1px 8px rgb(0 0 0 / 0.95);
+  pointer-events: none;
+}
+.media-viewer[data-type='video'] .media-viewer-title {
+  bottom: calc(max(0.9rem, env(safe-area-inset-bottom)) + 4.5rem);
+}
+/* A gold ring turning while the video loads (a still ring with reduced motion). */
+.media-viewer-spinner {
+  width: clamp(2.75rem, 3.4vw, 5.5rem);
+  height: clamp(2.75rem, 3.4vw, 5.5rem);
+  border: max(3px, 0.22vw) solid rgb(242 193 78 / 0.2);
+  border-top-color: #f6d26b;
+  border-radius: 50%;
+  pointer-events: none;
+  animation: sv-media-spin 0.9s linear infinite;
+}
+@keyframes sv-media-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.media-viewer-error {
+  max-width: 34rem;
+  padding: 0 1.5rem;
+  font-family: var(--font-cinzel), 'Times New Roman', serif;
+  font-size: clamp(1rem, 0.75rem + 0.7vw, 2.2rem);
+  font-weight: 700;
+  line-height: 1.35;
+  letter-spacing: 0.03em;
+  text-align: center;
+  color: #f6d26b;
+}
+/* Only when the browser refused to start the video by itself. */
+.media-viewer-play {
+  display: flex;
+  width: clamp(4rem, 6vw, 9rem);
+  height: clamp(4rem, 6vw, 9rem);
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: linear-gradient(180deg, #ffe9a8 0%, #f4cb52 40%, #dba62d 74%, #bb841b 100%);
+  color: #1b1f4d;
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.6),
+    0 1rem 2.5rem -1rem rgb(242 193 78 / 0.7);
+  cursor: pointer;
+}
+.media-viewer-play svg {
+  width: 42%;
+  height: 42%;
+  margin-left: 8%;
+  fill: currentColor;
 }
 
 @theme inline {

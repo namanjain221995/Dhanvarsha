@@ -1,6 +1,6 @@
 'use client'
 
-import { ExternalLink, Plus, RotateCcw, Save } from 'lucide-react'
+import { EyeOff, ExternalLink, Plus, RotateCcw, Save } from 'lucide-react'
 import { useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Notice } from '@/components/ui/misc'
@@ -8,34 +8,51 @@ import { newIdempotencyKey } from '@/lib/api'
 import { describeError, errorCode, isApiError, plainValidation } from '@/lib/admin/errors'
 import { adminAction, useAdminQuery } from '@/lib/admin/query'
 import { useAdminSignal } from '@/lib/admin/session'
-import type { AdminOpening, OpeningContent } from '@/lib/admin/types'
+import type { AdminOpening, AdminOpeningCard, OpeningContent } from '@/lib/admin/types'
 import { ConfirmDialog } from '../confirm'
-import { InputField, TextAreaField } from '../form'
+import { InputField, SwitchField, TextAreaField } from '../form'
 import { FlashRegion, LoadError, MiniButton, PageHeader, PageSkeleton, Panel, useFlash } from '../primitives'
 import { CardRow, cardControlId, type CardDraft, type CardErrors } from './card-row'
 import { CircleImageField, type ImageRef } from './circle-image-field'
+import type { MediaRef } from './media-field'
 
 const PATH = '/admin/opening'
 const MAX_CARDS = 40
 /** Two rows of seven: what fits on one screen of a projector or the LED wall. */
 const ONE_SCREEN = 14
 const STALE_MESSAGE = 'Someone else changed this page. Reload to see the latest version.'
+/** How often the opening page asks for changes (components/participant/opening-page.tsx). */
+const REFRESH_SECONDS = 10
 
 type Draft = {
   title: string
   year: string
   tagline: string
   button_label: string
+  hidden: boolean
   logo: ImageRef
   cards: CardDraft[]
 }
 
-function draftFrom(content: OpeningContent): Draft {
+/**
+ * A card's picture or video as the editor shows it. Only GET carries its name and size; after a
+ * save the editor keeps what it already knew about the same file.
+ */
+function mediaOf(card: AdminOpeningCard, known?: Draft): MediaRef {
+  const id = card.media_asset_id ?? null
+  if (!id) return null
+  if (card.media) return { id, ...card.media }
+  const before = known?.cards.find((draft) => draft.media?.id === id)?.media
+  return before ?? { id, url: '', type: 'image', name: '', byte_size: 0 }
+}
+
+function draftFrom(content: OpeningContent, known?: Draft): Draft {
   return {
     title: content.title,
     year: content.year,
     tagline: content.tagline,
     button_label: content.button_label,
+    hidden: content.hidden,
     logo: { id: content.logo_asset_id ?? null, url: content.logo_url ?? null },
     cards: content.cards.map((card) => ({
       id: card.id,
@@ -43,6 +60,7 @@ function draftFrom(content: OpeningContent): Draft {
       icon: card.icon,
       image: { id: card.image_asset_id ?? null, url: card.image_url ?? null },
       link: card.link ?? '',
+      media: mediaOf(card, known),
     })),
   }
 }
@@ -54,6 +72,7 @@ function contentOf(draft: Draft) {
     year: draft.year.trim(),
     tagline: draft.tagline.trim(),
     button_label: draft.button_label.trim(),
+    hidden: draft.hidden,
     logo_asset_id: draft.logo.id,
     cards: draft.cards.map((card) => ({
       id: card.id,
@@ -61,6 +80,7 @@ function contentOf(draft: Draft) {
       icon: card.icon,
       image_asset_id: card.image.id,
       link: card.link.trim(),
+      media_asset_id: card.media?.id ?? null,
     })),
   }
 }
@@ -130,6 +150,9 @@ export function OpeningEditorPage() {
   const [confirmReset, setConfirmReset] = useState(false)
   const [resetting, setResetting] = useState(false)
   const [resetError, setResetError] = useState<string | null>(null)
+  const [confirmHide, setConfirmHide] = useState(false)
+  const [hiding, setHiding] = useState(false)
+  const [hideError, setHideError] = useState<string | null>(null)
 
   const server = query.data
   const dirty = draft !== null && base !== null && !sameContent(draft, draftFrom(base.opening))
@@ -178,7 +201,8 @@ export function OpeningEditorPage() {
 
   const updateCard = (cardId: string, patch: Partial<CardDraft>) => {
     setDraft((prev) => (prev ? { ...prev, cards: prev.cards.map((card) => (card.id === cardId ? { ...card, ...patch } : card)) } : prev))
-    for (const field of Object.keys(patch)) clearError(cardKey(cardId, field === 'image' ? 'image_asset_id' : field))
+    const errorField = (field: string) => (field === 'image' ? 'image_asset_id' : field === 'media' ? 'media_asset_id' : field)
+    for (const field of Object.keys(patch)) clearError(cardKey(cardId, errorField(field)))
   }
 
   const moveCard = (cardId: string, direction: -1 | 1) => {
@@ -204,7 +228,7 @@ export function OpeningEditorPage() {
   }
 
   const addCard = () => {
-    const card: CardDraft = { id: newCardId(), title: '', icon: 'sparkles', image: { id: null, url: null }, link: '' }
+    const card: CardDraft = { id: newCardId(), title: '', icon: 'sparkles', image: { id: null, url: null }, link: '', media: null }
     setDraft({ ...draft, cards: [...draft.cards, card] })
     focusSoon(cardControlId(card.id, 'title'))
   }
@@ -212,7 +236,7 @@ export function OpeningEditorPage() {
   const adopt = (updated: AdminOpening) => {
     query.mutate(() => updated)
     setBase(updated)
-    setDraft(draftFrom(updated.opening))
+    setDraft(draftFrom(updated.opening, draft))
     setErrors({})
     setStale(false)
   }
@@ -232,7 +256,7 @@ export function OpeningEditorPage() {
         body: { settings_version: base.settings_version, ...contentOf(draft) },
       })
       adopt(updated)
-      flash.show({ tone: 'success', message: 'Saved. Screens showing the opening page update within 20 seconds.' })
+      flash.show({ tone: 'success', message: `Saved. Screens showing the opening page update within ${REFRESH_SECONDS} seconds.` })
     } catch (error) {
       if (errorCode(error) === 'STALE_SETTINGS') {
         setStale(true)
@@ -272,6 +296,28 @@ export function OpeningEditorPage() {
     }
   }
 
+  /**
+   * Every screen turns all cards face down again. The page's version does not change, so unsaved
+   * edits here stay saveable; the fresh page is adopted (above) only when there are none.
+   */
+  const hideAll = async () => {
+    setHiding(true)
+    setHideError(null)
+    try {
+      const updated = await adminAction<AdminOpening>(`${PATH}/hide-all`, { method: 'POST' })
+      query.mutate(() => updated)
+      setConfirmHide(false)
+      flash.show({
+        tone: 'success',
+        message: `All cards are hidden again. Screens showing the opening page follow within ${REFRESH_SECONDS} seconds.`,
+      })
+    } catch (error) {
+      setHideError(describeError(error))
+    } finally {
+      setHiding(false)
+    }
+  }
+
   /** Back to the saved page; after a refused save, fetch the latest and adopt it when it lands. */
   const discard = () => {
     const fresh = server ?? base
@@ -288,6 +334,7 @@ export function OpeningEditorPage() {
     icon: errors[cardKey(cardId, 'icon')],
     link: errors[cardKey(cardId, 'link')],
     image_asset_id: errors[cardKey(cardId, 'image_asset_id')],
+    media_asset_id: errors[cardKey(cardId, 'media_asset_id')],
   })
   const count = draft.cards.length
 
@@ -350,6 +397,41 @@ export function OpeningEditorPage() {
           </Notice>
         ) : null}
 
+        <Panel
+          className="mt-6"
+          title="Game-show reveal"
+          description="The cards lie face down, each with its number, until someone scratches one open on the screen."
+        >
+          <div className="flex flex-wrap items-end justify-between gap-x-8 gap-y-2">
+            <div className="min-w-0 max-w-2xl flex-1 basis-80">
+              <SwitchField
+                label="Hide cards until they are revealed (scratch card)"
+                description="Pick a number, then scratch that card on the projector or a phone to reveal it. Revealed cards stay revealed on that screen. Off shows every card as it is."
+                checked={draft.hidden}
+                onChange={(hidden) => update('hidden', hidden)}
+              />
+            </div>
+            <div className="py-3">
+              <MiniButton
+                onClick={() => {
+                  setHideError(null)
+                  setConfirmHide(true)
+                }}
+                disabled={!base.opening.hidden}
+                title={base.opening.hidden ? undefined : 'The saved page shows its cards. Turn hiding on and save first.'}
+              >
+                <EyeOff aria-hidden className="size-4" />
+                Hide all cards again
+              </MiniButton>
+              <p className="mt-1 max-w-xs text-sm text-plum-soft">
+                {base.opening.hidden
+                  ? 'For a new round: every screen turns all its cards face down again.'
+                  : 'Available while the saved page hides its cards.'}
+              </p>
+            </div>
+          </div>
+        </Panel>
+
         <div className="mt-6 grid gap-5 xl:grid-cols-[minmax(0,22rem)_minmax(0,1fr)] xl:items-start">
           <Panel title="Header" description="Above the cards, in the middle of the screen.">
             <div className="space-y-5">
@@ -411,8 +493,8 @@ export function OpeningEditorPage() {
             description={
               <>
                 Shown in this order, {count === 1 ? '1 card' : `${count} cards`}. Up to {ONE_SCREEN} fit on one screen of a projector or the
-                LED wall; with more, the page scrolls. A card&apos;s button goes to its link (without one it is decoration only), and a
-                picture fills the circle instead of the icon.
+                LED wall; with more, the page scrolls. A card&apos;s button shows its picture or video full screen, or else goes to its
+                link (without either it is decoration only). A picture in the circle replaces the icon.
               </>
             }
           >
@@ -473,13 +555,23 @@ export function OpeningEditorPage() {
       <ConfirmDialog
         open={confirmReset}
         title="Reset the opening page?"
-        description="The title, year, tagline, button text, logo and every card go back to the built-in defaults, on every screen showing the page. Unsaved changes here are lost too."
+        description="The title, year, tagline, button text, logo, every card and the scratch-card setting go back to the built-in defaults, on every screen showing the page. Unsaved changes here are lost too."
         confirmLabel="Reset to defaults"
         tone="danger"
         busy={resetting}
         error={resetError}
         onConfirm={() => void reset()}
         onClose={() => setConfirmReset(false)}
+      />
+      <ConfirmDialog
+        open={confirmHide}
+        title="Hide all cards again?"
+        description={`Every screen showing the opening page hides all cards again within ${REFRESH_SECONDS} seconds.`}
+        confirmLabel="Hide all cards"
+        busy={hiding}
+        error={hideError}
+        onConfirm={() => void hideAll()}
+        onClose={() => setConfirmHide(false)}
       />
     </>
   )

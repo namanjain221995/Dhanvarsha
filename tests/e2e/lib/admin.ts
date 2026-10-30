@@ -12,9 +12,29 @@ export type OpeningPage = {
   year: string
   tagline: string
   button_label: string
+  /** The cards start face down and are scratched open on the screen. */
+  hidden: boolean
+  /** Raised by "Hide all cards again"; read-only for saves. */
+  reveal_epoch: number
   logo_asset_id: string | null
   logo_url: string | null
-  cards: { id: string; title: string; icon: string; image_asset_id: string | null; image_url: string | null; link: string }[]
+  cards: OpeningCard[]
+}
+
+/** A card's uploaded picture or video (kind opening_media), as GET /admin/opening describes it. */
+export type OpeningMedia = { url: string; type: 'image' | 'video'; name: string; byte_size: number }
+
+export type OpeningCard = {
+  id: string
+  title: string
+  icon: string
+  image_asset_id: string | null
+  image_url: string | null
+  /** Used only when the card has no media. */
+  link: string
+  media_asset_id: string | null
+  /** In GET only; saving sends media_asset_id. */
+  media?: OpeningMedia | null
 }
 
 /** Organiser actions through the real admin API (same-origin headers, CSRF). */
@@ -35,7 +55,7 @@ export class Admin {
     return new Admin(api, me.csrf_token)
   }
 
-  private async call<T = Record<string, unknown>>(method: 'get' | 'post' | 'patch' | 'delete', path: string, data?: unknown): Promise<T> {
+  private async call<T = Record<string, unknown>>(method: 'get' | 'post' | 'put' | 'patch' | 'delete', path: string, data?: unknown): Promise<T> {
     const res = await this.api[method](`/api/v1/admin${path}`, {
       data,
       headers: method === 'get' ? undefined : { 'X-CSRF-Token': this.csrf },
@@ -211,10 +231,28 @@ export class Admin {
     }>('get', '/opening')
   }
 
-  /** Back to the built-in title, year, tagline, button text and cards. */
+  /** Back to the built-in title, year, tagline, button text and cards (the cards hidden again). */
   async resetOpening() {
     const current = await this.opening()
     return this.call('delete', '/opening', { settings_version: current.settings_version })
+  }
+
+  /**
+   * Saves the page as it is now with `changes` applied, e.g. { hidden: false }. The URLs and the
+   * reveal epoch it loaded go back too; the API ignores them.
+   */
+  async saveOpening(changes: Partial<Omit<OpeningPage, 'reveal_epoch'>>) {
+    const current = await this.opening()
+    return this.call<{ opening: OpeningPage; settings_version: number }>('put', '/opening', {
+      settings_version: current.settings_version,
+      ...current.opening,
+      ...changes,
+    })
+  }
+
+  /** "Hide all cards again": every screen turns its cards face down at its next refresh. */
+  hideAllCards() {
+    return this.call<{ opening: OpeningPage; settings_version: number }>('post', '/opening/hide-all')
   }
 
   async dispose() {

@@ -4,7 +4,7 @@ import { useEffect, useState, useSyncExternalStore } from 'react'
 import { adminApi, ApiError, setCsrfToken, type RequestOptions } from '@/lib/api'
 import { serverClock } from '@/lib/time'
 import { goToLogin } from './errors'
-import type { AdminMe, AssetKind, UploadedAsset } from './types'
+import type { AdminMe, AssetKind, UploadedAsset, UploadedMedia } from './types'
 
 type Query = RequestOptions['query']
 
@@ -205,4 +205,77 @@ export function uploadAsset(kind: AssetKind, file: File): Promise<UploadedAsset>
   form.set('kind', kind)
   form.set('file', file)
   return adminAction<UploadedAsset>('/admin/assets', { form, timeoutMs: 60_000 })
+}
+
+/** Pictures through the chunked upload are decoded on the server, up to this size. */
+export const MAX_MEDIA_IMAGE_BYTES = 40 * 1024 * 1024
+/** Network errors (or time-outs) tolerated per chunk before the upload gives up. */
+const CHUNK_RETRIES = 3
+
+const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+
+function stopIfAborted(signal: AbortSignal | undefined) {
+  if (signal?.aborted) throw new ApiError(0, 'ABORTED', 'The upload was cancelled.')
+}
+
+/**
+ * Uploads a picture or video for the opening page (kind opening_media) in chunks, so files of
+ * any size pass the proxies' per-request limits: start, then one PUT per chunk in order, then
+ * complete. A chunk that fails on the network is sent again (up to three times); when the
+ * server has a different byte count than expected (an answer was lost), the upload carries on
+ * from the server's count. On failure or cancel (`signal`) the server drops what it received.
+ */
+export async function uploadMedia(
+  file: File,
+  { signal, onProgress }: { signal?: AbortSignal; onProgress?: (sent: number, total: number) => void } = {},
+): Promise<UploadedMedia> {
+  stopIfAborted(signal)
+  const started = await adminAction<{ upload_id: string; chunk_size: number }>('/admin/media/uploads', {
+    body: { name: file.name.slice(0, 255) || 'upload', size: file.size, content_type: file.type || 'application/octet-stream' },
+    signal,
+  })
+  const path = `/admin/media/uploads/${encodeURIComponent(started.upload_id)}`
+  const chunkSize = started.chunk_size > 0 ? started.chunk_size : 8 * 1024 * 1024
+  try {
+    let offset = 0
+    let failures = 0
+    onProgress?.(0, file.size)
+    while (offset < file.size) {
+      stopIfAborted(signal)
+      let received: number
+      try {
+        ;({ received } = await adminAction<{ received: number }>(path, {
+          method: 'PUT',
+          query: { offset },
+          raw: file.slice(offset, Math.min(file.size, offset + chunkSize)),
+          // 8 MiB on a slow venue uplink can take a while.
+          timeoutMs: 180_000,
+          signal,
+        }))
+      } catch (error) {
+        stopIfAborted(signal)
+        if (!(error instanceof ApiError)) throw error
+        const known = error.details.received
+        if (error.code === 'UPLOAD_OFFSET_MISMATCH' && typeof known === 'number') {
+          received = known
+        } else if (error.isNetwork && failures < CHUNK_RETRIES) {
+          await pause(1000 * 2 ** failures)
+          received = offset
+        } else {
+          throw error
+        }
+      }
+      // No progress (a lost answer, a dropped connection): a few more tries, then give up.
+      failures = received > offset ? 0 : failures + 1
+      if (failures > CHUNK_RETRIES) throw new ApiError(0, 'UPLOAD_STALLED', 'The upload stopped making progress. Try again.')
+      offset = Math.max(0, Math.min(file.size, received))
+      onProgress?.(offset, file.size)
+    }
+    stopIfAborted(signal)
+    // The server checks and moves the whole file now: a large video takes a moment.
+    return await adminAction<UploadedMedia>(`${path}/complete`, { method: 'POST', timeoutMs: 300_000, signal })
+  } catch (error) {
+    void adminAction(path, { method: 'DELETE' }).catch(() => {})
+    throw error
+  }
 }

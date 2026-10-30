@@ -9,7 +9,7 @@ that protect votes. Code references are relative to the repository root.
 ```text
             phones / laptops (same origin, HTTPS in production)
                           │
-                    Caddy reverse proxy ── /media/* ── uploaded images (volume)
+                    Caddy reverse proxy ── /media/* ── uploaded images and videos (volume)
               ┌───────────┼──────────────┐
               │           │              │
          Next.js web   FastAPI API     FastAPI API      (2+ processes)
@@ -304,6 +304,24 @@ Gmail provider uses a separate HTTP connection per send (httplib2 is not thread-
 Images are checked against a 40-megapixel limit before decoding, then decoded with Pillow, EXIF-rotated,
 resized, re-encoded to WebP, stored under random names, and served by Caddy with
 `nosniff` and immutable caching. SVG and other non-raster formats are rejected.
+
+The image or video an opening-page card shows full screen (asset kind `opening_media`,
+`services/media.py`) can be far larger than one request may be (Cloudflare: 100 MB, Caddy:
+12 MB), so it is uploaded in 8 MiB chunks:
+
+1. `POST /api/v1/admin/media/uploads` with the name and size checks the size limit and the
+   free disk space and creates `<media root>/.uploads/<id>.part` and `<id>.json`.
+2. `PUT /api/v1/admin/media/uploads/<id>?offset=<n>` appends the raw body at `n`, which must
+   be the size stored so far (otherwise 409 with that size, so the browser resumes). A lock
+   on the `.part` file serialises the requests of one upload, and any API process can serve
+   any of them.
+3. `POST .../<id>/complete` reads the type from the file's first bytes. Images get the
+   WebP treatment above with a 3840 px long edge; MP4 and WebM videos are never decoded and
+   are renamed into the media root as they are (`<random>.mp4` or `.webm`).
+
+Caddy serves only `<32 hex>.webp|mp4|webm` names from the media root, with Range support,
+`nosniff` and `Content-Security-Policy: default-src 'none'; sandbox`, so `.uploads/` is
+unreachable and no uploaded file can run as a page.
 
 ## Security headers and limits
 

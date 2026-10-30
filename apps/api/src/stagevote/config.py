@@ -86,6 +86,10 @@ class Settings(BaseSettings):
 
     media_root: str = "/data/media"
     max_upload_bytes: int = 5 * 1024 * 1024
+    # The image or video an opening-page card shows full screen, uploaded in chunks. Videos
+    # are kept as uploaded; assets.byte_size is a 32-bit column, hence the upper bound.
+    max_media_bytes: int = Field(default=1024 * 1024 * 1024, gt=0, le=2**31 - 1)
+    max_media_image_bytes: int = Field(default=40 * 1024 * 1024, gt=0, le=2**31 - 1)
 
     password_hash_concurrency: int = 8
     log_level: str = "INFO"

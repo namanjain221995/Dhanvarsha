@@ -14,7 +14,7 @@ from stagevote.config import get_settings
 from stagevote.errors import AppError
 from stagevote.live.hub import Connection, LiveHub
 from stagevote.security import new_token
-from stagevote.services.assets import _process
+from stagevote.services.assets import process_image
 
 
 async def failures(world: World) -> int:
@@ -104,5 +104,5 @@ def test_images_over_40_megapixels_are_rejected_before_decoding() -> None:
     buffer = io.BytesIO()
     Image.new("L", (8000, 6000)).save(buffer, format="PNG")  # 48 MP, compresses to a small file
     with pytest.raises(AppError) as caught:
-        _process(buffer.getvalue(), "event_logo")
+        process_image(buffer.getvalue(), "event_logo")
     assert caught.value.code == "IMAGE_TOO_LARGE"

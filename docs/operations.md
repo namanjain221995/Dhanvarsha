@@ -158,6 +158,22 @@ docker compose -f compose.prod.yaml run --rm migrate stagevote reconcile
 - `stagevote reconcile` compares stored votes with tallies and checks for duplicates and
   cross-ballot references.
 
+## Uploaded media and disk space
+
+- Every uploaded file lives in the `media` volume (`/data/media` in the API containers,
+  served by Caddy from `/srv/media`): pictures as WebP, and the images and videos opening-page
+  cards show full screen. Videos are kept exactly as uploaded, up to `MAX_MEDIA_BYTES`
+  (default 1 GiB) each; images shown full screen up to `MAX_MEDIA_IMAGE_BYTES` (40 MB) and
+  40 megapixels, stored as WebP of at most 3840 px.
+- An upload is refused (507) unless the volume keeps 1 GiB free beyond the file. Unfinished
+  uploads wait in `/data/media/.uploads/` and are removed the next time an upload starts
+  after 24 hours without a chunk. Check the space with
+  `docker compose -f compose.prod.yaml exec api df -h /data/media`.
+- Files are never deleted by the application: removing a card's video keeps the file. Videos
+  are part of the media archive that `scripts/backup.sh` writes, so backups grow with them
+  (allow the sum of the videos). Unfinished uploads in `.uploads/` are left out of it.
+- Behind Cloudflare, each chunk is one 8 MiB request, well under its 100 MB limit.
+
 ## Secrets and rotation
 
 | Secret | Rotation effect |

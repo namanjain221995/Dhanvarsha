@@ -177,7 +177,12 @@ export type OpeningCard = {
   image_url: string | null
   /** "" for a decorative button, otherwise an http(s) URL or a path on this site. */
   link: string
+  /** An uploaded picture or video the button shows full screen; the link counts only without it. */
+  media: OpeningMedia | null
 }
+
+/** A card's uploaded picture (WebP) or video (MP4 or WebM), served from /media. */
+export type OpeningMedia = { url: string; type: 'image' | 'video' }
 
 /** GET /public/opening: the showcase page for the big screen (/opening), defaults already applied. */
 export type PublicOpening = {
@@ -185,6 +190,10 @@ export type PublicOpening = {
   year: string
   tagline: string
   button_label: string
+  /** True: every card starts face down (its number only) and is scratched open on the screen. */
+  hidden: boolean
+  /** Raised by the organiser's "Hide all cards again": reveals saved under another epoch are void. */
+  reveal_epoch: number
   /** Null shows the built-in TechSara mark. */
   logo_url: string | null
   cards: OpeningCard[]

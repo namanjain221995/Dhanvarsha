@@ -27,7 +27,14 @@ MAX_PIXELS = 40_000_000
 # Pillow only raises above twice this value; the explicit check below enforces MAX_PIXELS.
 Image.MAX_IMAGE_PIXELS = MAX_PIXELS
 ALLOWED_FORMATS = {"JPEG", "PNG", "WEBP", "GIF"}
-MAX_EDGE = {"programme_logo": 512, "event_logo": 512, "nominee_photo": 640, "banner": 1600}
+# opening_media is shown full screen on a projector or LED wall, so it keeps up to 4K.
+MAX_EDGE = {
+    "programme_logo": 512,
+    "event_logo": 512,
+    "nominee_photo": 640,
+    "banner": 1600,
+    "opening_media": 3840,
+}
 
 
 def _trim_transparent(img: Image.Image) -> Image.Image:
@@ -45,7 +52,8 @@ def _trim_transparent(img: Image.Image) -> Image.Image:
     return img.crop((left, top, right, bottom))
 
 
-def _process(data: bytes, kind: str) -> tuple[bytes, int, int]:
+def process_image(data: bytes, kind: str) -> tuple[bytes, int, int]:
+    """Check, decode and re-encode an image to WebP sized for `kind`: (webp, width, height)."""
     try:
         with Image.open(io.BytesIO(data)) as probe:
             fmt = probe.format
@@ -80,7 +88,7 @@ async def store_image(db: AsyncSession, upload: UploadFile, kind: str, ctx: Admi
         )
     if not data:
         raise AppError("INVALID_IMAGE", "The file is empty.", 422)
-    encoded, width, height = await asyncio.to_thread(_process, data, kind)
+    encoded, width, height = await asyncio.to_thread(process_image, data, kind)
     storage_key = f"{uuid.uuid4().hex}.webp"
     root = Path(settings.media_root)
     await asyncio.to_thread(root.mkdir, parents=True, exist_ok=True)
