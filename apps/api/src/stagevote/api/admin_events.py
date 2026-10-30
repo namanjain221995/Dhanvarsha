@@ -4,7 +4,8 @@ Freeze rules
 ------------
 * Before an event first opens, everything can change.
 * When voting first opens, ballots and nominee identity freeze (`frozen_at`). After that:
-  - event name, description, rules and logo stay editable (presentation; audited);
+  - event name, description, rules, organiser note and logo stay editable (presentation;
+    audited);
   - ballot title and nominee name accept only small corrections (similarity >= 0.8, a
     reason is required, before/after is audited);
   - nominee affiliation, description and photo stay editable (audited);
@@ -40,13 +41,16 @@ from ..models import Asset, Ballot, Event, Nominee, Programme
 from ..services.live import begin_transition, regenerate_schedule
 from ..services.programmes import active_programme, server_now
 from ..state import Actor, audit, bump_state
-from .common import Model, SingleLine, no_store
+from .common import Model, MultiLine, SingleLine, no_store
 
 router = APIRouter(prefix="/api/v1/admin", dependencies=[Depends(current_admin)])
 
 BallotKind = Literal["team", "individual", "mcq", "text"]
 # A ballot title is a question for mcq and text ballots, so it may be longer than a name.
 BALLOT_TITLE_MAX = 200
+# What only organisers see about a round: when to open it and any special instructions.
+# It is in every admin event payload and never in a participant or public one.
+ORGANISER_NOTE_MAX = 2000
 _DEFAULT_TITLES = {
     "team": "Your vote",
     "individual": "Your vote",
@@ -182,6 +186,7 @@ async def _event_payloads(
                 "name": e.name,
                 "description": e.description,
                 "rules": e.rules,
+                "organiser_note": e.organiser_note,
                 "logo_asset_id": str(e.logo_asset_id) if e.logo_asset_id else None,
                 "logo_url": urls.get(e.logo_asset_id) if e.logo_asset_id else None,
                 "status": e.status,
@@ -292,6 +297,7 @@ class EventCreate(Model):
     name: SingleLine = Field(min_length=1, max_length=120)
     description: str = Field(default="", max_length=4000)
     rules: str = Field(default="", max_length=4000)
+    organiser_note: MultiLine = Field(default="", max_length=ORGANISER_NOTE_MAX)
     # The kind of the event's first ballot, or "none" for a round with no voting.
     ballot_kind: Literal["team", "individual", "mcq", "text", "none"] = "team"
     # Defaults to a placeholder that suits the kind.
@@ -329,6 +335,7 @@ async def create_event(
             name=body.name,
             description=body.description,
             rules=body.rules,
+            organiser_note=body.organiser_note,
             logo_asset_id=body.logo_asset_id,
             planned_start_at=body.planned_start_at,
             planned_end_at=body.planned_end_at,
@@ -367,6 +374,7 @@ class EventPatch(Model):
     name: SingleLine | None = Field(default=None, min_length=1, max_length=120)
     description: str | None = Field(default=None, max_length=4000)
     rules: str | None = Field(default=None, max_length=4000)
+    organiser_note: MultiLine | None = Field(default=None, max_length=ORGANISER_NOTE_MAX)
     logo_asset_id: uuid.UUID | None = None
     clear_logo: bool = False
     planned_start_at: AwareDatetime | None = None
@@ -393,7 +401,7 @@ async def patch_event(
                 "STALE_EVENT", "This event changed since you opened it. Reload to see the latest version."
             )
         changes: dict[str, Any] = {}
-        for key in ("name", "description", "rules"):
+        for key in ("name", "description", "rules", "organiser_note"):
             if key in fields and fields[key] is not None and getattr(event, key) != fields[key]:
                 changes[key] = {"from": getattr(event, key), "to": fields[key]}
                 setattr(event, key, fields[key])

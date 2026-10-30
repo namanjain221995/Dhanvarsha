@@ -3,7 +3,7 @@
 import { Film, Trash2, Upload, X } from 'lucide-react'
 import { useEffect, useId, useRef, useState } from 'react'
 import { describeError } from '@/lib/admin/errors'
-import { MAX_MEDIA_IMAGE_BYTES, uploadMedia } from '@/lib/admin/query'
+import { uploadMedia } from '@/lib/admin/query'
 import type { AdminOpeningMedia } from '@/lib/admin/types'
 import { MiniButton } from '../primitives'
 
@@ -27,9 +27,6 @@ function fileSize(bytes: number): string {
 /** What the browser can tell before sending anything; the server checks the file itself. */
 function precheck(file: File): string | null {
   if (file.size === 0) return 'This file is empty.'
-  if (file.type.startsWith('image/') && file.size > MAX_MEDIA_IMAGE_BYTES) {
-    return `Pictures can be up to ${MAX_MEDIA_IMAGE_BYTES / (1024 * 1024)} MB. This one is ${megabytes(file.size)} MB.`
-  }
   return null
 }
 
@@ -95,7 +92,8 @@ export function MediaField({
         Show on button click <span className="font-normal text-plum-soft">(optional)</span>
       </p>
       <p id={`${id}-hint`} className="mb-2 text-sm text-plum-soft">
-        A picture or video the card&apos;s button shows full screen. JPEG, PNG, WebP or GIF up to 40 MB; MP4 or WebM video.
+        A picture or video the card&apos;s button shows full screen: JPEG, PNG, WebP or GIF, or MP4 or WebM video, of any
+        size. Keep this page open while a big video uploads.
       </p>
 
       {media && !progress ? (

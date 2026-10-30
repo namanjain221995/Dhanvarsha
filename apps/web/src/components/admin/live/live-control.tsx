@@ -29,6 +29,7 @@ import type { LiveEvent, LiveState, ScheduleJob, SchedulePreview } from '@/lib/a
 import { formatClock, formatRelative, formatWhen, zoneLabel } from '@/lib/admin/zoned'
 import type { LiveStatus } from '@/lib/live'
 import { localEquivalent, useServerNow, zoneAbbreviation } from '@/lib/time'
+import { OrganiserNote } from '../organiser-note'
 import {
   Bar,
   FlashRegion,
@@ -599,6 +600,8 @@ function OnAirCard({
             </Button>
           ) : null}
         </div>
+        {/* Below the buttons, so a long note never pushes them off a laptop screen. */}
+        <OrganiserNote note={event.organiser_note} eventName={event.name} className="mt-4" />
       </div>
     </section>
   )
@@ -672,6 +675,7 @@ function UpNextPanel({ state, timeZone }: { state: LiveState; timeZone: string }
               ? 'The schedule opens it automatically.'
               : 'It opens when an organiser opens it.'}
           </p>
+          <OrganiserNote note={next.organiser_note} eventName={next.name} className="mt-3" />
           <Link
             href={`/admin/events/${next.id}`}
             className="mt-3 inline-flex min-h-11 items-center gap-2 rounded-full text-[0.95rem] font-semibold text-primary hover:underline"
@@ -921,6 +925,9 @@ function RoundsPanel({
                     ) : null}
                   </div>
                   <p className="mt-0.5 text-sm text-plum-soft">{roundDetail(event, timeZone, serverNow)}</p>
+                  {event.status === 'upcoming' ? (
+                    <OrganiserNote note={event.organiser_note} eventName={event.name} className="mt-2" />
+                  ) : null}
                 </div>
                 <div className="shrink-0">
                   {event.status === 'upcoming' && !state.programme.ended_at ? (

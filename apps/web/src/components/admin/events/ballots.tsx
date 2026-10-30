@@ -9,6 +9,7 @@ import { BALLOT_KIND_OPTIONS, ballotKindLabel, isQuestion, plural } from '@/lib/
 import { adminAction } from '@/lib/admin/query'
 import { isSmallCorrection } from '@/lib/admin/similar'
 import type { AdminBallot, AdminEvent, AdminNominee, BallotKind } from '@/lib/admin/types'
+import { formatMembers } from '@/lib/members'
 import { ImageField, InputField, SelectField, TextAreaField } from '../form'
 import { focusSoon, IconButton, MiniButton, StatusChip } from '../primitives'
 
@@ -208,7 +209,7 @@ export function BallotCard({
                             <UsersRound aria-hidden className="mt-[0.2rem] size-3.5 shrink-0 text-plum-soft" />
                             <span>
                               <span className="sr-only">Team members: </span>
-                              {nominee.members.join(', ')}
+                              {formatMembers(nominee.members)}
                             </span>
                           </p>
                         ) : null}

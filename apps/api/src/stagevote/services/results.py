@@ -2,7 +2,9 @@
 
 Team, individual and multiple-choice ballots are counted per nominee (answer option).
 A typed-answer (text) ballot is counted as a number of answers; the answers themselves
-are only ever listed to organisers (`typed_answers`), never to voters.
+are only ever listed to organisers (`typed_answers`), never to voters. Every result
+carries the ballot's description, which may qualify it (for example, that an audience
+favourite is not the official winner). With no votes every percentage is 0.
 """
 
 from __future__ import annotations
@@ -38,14 +40,15 @@ async def ballot_results(
         await db.execute(
             text(
                 """
-                SELECT b.id AS ballot_id, b.title, b.kind, b.position AS bpos,
+                SELECT b.id AS ballot_id, b.title, b.kind, b.description, b.position AS bpos,
                        n.id AS nominee_id, n.name, n.affiliation, n.position AS npos,
                        count(v.id) AS votes
                 FROM ballots b
                 JOIN nominees n ON n.ballot_id = b.id
                 LEFT JOIN votes v ON v.ballot_id = n.ballot_id AND v.nominee_id = n.id
                 WHERE b.id = ANY(:ids)
-                GROUP BY b.id, b.title, b.kind, b.position, n.id, n.name, n.affiliation, n.position
+                GROUP BY b.id, b.title, b.kind, b.description, b.position, n.id, n.name, n.affiliation,
+                         n.position
                 ORDER BY b.position, n.position, n.name
                 """
             ),
@@ -56,11 +59,11 @@ async def ballot_results(
         await db.execute(
             text(
                 """
-                SELECT b.id AS ballot_id, b.title, b.kind, count(v.id) AS answers
+                SELECT b.id AS ballot_id, b.title, b.kind, b.description, count(v.id) AS answers
                 FROM ballots b
                 LEFT JOIN votes v ON v.ballot_id = b.id AND v.answer_text IS NOT NULL
                 WHERE b.id = ANY(:ids) AND b.kind = 'text'
-                GROUP BY b.id, b.title, b.kind
+                GROUP BY b.id, b.title, b.kind, b.description
                 """
             ),
             {"ids": ballot_ids},
@@ -71,7 +74,13 @@ async def ballot_results(
     for row in rows:
         ballot = by_ballot.setdefault(
             row.ballot_id,
-            {"ballot_id": str(row.ballot_id), "title": row.title, "kind": row.kind, "nominees": []},
+            {
+                "ballot_id": str(row.ballot_id),
+                "title": row.title,
+                "kind": row.kind,
+                "description": row.description,
+                "nominees": [],
+            },
         )
         ballot["nominees"].append(
             {
@@ -106,6 +115,7 @@ async def ballot_results(
                 "ballot_id": str(row.ballot_id),
                 "title": row.title,
                 "kind": row.kind,
+                "description": row.description,
                 "nominees": [],
                 "answer_count": count,
                 "total_votes": count,
@@ -123,7 +133,12 @@ def participant_results(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Published results as voters see them: a typed-answer question shows only how many
     answered, never what anyone typed."""
     return [
-        {"ballot_id": r["ballot_id"], "kind": "text", "answer_count": r["answer_count"]}
+        {
+            "ballot_id": r["ballot_id"],
+            "kind": "text",
+            "description": r["description"],
+            "answer_count": r["answer_count"],
+        }
         if r["kind"] == "text"
         else r
         for r in results

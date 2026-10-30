@@ -1,0 +1,3 @@
+# The repository ignores data/ directories (local state); the API's package data is source:
+# the shipped audience polls must reach the Docker image.
+!/src/stagevote/data/

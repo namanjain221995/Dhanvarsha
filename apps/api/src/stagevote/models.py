@@ -77,7 +77,7 @@ class Asset(Base):
     content_type: Mapped[str] = mapped_column(String(64), nullable=False)
     width: Mapped[int] = mapped_column(Integer, nullable=False)
     height: Mapped[int] = mapped_column(Integer, nullable=False)
-    byte_size: Mapped[int] = mapped_column(Integer, nullable=False)
+    byte_size: Mapped[int] = mapped_column(BigInteger, nullable=False)
     sha256: Mapped[str] = mapped_column(String(64), nullable=False)
     # The uploaded file's name, shown to the organiser (opening_media only).
     original_name: Mapped[str | None] = mapped_column(String(255))
@@ -194,6 +194,7 @@ class Event(Base):
             name="ck_events_deadline_after_open",
         ),
         CheckConstraint("status <> 'open' OR archived_at IS NULL", name="ck_events_open_not_archived"),
+        CheckConstraint("char_length(organiser_note) <= 2000", name="ck_events_organiser_note_length"),
         # Invariant 5: at most one OPEN event per programme.
         Index(
             "uq_events_one_open_per_programme",
@@ -214,6 +215,9 @@ class Event(Base):
     name: Mapped[str] = mapped_column(String(120), nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False, default="")
     rules: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # Only organisers see this (when to open the round, special instructions): it is in
+    # admin payloads and never in participant or public ones.
+    organiser_note: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default=text("''"))
     logo_asset_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("assets.id", ondelete="RESTRICT")
     )

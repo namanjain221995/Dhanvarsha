@@ -13,7 +13,8 @@ import { useAdminSession, useAdminSignal } from '@/lib/admin/session'
 import type { AdminEvent, BallotKind, EventsList, NewEventBallotKind } from '@/lib/admin/types'
 import { formatWhen, zonedInputToIso } from '@/lib/admin/zoned'
 import { ConfirmDialog } from '../confirm'
-import { InputField, SelectField, ZonedDateTimeField } from '../form'
+import { InputField, SelectField, TextAreaField, ZonedDateTimeField } from '../form'
+import { ORGANISER_NOTE_HINT, ORGANISER_NOTE_MAX, OrganiserNoteLine } from '../organiser-note'
 import {
   EmptyState,
   FlashRegion,
@@ -208,6 +209,7 @@ export function EventsListPage() {
                     <li key={event.id} className="flex flex-wrap items-center gap-x-4 gap-y-2 py-3">
                       <div className="min-w-0 flex-1">
                         <p className="break-words font-semibold text-plum">{event.name}</p>
+                        <OrganiserNoteLine note={event.organiser_note} />
                         <p className="text-sm text-plum-soft">
                           {event.status === 'closed' ? `Closed, ${plural(event.vote_count, 'vote')}.` : 'Never opened.'}
                         </p>
@@ -320,6 +322,7 @@ function EventRow({
           <ReadinessChip event={event} />
           {event.results_published ? <PublishedChip /> : null}
         </div>
+        <OrganiserNoteLine note={event.organiser_note} className="mt-1" />
         <p className="mt-1 text-sm text-plum-soft">
           {ballotSummary(event)}.{' '}
           {when}.{event.vote_count ? ` ${plural(event.vote_count, 'vote')}.` : ''}
@@ -365,6 +368,7 @@ function CreateEventDialog({ timeZone, onClose }: { timeZone: string; onClose: (
   const [name, setName] = useState('')
   const [kind, setKind] = useState<NewEventBallotKind>('team')
   const [ballotTitle, setBallotTitle] = useState('')
+  const [organiserNote, setOrganiserNote] = useState('')
   const [withSchedule, setWithSchedule] = useState(false)
   const [start, setStart] = useState('')
   const [end, setEnd] = useState('')
@@ -396,6 +400,7 @@ function CreateEventDialog({ timeZone, onClose }: { timeZone: string; onClose: (
           name: name.trim(),
           ballot_kind: kind,
           ...(kind === 'none' ? {} : { ballot_title: ballotTitle.trim() || defaultBallotTitle(kind) }),
+          ...(organiserNote.trim() ? { organiser_note: organiserNote.trim() } : {}),
           ...(withSchedule ? { planned_start_at: startIso, planned_end_at: endIso } : {}),
         },
       })
@@ -469,6 +474,16 @@ function CreateEventDialog({ timeZone, onClose }: { timeZone: string; onClose: (
             error={errors.ballot_title}
           />
         )}
+        <TextAreaField
+          label="Organiser note"
+          optional
+          rows={3}
+          maxLength={ORGANISER_NOTE_MAX}
+          value={organiserNote}
+          onChange={(e) => setOrganiserNote(e.target.value)}
+          hint={ORGANISER_NOTE_HINT}
+          error={errors.organiser_note}
+        />
         <div>
           <label className="flex min-h-11 cursor-pointer items-center gap-3">
             <input

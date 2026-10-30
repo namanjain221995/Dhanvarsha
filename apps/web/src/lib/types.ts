@@ -124,6 +124,8 @@ export type VoteBallotResult = {
   ballot_id: string
   title: string
   kind: 'team' | 'individual' | 'mcq'
+  /** The ballot's description ("" when it has none), shown with the results. */
+  description?: string
   nominees: NomineeResult[]
   total_votes: number
   eligible_voters: number
@@ -138,6 +140,7 @@ export type TextBallotResult = {
   kind: 'text'
   answer_count: number
   title?: string
+  description?: string
 }
 
 export type BallotResult = VoteBallotResult | TextBallotResult

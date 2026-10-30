@@ -6,6 +6,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { Button } from '@/components/ui/button'
 import { Avatar, Notice } from '@/components/ui/misc'
 import { ApiError, participantApi } from '@/lib/api'
+import { formatMembers } from '@/lib/members'
 import { serverClock, useServerNow } from '@/lib/time'
 import { type BallotDetail, type BallotResult, type EventDetail, isAnswerReceipt, isQuestionKind, type Nominee } from '@/lib/types'
 import { Countdown, EventLogo, PageColumn, StatusChip, timeLabel, titleSize } from './bits'
@@ -84,7 +85,7 @@ function TeamMembers({ members, className = '' }: { members: string[]; className
       <UsersRound aria-hidden className="mt-[0.2rem] size-3.5 shrink-0 text-plum-soft" />
       <span>
         <span className="sr-only">Team members: </span>
-        {members.join(', ')}
+        {formatMembers(members)}
       </span>
     </span>
   )
@@ -206,12 +207,14 @@ function TypedAnswer({
   )
 }
 
-function ResultsView({ result, title }: { result: BallotResult; title: string }) {
+function ResultsView({ result, title, description }: { result: BallotResult; title: string; description: string }) {
+  const about = description ? <p className="mt-0.5 text-sm text-plum-soft [overflow-wrap:anywhere]">{description}</p> : null
   if (result.kind === 'text') {
     // Typed answers are never shown to participants: only how many there were.
     return (
       <div className="rounded-[var(--radius-card)] border border-sand bg-paper p-4">
         <p className="font-semibold">{title}: answers</p>
+        {about}
         <p className="mt-0.5 text-sm text-plum-soft">
           {result.answer_count} answer{result.answer_count === 1 ? '' : 's'} received. Typed answers are not shown.
         </p>
@@ -223,13 +226,14 @@ function ResultsView({ result, title }: { result: BallotResult; title: string })
   return (
     <div className="rounded-[var(--radius-card)] border border-sand bg-paper p-4">
       <p className="font-semibold">{title}: results</p>
+      {about}
       <p className="mt-0.5 text-sm text-plum-soft">
         {result.total_votes} {mcq ? 'answer' : 'vote'}
         {result.total_votes === 1 ? '' : 's'} counted.{' '}
         {result.tie
           ? `Tie between ${leaders.map((l) => l.name).join(' and ')}.`
           : leaders[0]
-            ? `${mcq ? 'Most chosen' : 'Most votes'}: ${leaders[0].name}.`
+            ? `${mcq ? 'Most chosen' : 'Audience Favourite'}: ${leaders[0].name}.`
             : mcq
               ? 'No answers were given.'
               : 'No votes were cast.'}
@@ -694,13 +698,17 @@ export function EventDetailView({ eventId }: { eventId: string }) {
               <Sparkles aria-hidden className="size-5 text-gold-deep" />
               Results
             </h2>
-            {detail.results.map((r) => (
-              <ResultsView
-                key={r.ballot_id}
-                result={r}
-                title={r.title ?? ballots.find((b) => b.id === r.ballot_id)?.title ?? 'Question'}
-              />
-            ))}
+            {detail.results.map((r) => {
+              const ballot = ballots.find((b) => b.id === r.ballot_id)
+              return (
+                <ResultsView
+                  key={r.ballot_id}
+                  result={r}
+                  title={r.title ?? ballot?.title ?? 'Question'}
+                  description={(r.description ?? ballot?.description ?? '').trim()}
+                />
+              )
+            })}
           </section>
         ) : null}
 

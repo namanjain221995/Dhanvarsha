@@ -24,6 +24,12 @@ function defaultEvent(events: EventResults[]): string | null {
   return closed[closed.length - 1]?.event_id ?? events[0]?.event_id ?? null
 }
 
+/**
+ * The top team or person of a closed vote. An audience preference, not an official result: in
+ * the Placement League, for example, the highest bid decides the winner.
+ */
+const AUDIENCE_FAVOURITE = 'Audience Favourite'
+
 function joinNames(names: string[]): string {
   if (names.length <= 1) return names[0] ?? ''
   return `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`
@@ -258,6 +264,10 @@ function EventResultsView({
   )
 }
 
+function BallotDescription({ ballot }: { ballot: BallotResult }) {
+  return ballot.description ? <p className="mt-1 break-words text-sm text-plum-soft">{ballot.description}</p> : null
+}
+
 /** A typed-answer question: who typed what, oldest first. Only organisers see this. */
 function TypedAnswersCard({ ballot, timeZone, started }: { ballot: BallotResult; timeZone: string; started: boolean }) {
   const answers = ballot.answers ?? []
@@ -271,6 +281,7 @@ function TypedAnswersCard({ ballot, timeZone, started }: { ballot: BallotResult;
         </h3>
         <span className="text-sm text-plum-soft">{ballotKindLabel(ballot.kind)}</span>
       </div>
+      <BallotDescription ballot={ballot} />
       <dl className="mt-3 grid grid-cols-3 gap-2 text-sm">
         <div className="rounded-2xl bg-ivory px-3 py-2">
           <dt className="text-plum-soft">Answers</dt>
@@ -364,7 +375,7 @@ function BallotResultCard({ ballot, final, started }: { ballot: BallotResult; fi
       <p className="flex items-start gap-2 rounded-2xl bg-ivory px-3 py-2.5 text-[0.95rem] font-semibold text-plum">
         <Trophy aria-hidden className="mt-0.5 size-4 shrink-0 text-gold-deep" />
         <span>
-          {mcq ? 'Most chosen' : final ? 'Winner' : 'Leading so far'}: {leaders[0].name}, {plural(leaders[0].votes, unit)}.
+          {mcq ? 'Most chosen' : final ? AUDIENCE_FAVOURITE : 'Leading so far'}: {leaders[0].name}, {plural(leaders[0].votes, unit)}.
         </span>
       </p>
     )
@@ -378,6 +389,7 @@ function BallotResultCard({ ballot, final, started }: { ballot: BallotResult; fi
         </h3>
         <span className="text-sm text-plum-soft">{ballotKindLabel(ballot.kind)}</span>
       </div>
+      <BallotDescription ballot={ballot} />
       <dl className="mt-3 grid grid-cols-3 gap-2 text-sm">
         <div className="rounded-2xl bg-ivory px-3 py-2">
           <dt className="text-plum-soft">{mcq ? 'Answers' : 'Votes'}</dt>
@@ -406,7 +418,7 @@ function BallotResultCard({ ballot, final, started }: { ballot: BallotResult; fi
                   {leading ? (
                     <span className="ml-2 inline-flex items-center gap-1 text-sm font-semibold text-gold-deep">
                       {ballot.tie ? <Scale aria-hidden className="size-3.5" /> : <Trophy aria-hidden className="size-3.5" />}
-                      {ballot.tie ? 'Tied' : mcq ? 'Most chosen' : final ? 'Winner' : 'Leading'}
+                      {ballot.tie ? 'Tied' : mcq ? 'Most chosen' : final ? AUDIENCE_FAVOURITE : 'Leading'}
                     </span>
                   ) : null}
                 </p>

@@ -279,7 +279,7 @@ test.describe('organiser console', () => {
     await page.getByRole('button', { name: 'Done' }).click()
     const ballot = page.getByRole('region', { name: 'Best team' })
     await expect(ballot.getByRole('listitem')).toHaveCount(2)
-    await expect(ballot.getByText('Nominee One Lead, Nominee One Second, Nominee One Third')).toBeVisible()
+    await expect(ballot.getByText('Nominee One Lead, Nominee One Second & Nominee One Third')).toBeVisible()
 
     await page.getByRole('button', { name: 'Move Nominee Two up' }).click()
     await flash(page, 'Nominee Two is now number 1 on Best team.')
@@ -301,7 +301,7 @@ test.describe('organiser console', () => {
     const preview = page.getByRole('dialog', { name: 'Participant preview' })
     await expect(preview.getByText(name)).toBeVisible()
     await expect(preview.getByText('Nominee Two', { exact: true })).toBeVisible()
-    await expect(preview.getByText('Nominee Two Lead, Nominee Two Second, Nominee Two Third')).toBeVisible()
+    await expect(preview.getByText('Nominee Two Lead, Nominee Two Second & Nominee Two Third')).toBeVisible()
     await expect(preview.getByText('Solo Performer')).toBeVisible()
     await preview.getByRole('button', { name: 'Close' }).click()
 
@@ -399,11 +399,13 @@ test.describe('organiser console', () => {
     await expect(page.getByText('Tie: Ruby and Sapphire, 1 vote each.')).toBeVisible({ timeout: 20_000 })
     const topaz = page.getByRole('listitem').filter({ hasText: 'Topaz' })
     await expect(topaz).toContainText('0 votes')
-    await expect(page.getByText('Winner', { exact: true })).toHaveCount(0)
+    // A tie has no Audience Favourite, while open or after closing.
+    await expect(page.getByText('Audience Favourite', { exact: true })).toHaveCount(0)
 
     await admin.closeCurrent()
     await expect(page.getByText('Final — voting closed')).toBeVisible()
     await expect(page.getByText(/Tie: Ruby and Sapphire, 1 vote each\. There is no single winner\./)).toBeVisible()
+    await expect(page.getByText('Audience Favourite', { exact: true })).toHaveCount(0)
 
     // CSV: aggregate counts only.
     const downloadPromise = page.waitForEvent('download')

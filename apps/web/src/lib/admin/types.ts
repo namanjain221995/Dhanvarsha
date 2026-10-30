@@ -49,6 +49,8 @@ export type BallotResult = {
   ballot_id: string
   title: string
   kind: BallotKind
+  /** The ballot's description ("" when it has none). Sent with GET /admin/results. */
+  description?: string
   nominees: NomineeResult[]
   total_votes: number
   eligible_voters: number
@@ -63,6 +65,8 @@ export type LiveEvent = {
   id: string
   round: number
   name: string
+  /** Organisers only: when to open the round and any special instructions ("" when none). */
+  organiser_note: string
   status: EventStatus
   effective_status: EffectiveStatus
   planned_start_at: string | null
@@ -252,6 +256,11 @@ export type AdminEvent = {
   name: string
   description: string
   rules: string
+  /**
+   * Organisers only, never sent to participants: when to open the round and any special
+   * instructions. At most 2000 characters; may contain line breaks. Editable after opening.
+   */
+  organiser_note: string
   logo_asset_id: string | null
   logo_url: string | null
   status: EventStatus

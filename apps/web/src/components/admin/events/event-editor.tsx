@@ -14,6 +14,7 @@ import type { AdminBallot, AdminEvent, AdminNominee, EventDetail, EventsList } f
 import { formatWhen, isoToZonedInput, zonedInputToIso } from '@/lib/admin/zoned'
 import { ConfirmDialog } from '../confirm'
 import { ImageField, InputField, TextAreaField, ZonedDateTimeField } from '../form'
+import { ORGANISER_NOTE_HINT, ORGANISER_NOTE_MAX } from '../organiser-note'
 import { FlashRegion, LoadError, MiniButton, PageSkeleton, Panel, useDialog, useFlash } from '../primitives'
 import { AddBallotForm, BallotCard, type BallotActions } from './ballots'
 import { EventStatusChip, PublishedChip, readinessProblems } from './common'
@@ -151,7 +152,7 @@ export function EventEditor({ eventId }: { eventId: string }) {
       <div className="mt-5 space-y-3">
         {event.frozen ? (
           <Notice tone="info" title="Voting has opened, so ballots and nominees are locked">
-            You can still edit the event’s name, description, rules and logo, and each nominee’s affiliation, team members,
+            You can still edit the event’s name, description, rules, organiser note and logo, and each nominee’s affiliation, team members,
             description and photo. Ballot titles and nominee names accept small spelling corrections with a reason. Nothing can be added or
             removed: a different line-up needs a new event.
           </Notice>
@@ -284,15 +285,26 @@ function BackLink() {
   )
 }
 
-type Details = { name: string; description: string; rules: string; logo: { id: string | null; url: string | null } }
+type Details = {
+  name: string
+  description: string
+  rules: string
+  organiserNote: string
+  logo: { id: string | null; url: string | null }
+}
 const pickDetails = (e: AdminEvent): Details => ({
   name: e.name,
   description: e.description,
   rules: e.rules,
+  organiserNote: e.organiser_note ?? '',
   logo: { id: e.logo_asset_id, url: e.logo_url },
 })
 const sameDetails = (a: Details, b: Details) =>
-  a.name.trim() === b.name && a.description.trim() === b.description && a.rules.trim() === b.rules && a.logo.id === b.logo.id
+  a.name.trim() === b.name &&
+  a.description.trim() === b.description &&
+  a.rules.trim() === b.rules &&
+  a.organiserNote.trim() === b.organiserNote &&
+  a.logo.id === b.logo.id
 
 function StaleNotice({ onReload }: { onReload: () => void }) {
   return (
@@ -349,6 +361,7 @@ function DetailsForm({
     if (draft.name.trim() !== original.name) body.name = draft.name.trim()
     if (draft.description.trim() !== original.description) body.description = draft.description.trim()
     if (draft.rules.trim() !== original.rules) body.rules = draft.rules.trim()
+    if (draft.organiserNote.trim() !== original.organiserNote) body.organiser_note = draft.organiserNote.trim()
     if (draft.logo.id !== original.logo.id) {
       if (draft.logo.id) body.logo_asset_id = draft.logo.id
       else body.clear_logo = true
@@ -383,7 +396,11 @@ function DetailsForm({
   return (
     <Panel
       title="Event details"
-      description={event.frozen ? 'Edits after opening are recorded in the audit log.' : 'Shown to participants on the event card.'}
+      description={
+        event.frozen
+          ? 'Edits after opening are recorded in the audit log.'
+          : 'Shown to participants on the event card, except the organiser note.'
+      }
     >
       <form onSubmit={(e) => void save(e)} noValidate className="space-y-5">
         {stale ? <StaleNotice onReload={() => void reload()} /> : null}
@@ -412,6 +429,16 @@ function DetailsForm({
           onChange={(e) => setDraft({ ...draft, rules: e.target.value })}
           hint="For example: one vote per ballot; votes are final once submitted."
           error={errors.rules}
+        />
+        <TextAreaField
+          label="Organiser note"
+          optional
+          rows={4}
+          maxLength={ORGANISER_NOTE_MAX}
+          value={draft.organiserNote}
+          onChange={(e) => setDraft({ ...draft, organiserNote: e.target.value })}
+          hint={ORGANISER_NOTE_HINT}
+          error={errors.organiser_note}
         />
         <ImageField
           label="Event logo"

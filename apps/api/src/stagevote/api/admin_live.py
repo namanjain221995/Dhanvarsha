@@ -107,6 +107,8 @@ async def live_state(response: Response, db: AsyncSession = Depends(get_db)) -> 
             "id": str(e.id),
             "round": index,
             "name": e.name,
+            # Organisers only: when to open the round and any special instructions.
+            "organiser_note": e.organiser_note,
             "status": e.status,
             "effective_status": effective_status,
             "planned_start_at": e.planned_start_at,

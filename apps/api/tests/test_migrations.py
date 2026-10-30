@@ -1,6 +1,7 @@
-"""Migrations 0006 (sign-in links), 0007 (question ballots), 0008 (the opening page) and
-0009 (opening-page media), each on a throwaway database of its own: additive on the way
-up, and a downgrade that refuses to destroy data the previous schema cannot hold."""
+"""Migrations 0006 (sign-in links), 0007 (question ballots), 0008 (the opening page),
+0009 (opening-page media) and 0010 (organiser notes), each on a throwaway database of its
+own: additive on the way up, and a downgrade that refuses to destroy data the previous
+schema cannot hold."""
 
 from __future__ import annotations
 
@@ -15,7 +16,9 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from helpers import (
     TEST_DB_PREFIX,
+    BallotInfo,
     DatabaseInfo,
+    EventInfo,
     Factory,
     create_database,
     database_named,
@@ -26,7 +29,7 @@ from stagevote.config import get_settings
 from stagevote.db import asyncpg_dsn, build_engine
 from stagevote.security import new_token, token_hash
 
-HEAD = "0009"
+HEAD = "0011"
 
 LINK_COLUMNS = (
     "SELECT column_name, data_type, is_nullable FROM information_schema.columns "
@@ -70,6 +73,38 @@ async def old_programme(owner: asyncpg.Connection, name: str) -> uuid.UUID:
         name,
     )
     return programme_id
+
+
+async def old_event(owner: asyncpg.Connection, programme_id: uuid.UUID, name: str) -> EventInfo:
+    """A round with one team ballot and three nominees made under an earlier release, with
+    SQL and only the columns every revision has (like `old_programme`)."""
+    event_id, ballot_id = uuid.uuid4(), uuid.uuid4()
+    await owner.execute(
+        "INSERT INTO events (id, programme_id, position, name, description, rules, status, version) "
+        "VALUES ($1, $2, 1, $3, '', '', 'upcoming', 1)",
+        event_id,
+        programme_id,
+        name,
+    )
+    await owner.execute(
+        "INSERT INTO ballots (id, programme_id, event_id, position, title, kind, description) "
+        "VALUES ($1, $2, $3, 1, $4, 'team', '')",
+        ballot_id,
+        programme_id,
+        event_id,
+        f"{name} ballot 1",
+    )
+    nominee_ids = [uuid.uuid4() for _ in range(3)]
+    for position, nominee_id in enumerate(nominee_ids, start=1):
+        await owner.execute(
+            "INSERT INTO nominees (id, ballot_id, position, name, affiliation, description) "
+            "VALUES ($1, $2, $3, $4, '', '')",
+            nominee_id,
+            ballot_id,
+            position,
+            f"Act 1.{position}",
+        )
+    return EventInfo(event_id, name, [BallotInfo(ballot_id, nominee_ids)])
 
 
 async def test_0006_adds_sign_in_links_and_refuses_to_destroy_them(scratch: DatabaseInfo) -> None:
@@ -170,7 +205,7 @@ async def test_0007_adds_question_ballots_and_refuses_to_destroy_answers(scratch
     try:
         # A vote recorded under the previous release.
         programme_id = await old_programme(owner, "Before questions")
-        event = await factory.create_event(programme_id, name="Before")
+        event = await old_event(owner, programme_id, "Before")
         person = await factory.create_participant(programme_id)
         session_id = uuid.uuid4()
         await owner.execute(
@@ -411,6 +446,102 @@ async def test_0009_adds_opening_media_and_refuses_to_drop_it(scratch: DatabaseI
         await alembic(scratch, "head")
         assert await owner.fetchval("SELECT version_num FROM alembic_version") == HEAD
         assert [r["conname"] for r in await owner.fetch(ASSET_KIND_CHECKS)] == ["ck_assets_kind"]
+    finally:
+        await app.close()
+        await owner.close()
+
+
+NOTE_COLUMN = (
+    "SELECT data_type, is_nullable, column_default FROM information_schema.columns "
+    "WHERE table_name = 'events' AND column_name = 'organiser_note'"
+)
+
+
+async def test_0010_adds_organiser_notes_and_drops_them_on_downgrade(scratch: DatabaseInfo) -> None:
+    await alembic(scratch, "0009")
+    owner = await connect(scratch.owner_url)
+    app = await connect(scratch.app_url)
+    try:
+        # A round made under the previous release.
+        programme_id = await old_programme(owner, "Dhanvarsha 2026")
+        event_id = (await old_event(owner, programme_id, "P01 — Before the event")).id
+
+        await alembic(scratch, "0010")
+        assert tuple(await owner.fetchrow(NOTE_COLUMN)) == ("text", "NO", "''::text")
+        assert await owner.fetchval("SELECT organiser_note FROM events WHERE id = $1", event_id) == ""
+
+        # The runtime role writes a note with line breaks through its existing grants; the
+        # length is checked in the database too.
+        note = "P01 · Main event poll sequence\nWhen to show: Before the opening video."
+        await app.execute("UPDATE events SET organiser_note = $1 WHERE id = $2", note, event_id)
+        assert await app.fetchval("SELECT organiser_note FROM events WHERE id = $1", event_id) == note
+        with pytest.raises(asyncpg.CheckViolationError):
+            await app.execute("UPDATE events SET organiser_note = $1 WHERE id = $2", "x" * 2001, event_id)
+
+        await alembic(scratch, "0009", downgrade=True)
+        assert await owner.fetchval("SELECT version_num FROM alembic_version") == "0009"
+        assert await owner.fetchrow(NOTE_COLUMN) is None
+        assert (
+            await owner.fetchval("SELECT name FROM events WHERE id = $1", event_id)
+            == "P01 — Before the event"
+        )
+
+        await alembic(scratch, "head")
+        assert await owner.fetchval("SELECT version_num FROM alembic_version") == HEAD
+        assert await owner.fetchval("SELECT organiser_note FROM events WHERE id = $1", event_id) == ""
+    finally:
+        await app.close()
+        await owner.close()
+
+
+SIZE_COLUMN = (
+    "SELECT data_type FROM information_schema.columns "
+    "WHERE table_name = 'assets' AND column_name = 'byte_size'"
+)
+
+
+async def test_0011_makes_asset_sizes_64_bit(scratch: DatabaseInfo) -> None:
+    await alembic(scratch, "0010")
+    owner = await connect(scratch.owner_url)
+    app = await connect(scratch.app_url)
+    try:
+        picture = uuid.uuid4()
+        await owner.execute(
+            INSERT_ASSET.format(extra="", extra_value=""),
+            picture,
+            "event_logo",
+            f"{picture.hex}.webp",
+            "image/webp",
+        )
+        assert await owner.fetchval(SIZE_COLUMN) == "integer"
+
+        await alembic(scratch, "0011")
+        assert await owner.fetchval(SIZE_COLUMN) == "bigint"
+        assert await owner.fetchval("SELECT byte_size FROM assets WHERE id = $1", picture) == 10
+
+        # A video of 5 GiB, stored by the runtime role.
+        video = uuid.uuid4()
+        size = 5 * 1024**3
+        await app.execute(
+            INSERT_ASSET.format(extra="", extra_value="").replace(", 10,", ", $5,"),
+            video,
+            "opening_media",
+            f"{video.hex}.mp4",
+            "video/mp4",
+            size,
+        )
+        assert await app.fetchval("SELECT byte_size FROM assets WHERE id = $1", video) == size
+
+        # The previous schema cannot hold it: the downgrade fails and changes nothing.
+        with pytest.raises(Exception, match="out of range"):
+            await alembic(scratch, "0010", downgrade=True)
+        assert await owner.fetchval("SELECT version_num FROM alembic_version") == "0011"
+
+        await owner.execute("DELETE FROM assets WHERE id = $1", video)
+        await alembic(scratch, "0010", downgrade=True)
+        assert await owner.fetchval(SIZE_COLUMN) == "integer"
+        await alembic(scratch, "head")
+        assert await owner.fetchval(SIZE_COLUMN) == "bigint"
     finally:
         await app.close()
         await owner.close()

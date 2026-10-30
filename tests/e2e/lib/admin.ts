@@ -69,8 +69,24 @@ export class Admin {
     return this.call<{
       live_version: number
       current_event: { id: string; name: string } | null
-      events: { id: string; name: string; status: string; round: number }[]
+      events: { id: string; name: string; status: string; round: number; organiser_note: string }[]
     }>('get', '/live')
+  }
+
+  /** One event as the console's editor loads it. */
+  event(eventId: string) {
+    return this.call<{
+      event: { id: string; version: number; organiser_note: string; ballots: { id: string; title: string; kind: BallotKind }[] }
+    }>('get', `/events/${eventId}`)
+  }
+
+  /** Add nominees or answer options to a ballot, in this order. */
+  async addNominees(ballotId: string, names: string[]) {
+    for (const name of names) await this.call('post', `/ballots/${ballotId}/nominees`, { name })
+  }
+
+  patchBallot(ballotId: string, changes: { title?: string; description?: string }) {
+    return this.call('patch', `/ballots/${ballotId}`, changes)
   }
 
   async programme() {
@@ -211,6 +227,7 @@ export class Admin {
         ballots: {
           title: string
           kind: BallotKind
+          description: string
           total_votes: number
           nominees: { name: string; votes: number }[]
           /** Typed-answer questions only. */

@@ -9,6 +9,7 @@ import { formatWhen } from '@/lib/admin/zoned'
 import { serverClock, useServerNow } from '@/lib/time'
 import { ConfirmDialog } from '../confirm'
 import { CheckboxField, SelectField } from '../form'
+import { OrganiserNote } from '../organiser-note'
 import { DeadlinePicker, initialDeadline, resolveDeadline, type DeadlineChoice } from './deadline'
 
 export type LiveBody = Record<string, unknown>
@@ -93,6 +94,7 @@ export function OpenEventDialog({ state, timeZone, busy, error, onSubmit, onClos
   const [localError, setLocalError] = useState<string | null>(null)
   const blocker = useOpenBlocker(state, timeZone)
   const accessClose = state.programme.login_closes_at
+  const selected = upcoming.find((event) => event.id === eventId)
 
   const submit = () => {
     const result = resolveDeadline(choice, { nowMs: serverClock.now(), timeZone, accessCloseIso: accessClose })
@@ -127,6 +129,7 @@ export function OpenEventDialog({ state, timeZone, busy, error, onSubmit, onClos
       ) : (
         <div className="space-y-5">
           <EventSelect state={state} value={eventId} onChange={setEventId} label="Event to open" />
+          {selected ? <OrganiserNote note={selected.organiser_note} eventName={selected.name} className="-mt-2" /> : null}
           <DeadlinePicker
             value={choice}
             onChange={(next) => {
@@ -196,6 +199,7 @@ export function StartNextDialog({ state, timeZone, busy, error, onSubmit, onClos
       ) : (
         <div className="space-y-5">
           <EventSelect state={state} value={eventId} onChange={setEventId} label="Event to open" />
+          {selected ? <OrganiserNote note={selected.organiser_note} eventName={selected.name} className="-mt-2" /> : null}
           <div className="grid items-center gap-2 rounded-2xl border border-sand bg-ivory p-4 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]">
             <div className="min-w-0">
               <p className="flex items-center gap-1.5 text-sm text-plum-soft">

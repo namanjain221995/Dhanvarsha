@@ -24,8 +24,11 @@ from ..models import Asset
 from ..state import audit
 
 MAX_PIXELS = 40_000_000
-# Pillow only raises above twice this value; the explicit check below enforces MAX_PIXELS.
-Image.MAX_IMAGE_PIXELS = MAX_PIXELS
+# A picture for the big screen may come straight from a camera or a print file. It is
+# scaled down to MAX_EDGE before it is stored.
+MAX_MEDIA_PIXELS = 250_000_000
+# Pillow only raises above twice this value; the explicit check below enforces each limit.
+Image.MAX_IMAGE_PIXELS = MAX_MEDIA_PIXELS
 ALLOWED_FORMATS = {"JPEG", "PNG", "WEBP", "GIF"}
 # opening_media is shown full screen on a projector or LED wall, so it keeps up to 4K.
 MAX_EDGE = {
@@ -52,25 +55,37 @@ def _trim_transparent(img: Image.Image) -> Image.Image:
     return img.crop((left, top, right, bottom))
 
 
-def process_image(data: bytes, kind: str) -> tuple[bytes, int, int]:
-    """Check, decode and re-encode an image to WebP sized for `kind`: (webp, width, height)."""
+def process_image(data: bytes | Path, kind: str) -> tuple[bytes, int, int]:
+    """Check, decode and re-encode an image (its bytes or its file) to WebP sized for `kind`:
+    (webp, width, height)."""
+    limit = MAX_MEDIA_PIXELS if kind == "opening_media" else MAX_PIXELS
+    edge = MAX_EDGE.get(kind, 800)
+
+    def source() -> Image.Image:
+        return Image.open(data if isinstance(data, Path) else io.BytesIO(data))
+
     try:
-        with Image.open(io.BytesIO(data)) as probe:
+        with source() as probe:
             fmt = probe.format
-            if probe.width * probe.height > MAX_PIXELS:
-                raise AppError("IMAGE_TOO_LARGE", "Images must be at most 40 megapixels.", 422)
+            if probe.width * probe.height > limit:
+                raise AppError(
+                    "IMAGE_TOO_LARGE", f"Images must be at most {limit // 1_000_000} megapixels.", 422
+                )
             probe.verify()
     except (UnidentifiedImageError, OSError, Image.DecompressionBombError, SyntaxError) as exc:
         raise AppError("INVALID_IMAGE", "Upload a JPEG, PNG, WebP or GIF image.", 422) from exc
     if fmt not in ALLOWED_FORMATS:
         raise AppError("INVALID_IMAGE", "Upload a JPEG, PNG, WebP or GIF image.", 422)
-    with Image.open(io.BytesIO(data)) as source:
-        source.seek(0)
-        img: Image.Image = ImageOps.exif_transpose(source) or source
+    with source() as opened:
+        opened.seek(0)
+        if kind == "opening_media":
+            # A large JPEG decodes straight at a half, a quarter or an eighth of its size, never
+            # below the size it is stored at: far less memory and time.
+            opened.draft("RGB", (edge, edge))
+        img: Image.Image = ImageOps.exif_transpose(opened) or opened
         img = img.convert("RGBA") if img.mode in ("RGBA", "LA", "P") else img.convert("RGB")
         if kind == "programme_logo":
             img = _trim_transparent(img)
-        edge = MAX_EDGE.get(kind, 800)
         img.thumbnail((edge, edge), Image.Resampling.LANCZOS)
         out = io.BytesIO()
         img.save(out, format="WEBP", quality=84, method=4)

@@ -326,9 +326,10 @@ async def restart_programme(
 
     Votes are never deleted or changed (the database refuses it). Instead every current event
     is closed if open and archived, together with its ballots and votes, and an identical fresh
-    copy (name, description, rules, logo, ballots, nominees, team members) is created in the
-    same order with status `upcoming`. Participants can vote again on the copies; the archived
-    rounds keep their votes and audit trail but are hidden from participants and results.
+    copy (name, description, rules, organiser note, logo, ballots, nominees, team members) is
+    created in the same order with status `upcoming`. Participants can vote again on the
+    copies; the archived rounds keep their votes and audit trail but are hidden from
+    participants and results.
     Planned windows are copied only when they are still in the future.
     """
     async with db.begin():
@@ -392,6 +393,7 @@ async def restart_programme(
                 name=event.name,
                 description=event.description,
                 rules=event.rules,
+                organiser_note=event.organiser_note,
                 logo_asset_id=event.logo_asset_id,
                 status="upcoming",
                 planned_start_at=event.planned_start_at if future else None,

@@ -60,6 +60,39 @@ On AWS EC2, follow [deploy-ec2.md](deploy-ec2.md): `scripts/server-setup.sh` and
 - **Backups**: `scripts/backup.sh -f compose.prod.yaml` and practise a restore on a
   spare machine (see below).
 
+## Loading the Dhanvarsha audience polls
+
+The audience polls of the event brief ship with the API
+(`apps/api/src/stagevote/data/dhanvarsha_audience_polls.json`, wording exactly as in the
+brief). `stagevote load-polls` puts them into the active programme in one step: one round
+per poll with one ballot (the question) and its options in order. P01–P14 become rounds
+1–14 and the optional break polls B01–B02 come last, so the main sequence keeps its
+numbers; open B01/B02 by hand during the break after P09. Each round carries an
+**organiser note** (when to open it and any special instruction, such as P04's "the
+official winner is decided by the highest bid"), shown only in the console.
+
+```sh
+# Local (development stack; rebuild the image first if the code changed)
+docker compose run --rm migrate stagevote load-polls --archive-others
+# Production, after deploying the release that adds organiser notes (migration 0010)
+docker compose -f compose.prod.yaml run --rm migrate stagevote load-polls --archive-others
+```
+
+- It refuses to run while any round is open (close it in *Live control* first) and then
+  changes nothing.
+- Rounds are matched by their exact name. A missing poll is created; a round that never
+  opened is brought in line with the file; a round that already opened keeps its ballot
+  and options (they froze when voting opened) and only gets the note.
+- The polls take the first places in the running order; other rounds follow.
+  `--archive-others` archives every other round, exactly like *Archive* in the console:
+  votes are kept, and an archived round can be restored from *Events* (the *Archived*
+  panel › *Restore…*). Leave the flag out to keep the other rounds after the polls.
+- It prints one line per poll (`created`, `updated`, `unchanged` or
+  `kept (already opened)`) and one per archived round. Running it again changes nothing.
+- `--file other.json` loads another file of the same shape (inside the container, so mount
+  or copy it in first). Notes stay editable afterwards in the event editor, also after the
+  round has opened; every change is in the audit log.
+
 ## The day before
 
 - Rehearse with a test round and two or three test participants on real phones over the
@@ -162,9 +195,10 @@ docker compose -f compose.prod.yaml run --rm migrate stagevote reconcile
 
 - Every uploaded file lives in the `media` volume (`/data/media` in the API containers,
   served by Caddy from `/srv/media`): pictures as WebP, and the images and videos opening-page
-  cards show full screen. Videos are kept exactly as uploaded, up to `MAX_MEDIA_BYTES`
-  (default 1 GiB) each; images shown full screen up to `MAX_MEDIA_IMAGE_BYTES` (40 MB) and
-  40 megapixels, stored as WebP of at most 3840 px.
+  cards show full screen. Videos are kept exactly as uploaded. There is no size limit by
+  default (`MAX_MEDIA_BYTES` and `MAX_MEDIA_IMAGE_BYTES` are 0; set them in `.env` to add
+  one). Images shown full screen may have up to 250 megapixels and are stored as WebP of at
+  most 3840 px.
 - An upload is refused (507) unless the volume keeps 1 GiB free beyond the file. Unfinished
   uploads wait in `/data/media/.uploads/` and are removed the next time an upload starts
   after 24 hours without a chunk. Check the space with

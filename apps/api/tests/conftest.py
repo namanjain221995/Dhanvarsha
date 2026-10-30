@@ -131,8 +131,8 @@ TEST_ENV = {
     "PROGRAMME_TIMEZONE": "Asia/Kolkata",
     "MEDIA_ROOT": tempfile.mkdtemp(prefix="stagevote-test-media-"),
     "MAX_UPLOAD_BYTES": str(5 * 1024 * 1024),
-    "MAX_MEDIA_BYTES": str(1024 * 1024 * 1024),
-    "MAX_MEDIA_IMAGE_BYTES": str(40 * 1024 * 1024),
+    "MAX_MEDIA_BYTES": "0",
+    "MAX_MEDIA_IMAGE_BYTES": "0",
     "LOG_LEVEL": "INFO",
 }
 os.environ.update(TEST_ENV)

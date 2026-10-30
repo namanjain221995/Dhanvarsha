@@ -6,6 +6,7 @@ import { Avatar } from '@/components/ui/misc'
 import { useAdminQuery } from '@/lib/admin/query'
 import type { EventPreview, ProgrammeSettings } from '@/lib/admin/types'
 import { formatWhen } from '@/lib/admin/zoned'
+import { formatMembers } from '@/lib/members'
 import { LoadError, SkeletonBlock } from '../primitives'
 
 /**
@@ -133,7 +134,7 @@ export function EventPreviewDialog({ eventId, onClose }: { eventId: string; onCl
                           {ballot.kind === 'team' && nominee.members.length ? (
                             <p className="text-xs text-plum">
                               <span className="sr-only">Team members: </span>
-                              {nominee.members.join(', ')}
+                              {formatMembers(nominee.members)}
                             </p>
                           ) : null}
                           {nominee.description ? <p className="line-clamp-2 text-xs text-plum-soft">{nominee.description}</p> : null}

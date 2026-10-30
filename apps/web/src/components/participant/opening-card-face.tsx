@@ -1,6 +1,6 @@
 'use client'
 
-import { ChevronRight } from 'lucide-react'
+import { ArrowUpRight, ChevronRight } from 'lucide-react'
 import { useState } from 'react'
 import type { OpeningCard } from '@/lib/types'
 import { useOpenMedia } from './media-viewer'
@@ -63,11 +63,30 @@ function CardEmblem({ card }: { card: OpeningCard }) {
   )
 }
 
+const newTab = (href: string) => (href.startsWith('/') ? {} : { target: '_blank', rel: 'noopener noreferrer' })
+
+/** The round gold arrow beside the pill of a card with a picture or video and a link too. */
+function LinkArrow({ card, href }: { card: OpeningCard; href: string }) {
+  const external = !href.startsWith('/')
+  return (
+    <a
+      href={href}
+      data-opening-link=""
+      title="Open the link"
+      aria-label={`Open the link for ${card.title}${external ? ' (opens in a new tab)' : ''}`}
+      className="opening-link"
+      {...newTab(href)}
+    >
+      <ArrowUpRight aria-hidden className="opening-link-arrow" strokeWidth={2.5} />
+    </a>
+  )
+}
+
 /**
  * The gold pill. With an uploaded picture or video it is a button that shows it full screen
- * (media-viewer.tsx); otherwise, with a link, a real link (other sites open in a new tab);
- * without either it is decoration only, so it never looks like a broken button and never takes
- * focus.
+ * (media-viewer.tsx), and a link as well gets a round arrow beside it; otherwise, with a link,
+ * the pill is a real link (other sites open in a new tab); without either it is decoration
+ * only, so it never looks like a broken button and never takes focus.
  */
 function PlayButton({ card, label, actionRef }: { card: OpeningCard; label: string; actionRef?: React.RefCallback<HTMLElement> }) {
   const openMedia = useOpenMedia()
@@ -79,7 +98,7 @@ function PlayButton({ card, label, actionRef }: { card: OpeningCard; label: stri
     </>
   )
   if (card.media && openMedia) {
-    return (
+    const show = (
       <button
         ref={actionRef}
         type="button"
@@ -95,6 +114,13 @@ function PlayButton({ card, label, actionRef }: { card: OpeningCard; label: stri
           : {card.title} ({card.media.type === 'video' ? 'video' : 'picture'})
         </span>
       </button>
+    )
+    if (!href) return show
+    return (
+      <div className="opening-actions">
+        {show}
+        <LinkArrow card={card} href={href} />
+      </div>
     )
   }
   if (!href) {
@@ -112,7 +138,7 @@ function PlayButton({ card, label, actionRef }: { card: OpeningCard; label: stri
       data-variant="gold"
       data-opening-play=""
       className="opening-play"
-      {...(external ? { target: '_blank', rel: 'noopener noreferrer' } : {})}
+      {...newTab(href)}
     >
       {face}
       <span className="sr-only">

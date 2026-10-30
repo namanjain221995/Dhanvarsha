@@ -59,7 +59,7 @@ MediaType = Literal["image", "video"]
 
 _UPLOAD_ID = re.compile(r"[a-f0-9]{32}")
 _MB = 1024 * 1024
-_READ_BLOCK = 1024 * 1024
+_READ_BLOCK = 8 * 1024 * 1024
 INVALID_MEDIA = "Upload a JPEG, PNG, WebP or GIF image, or an MP4 or WebM video."
 # ISO base media files share MP4's "ftyp" box; these major brands are still images (HEIC,
 # AVIF), which a <video> element cannot play.
@@ -117,6 +117,11 @@ def _not_found() -> AppError:
     return AppError("NOT_FOUND", "This upload was not found. Start the upload again.", 404)
 
 
+def _over(size: int, limit: int) -> bool:
+    """A limit of 0 is no limit."""
+    return 0 < limit < size
+
+
 def _too_large(what: str, limit: int) -> AppError:
     return AppError("FILE_TOO_LARGE", f"{what} must be {limit // _MB} MB or smaller.", 413)
 
@@ -151,9 +156,9 @@ def check_size(size: int, content_type: str) -> None:
     """The limit for the kind of file the browser says it is. Complete checks the real kind."""
     settings = get_settings()
     if content_type.startswith("image/"):
-        if size > settings.max_media_image_bytes:
+        if _over(size, settings.max_media_image_bytes):
             raise _too_large("Images", settings.max_media_image_bytes)
-    elif size > settings.max_media_bytes:
+    elif _over(size, settings.max_media_bytes):
         raise _too_large("Videos", settings.max_media_bytes)
 
 
@@ -293,24 +298,13 @@ def _discard(upload_id: str) -> None:
     _meta(upload_id).unlink(missing_ok=True)
 
 
-def _read_all(fd: int, size: int) -> bytes:
-    chunks = []
-    position = 0
-    while position < size:
-        block = os.pread(fd, min(_READ_BLOCK, size - position), position)
-        if not block:
-            break
-        chunks.append(block)
-        position += len(block)
-    return b"".join(chunks)
-
-
-def _store_image(fd: int, size: int) -> Stored:
+def _store_image(part: Path, size: int) -> Stored:
     settings = get_settings()
-    if size > settings.max_media_image_bytes:
+    if _over(size, settings.max_media_image_bytes):
         raise _too_large("Images", settings.max_media_image_bytes)
     try:
-        encoded, width, height = process_image(_read_all(fd, size), KIND)
+        # Decoded from the file itself: a large picture is never read into memory whole.
+        encoded, width, height = process_image(part, KIND)
     except AppError as exc:
         if exc.code == "INVALID_IMAGE":
             raise AppError("INVALID_MEDIA", INVALID_MEDIA, 422) from exc
@@ -324,7 +318,7 @@ def _store_image(fd: int, size: int) -> Stored:
 
 def _store_video(fd: int, part: Path, size: int, content_type: str, extension: str) -> Stored:
     settings = get_settings()
-    if size > settings.max_media_bytes:
+    if _over(size, settings.max_media_bytes):
         raise _too_large("Videos", settings.max_media_bytes)
     digest = hashlib.sha256()
     position = 0
@@ -359,7 +353,7 @@ def _finish(upload: Upload) -> Stored:
             if content_type.startswith("video/"):
                 stored = _store_video(fd, part, received, content_type, extension)
             else:
-                stored = _store_image(fd, received)
+                stored = _store_image(part, received)
         except AppError:
             # The whole file is here and was refused: sending it again cannot change that.
             _discard(upload.upload_id)

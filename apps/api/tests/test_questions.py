@@ -390,7 +390,7 @@ async def test_published_results_never_show_typed_answers_to_voters(world: World
     detail = (await voter.event(event_id)).json()
     mcq, question = detail["results"]
     assert (mcq["ballot_id"], mcq["kind"], mcq["total_votes"]) == (str(mcq_id), "mcq", 2)
-    assert question == {"ballot_id": str(question_id), "kind": "text", "answer_count": 2}
+    assert question == {"ballot_id": str(question_id), "kind": "text", "description": "", "answer_count": 2}
     text = dumps(detail)
     assert "First answer" not in text and "SUM(A1" not in text
 

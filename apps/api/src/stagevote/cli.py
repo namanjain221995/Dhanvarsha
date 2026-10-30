@@ -7,6 +7,9 @@ worker           run the background worker
 seed-demo        fill a pristine programme with 14 demo rounds and synthetic participants
 seed-rounds      add N blank events to fill in later (default 14; allowed in production)
 seed-sample-content  fill empty event descriptions and ballots with sample teams to replace later
+load-polls       put the audience polls of a JSON file (default: the Dhanvarsha polls) into the
+                 active programme, one round each; --archive-others archives every other round
+                 (allowed in production; refused while a round is open; safe to run again)
 seed-loadtest    create an isolated synthetic programme for load testing (non-production);
                  writes one sign-in link token per synthetic account
 sign-in-link     give one participant a new sign-in link and print it instead of emailing it
@@ -253,6 +256,27 @@ async def sign_in_link(email: str) -> str:
     return link
 
 
+async def load_polls(file: str | None = None, archive_others: bool = False) -> list[str]:
+    """Load the audience polls of a JSON file into the active programme in one transaction
+    (see stagevote/polls.py) and print one line per poll. Returns the printed lines."""
+    from pathlib import Path
+
+    from . import polls
+
+    source = Path(file) if file else polls.DEFAULT_FILE
+    items = polls.read_polls(source)
+    maker, engine = _owner_session()
+    try:
+        async with maker() as db, db.begin():
+            report = await polls.load_polls(db, items, archive_others=archive_others, source=str(source))
+    finally:
+        await engine.dispose()  # type: ignore[attr-defined]
+    lines = report.lines()
+    for line in lines:
+        print(line)
+    return lines
+
+
 async def reconcile(slug: str | None) -> int:
     """Check that aggregates equal the stored votes and that no duplicates exist.
 
@@ -404,6 +428,15 @@ def main(argv: list[str] | None = None) -> int:
     sr = sub.add_parser("seed-rounds")
     sr.add_argument("--count", type=int, default=14)
     sub.add_parser("seed-sample-content")
+    lp = sub.add_parser("load-polls")
+    lp.add_argument(
+        "--file", help="polls JSON file (default: the Dhanvarsha audience polls shipped with StageVote)"
+    )
+    lp.add_argument(
+        "--archive-others",
+        action="store_true",
+        help="archive every other event of the active programme (they can be restored from the console)",
+    )
     sl = sub.add_parser("seed-loadtest")
     sl.add_argument("--participants", type=int, default=500)
     sl.add_argument("--events", type=int, default=4)
@@ -444,6 +477,8 @@ def main(argv: list[str] | None = None) -> int:
         from .seed import seed_sample_content
 
         asyncio.run(seed_sample_content())
+    elif args.command == "load-polls":
+        asyncio.run(load_polls(args.file, args.archive_others))
     elif args.command == "seed-loadtest":
         from .seed import seed_loadtest
 

@@ -1,0 +1,405 @@
+{
+  "source": "Dhanvarsha_Audience_Poll_Claude_Code.md (from Dhanvarsha_Audience_Poll_Tech_Brief.docx)",
+  "polls": [
+    {
+      "id": "P01",
+      "name": "P01 — Before the event",
+      "organiser_note": "When to show: Before the opening video.\nSection: Main event poll sequence",
+      "ballot": {
+        "kind": "mcq",
+        "title": "Dhanvarsha is about to begin! How are you feeling?",
+        "description": "",
+        "options": [
+          {
+            "name": "Super excited!"
+          },
+          {
+            "name": "Curious about the surprises"
+          },
+          {
+            "name": "Ready to cheer for my team"
+          },
+          {
+            "name": "Still settling in"
+          }
+        ]
+      }
+    },
+    {
+      "id": "P02",
+      "name": "P02 — The Call That Changes Everything",
+      "organiser_note": "When to show: After the opening video.\nSection: Main event poll sequence",
+      "ballot": {
+        "kind": "mcq",
+        "title": "What touched you most about TechSara's candidate journey?",
+        "description": "",
+        "options": [
+          {
+            "name": "The hope behind every candidate's journey"
+          },
+          {
+            "name": "The effort behind every opportunity"
+          },
+          {
+            "name": "The teamwork that makes it happen"
+          },
+          {
+            "name": "The impact of a life-changing call"
+          }
+        ]
+      }
+    },
+    {
+      "id": "P03",
+      "name": "P03 — Sahil Sir's Video",
+      "organiser_note": "When to show: After Sahil Sir's video.\nSection: Main event poll sequence",
+      "ballot": {
+        "kind": "mcq",
+        "title": "How do you feel after watching the story behind TechSara's journey?",
+        "description": "",
+        "options": [
+          {
+            "name": "Inspired to dream bigger"
+          },
+          {
+            "name": "Proud to be part of TechSara"
+          },
+          {
+            "name": "More connected to our purpose"
+          },
+          {
+            "name": "Motivated to contribute more"
+          }
+        ]
+      }
+    },
+    {
+      "id": "P04",
+      "name": "P04 — TechSara Placement League",
+      "organiser_note": "When to show: After all Marketing pairs complete the segment.\nLabel the result Audience Favourite. The official winner is decided by the highest bid.\nSection: Department Challenge Polls",
+      "ballot": {
+        "kind": "team",
+        "title": "Which pair impressed you most with their bidding strategy and teamwork?",
+        "description": "Audience Favourite. The official winner is decided by the highest bid.",
+        "options": [
+          {
+            "name": "Jaimin & Sakshi"
+          },
+          {
+            "name": "Jahnvi & Riya"
+          },
+          {
+            "name": "Lokesh & Jackson"
+          },
+          {
+            "name": "Rutu & Avinash"
+          },
+          {
+            "name": "Shubham & Yash"
+          }
+        ]
+      }
+    },
+    {
+      "id": "P05",
+      "name": "P05 — Candidate Ki Adalat",
+      "organiser_note": "When to show: After all three employees have answered.\nSection: Department Challenge Polls",
+      "ballot": {
+        "kind": "individual",
+        "title": "Who gave the most correct, practical and appropriate answers?",
+        "description": "",
+        "options": [
+          {
+            "name": "Ishita"
+          },
+          {
+            "name": "Arpita"
+          },
+          {
+            "name": "Srishti"
+          }
+        ]
+      }
+    },
+    {
+      "id": "P06",
+      "name": "P06 — Training Challenge",
+      "organiser_note": "When to show: After all three trainers have performed.\nCreate one combined vote covering both character performance and topic explanation.\nSection: Department Challenge Polls",
+      "ballot": {
+        "kind": "individual",
+        "title": "Who gave the best overall performance by bringing their Bollywood character to life and explaining the topic clearly?",
+        "description": "",
+        "options": [
+          {
+            "name": "Suyash"
+          },
+          {
+            "name": "Maithilya"
+          },
+          {
+            "name": "Ronak"
+          }
+        ]
+      }
+    },
+    {
+      "id": "P07",
+      "name": "P07 — Snake and Leaders",
+      "organiser_note": "When to show: After the IS Department game.\nUse skill options only. No employee voting in this segment.\nSection: Department Challenge Polls",
+      "ballot": {
+        "kind": "mcq",
+        "title": "Which skill mattered most in Snake and Leaders?",
+        "description": "",
+        "options": [
+          {
+            "name": "Clear communication"
+          },
+          {
+            "name": "Teamwork"
+          },
+          {
+            "name": "Quick thinking"
+          },
+          {
+            "name": "Decision-making under pressure"
+          }
+        ]
+      }
+    },
+    {
+      "id": "P08",
+      "name": "P08 — Kaun Banega Policy-Pati",
+      "organiser_note": "When to show: After both HR participants complete the challenge.\nShow as a fun audience preference.\nSection: HR Honours and Performance Polls",
+      "ballot": {
+        "kind": "individual",
+        "title": "Who impressed you most with their policy knowledge and answers?",
+        "description": "",
+        "options": [
+          {
+            "name": "Anita"
+          },
+          {
+            "name": "Athar"
+          }
+        ]
+      }
+    },
+    {
+      "id": "P09",
+      "name": "P09 — Part One Professional Honours",
+      "organiser_note": "When to show: Immediately after Part One Professional Honours and before the break.\nSection: HR Honours and Performance Polls",
+      "ballot": {
+        "kind": "mcq",
+        "title": "After the celebrations and recognition, how are you feeling about Dhanvarsha so far?",
+        "description": "",
+        "options": [
+          {
+            "name": "Proud of our people"
+          },
+          {
+            "name": "Inspired by the achievements"
+          },
+          {
+            "name": "Happy and a little emotional"
+          },
+          {
+            "name": "Excited for what comes next"
+          }
+        ]
+      }
+    },
+    {
+      "id": "P10",
+      "name": "P10 — Roast-o-Sphere Error 404 Not Found",
+      "organiser_note": "When to show: After the skit.\nSection: HR Honours and Performance Polls",
+      "ballot": {
+        "kind": "individual",
+        "title": "Who stood out most in the skit with their acting, expressions and comic timing?",
+        "description": "",
+        "options": [
+          {
+            "name": "Jay Soni"
+          },
+          {
+            "name": "Jay Thakkar"
+          },
+          {
+            "name": "Jigar Prajapati"
+          },
+          {
+            "name": "Diya Panchori"
+          },
+          {
+            "name": "Heet Dedakiya"
+          },
+          {
+            "name": "Jayesh Prajapati"
+          }
+        ]
+      }
+    },
+    {
+      "id": "P11",
+      "name": "P11 — Leaders Challenge Managers Catan Game",
+      "organiser_note": "When to show: After the Leaders' Challenge.\nSection: HR Honours and Performance Polls",
+      "ballot": {
+        "kind": "individual",
+        "title": "Who was your favourite leader in the challenge?",
+        "description": "",
+        "options": [
+          {
+            "name": "Chintan"
+          },
+          {
+            "name": "Kunal"
+          },
+          {
+            "name": "Krushangi"
+          },
+          {
+            "name": "Nishesh"
+          },
+          {
+            "name": "Abhijeeth"
+          },
+          {
+            "name": "Nikhil"
+          },
+          {
+            "name": "Anushree"
+          }
+        ]
+      }
+    },
+    {
+      "id": "P12",
+      "name": "P12 — TechSara Shark Tank",
+      "organiser_note": "When to show: After all three teams have pitched and completed questions.\nUse the idea names as the main option labels and the team members as supporting text.\nSection: Ideas Conversations and Closing Polls",
+      "ballot": {
+        "kind": "team",
+        "title": "Which team presented the best idea for TechSara's growth?",
+        "description": "",
+        "options": [
+          {
+            "name": "Swayam AI",
+            "members": [
+              "Naman",
+              "Heet"
+            ]
+          },
+          {
+            "name": "Algo Lens",
+            "members": [
+              "Suyash",
+              "Maithilya"
+            ]
+          },
+          {
+            "name": "Project YOG",
+            "members": [
+              "Srishti",
+              "Ishita G.",
+              "Nikita"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "P13",
+      "name": "P13 — Owners Conversation",
+      "organiser_note": "When to show: After the conversation with Sahil and Rajvi.\nSection: Ideas Conversations and Closing Polls",
+      "ballot": {
+        "kind": "mcq",
+        "title": "How did the conversation with Sahil and Rajvi make you feel?",
+        "description": "",
+        "options": [
+          {
+            "name": "Inspired by their vision"
+          },
+          {
+            "name": "More connected to TechSara"
+          },
+          {
+            "name": "Proud to be part of the journey"
+          },
+          {
+            "name": "Excited about our future"
+          }
+        ]
+      }
+    },
+    {
+      "id": "P14",
+      "name": "P14 — End of the event",
+      "organiser_note": "When to show: At the close of Dhanvarsha.\nSection: Ideas Conversations and Closing Polls",
+      "ballot": {
+        "kind": "mcq",
+        "title": "How are you feeling as Dhanvarsha comes to an end?",
+        "description": "",
+        "options": [
+          {
+            "name": "Inspired and motivated"
+          },
+          {
+            "name": "Happy and more connected"
+          },
+          {
+            "name": "Proud of our team"
+          },
+          {
+            "name": "Emotional, with plenty of memories"
+          }
+        ]
+      }
+    },
+    {
+      "id": "B01",
+      "name": "B01 — Optional break question",
+      "organiser_note": "When to show: During the break.\nOptional. Keep it out of the main P01–P14 sequence: open it only during the break after P09 (Part One Professional Honours).\nSection: Optional questions during the break",
+      "ballot": {
+        "kind": "mcq",
+        "title": "What has made the evening special for you so far?",
+        "description": "",
+        "options": [
+          {
+            "name": "Seeing colleagues shine on stage"
+          },
+          {
+            "name": "Celebrating everyone's hard work"
+          },
+          {
+            "name": "Hearing the stories behind our journey"
+          },
+          {
+            "name": "Spending time together beyond work"
+          }
+        ]
+      }
+    },
+    {
+      "id": "B02",
+      "name": "B02 — Optional break question",
+      "organiser_note": "When to show: During the break.\nOptional. Keep it out of the main P01–P14 sequence: open it only during the break after P09 (Part One Professional Honours).\nSection: Optional questions during the break",
+      "ballot": {
+        "kind": "mcq",
+        "title": "What are you most looking forward to in the second half?",
+        "description": "",
+        "options": [
+          {
+            "name": "The Roast-o-Sphere skit"
+          },
+          {
+            "name": "Watching the leaders compete"
+          },
+          {
+            "name": "The Shark Tank ideas"
+          },
+          {
+            "name": "The conversation with our owners"
+          }
+        ]
+      }
+    }
+  ]
+}

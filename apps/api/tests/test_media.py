@@ -266,9 +266,26 @@ async def test_a_full_chunk_passes_and_a_larger_one_is_refused(world: World) -> 
     assert_error(resp, 413, "PAYLOAD_TOO_LARGE")
 
 
+async def test_files_have_no_size_limit_by_default(world: World, monkeypatch: pytest.MonkeyPatch) -> None:
+    admin = await world.admin()
+    settings = get_settings()
+    assert (settings.max_media_bytes, settings.max_media_image_bytes) == (0, 0)
+    # Only the free disk space counts, far past the 2 GiB of a 32-bit size.
+    monkeypatch.setattr(media, "_free_bytes", lambda _path: 1024**4)
+    for name, size, content_type in (
+        ("film.mp4", 50 * 1024**3, "video/mp4"),
+        ("poster.png", 3 * 1024**3, "image/png"),
+    ):
+        upload_id = (await admin.start_media(name, size, content_type)).json()["upload_id"]
+        assert (await admin.delete(f"/media/uploads/{upload_id}")).status_code == 204
+
+
 async def test_files_over_the_limits_are_refused(world: World, monkeypatch: pytest.MonkeyPatch) -> None:
     admin = await world.admin()
     settings = get_settings()
+    # An operator can still set limits (MAX_MEDIA_BYTES, MAX_MEDIA_IMAGE_BYTES).
+    monkeypatch.setattr(settings, "max_media_bytes", 1024 * 1024 * 1024)
+    monkeypatch.setattr(settings, "max_media_image_bytes", 40 * 1024 * 1024)
     error = assert_error(
         await admin.start_media("huge.mp4", settings.max_media_bytes + 1, "video/mp4"), 413, "FILE_TOO_LARGE"
     )

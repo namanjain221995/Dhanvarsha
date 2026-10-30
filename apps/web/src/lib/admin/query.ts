@@ -207,8 +207,6 @@ export function uploadAsset(kind: AssetKind, file: File): Promise<UploadedAsset>
   return adminAction<UploadedAsset>('/admin/assets', { form, timeoutMs: 60_000 })
 }
 
-/** Pictures through the chunked upload are decoded on the server, up to this size. */
-export const MAX_MEDIA_IMAGE_BYTES = 40 * 1024 * 1024
 /** Network errors (or time-outs) tolerated per chunk before the upload gives up. */
 const CHUNK_RETRIES = 3
 

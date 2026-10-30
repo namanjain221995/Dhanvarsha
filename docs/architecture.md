@@ -301,7 +301,7 @@ Gmail provider uses a separate HTTP connection per send (httplib2 is not thread-
 
 ## Uploads
 
-Images are checked against a 40-megapixel limit before decoding, then decoded with Pillow, EXIF-rotated,
+Images are checked against a 40-megapixel limit (250 for opening-page media) before decoding, then decoded with Pillow, EXIF-rotated,
 resized, re-encoded to WebP, stored under random names, and served by Caddy with
 `nosniff` and immutable caching. SVG and other non-raster formats are rejected.
 

@@ -106,3 +106,6 @@ def test_images_over_40_megapixels_are_rejected_before_decoding() -> None:
     with pytest.raises(AppError) as caught:
         process_image(buffer.getvalue(), "event_logo")
     assert caught.value.code == "IMAGE_TOO_LARGE"
+    # A picture for the big screen may be larger; it is stored at most 3840 pixels wide.
+    _, width, height = process_image(buffer.getvalue(), "opening_media")
+    assert (width, height) == (3840, 2880)
