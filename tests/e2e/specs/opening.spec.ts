@@ -336,8 +336,8 @@ test.describe('opening page', () => {
     try {
       await page.goto('/admin/opening')
       await expect(page.getByRole('heading', { level: 1, name: 'Opening page' })).toBeVisible()
-      await expect(cardGroup(page, 1).getByText("With an image or video too, a round arrow beside the card's button opens this link.")).toBeVisible()
-      // Card 1 also gets a link: the round arrow beside its button.
+      await expect(cardGroup(page, 1).getByText('With an image or video too, an arrow at the bottom of it (shown full screen) opens this link.')).toBeVisible()
+      // Card 1 also gets a link: an arrow on its picture when it shows full screen.
       await cardGroup(page, 1).getByRole('textbox', { name: /^Link/ }).fill('https://example.com/game')
 
       // Card 1: a picture, made here. Card 2: a short real video, sent in chunks.
@@ -384,16 +384,25 @@ test.describe('opening page', () => {
       const show = big.locator('button[data-opening-play]')
       await expect(show).toHaveAccessibleName(new RegExp(`${pictureTitle}.*picture`))
       await expect(show).toBeFocused()
-      const arrow = big.locator('a[data-opening-link]')
-      await expect(arrow).toHaveAttribute('href', 'https://example.com/game')
-      await expect(arrow).toHaveAttribute('target', '_blank')
-      await expect(arrow).toHaveAccessibleName(`Open the link for ${pictureTitle} (opens in a new tab)`)
-      await arrow.click({ trial: true })
+      // The link is not on the card itself.
+      await expect(big.locator('[data-opening-link]')).toHaveCount(0)
       await show.click()
       const pictureViewer = viewer(screen, pictureTitle)
       await expect(pictureViewer).toBeVisible()
       const image = pictureViewer.getByRole('img', { name: pictureTitle, exact: true })
       await expect(image).toBeVisible()
+      // The arrow sits inside the picture, at the bottom, and takes clicks.
+      const arrow = pictureViewer.locator('a[data-opening-link]')
+      await expect(arrow).toHaveAttribute('href', 'https://example.com/game')
+      await expect(arrow).toHaveAttribute('target', '_blank')
+      await expect(arrow).toHaveAccessibleName(`Open the link for ${pictureTitle} (opens in a new tab)`)
+      await arrow.click({ trial: true })
+      await expect(image).toHaveAttribute('data-fit', '')
+      const [inner, outer] = [await arrow.boundingBox(), await image.boundingBox()]
+      expect(inner!.x).toBeGreaterThan(outer!.x)
+      expect(inner!.x + inner!.width).toBeLessThan(outer!.x + outer!.width)
+      expect(inner!.y + inner!.height).toBeLessThan(outer!.y + outer!.height)
+      expect(inner!.y).toBeGreaterThan(outer!.y + outer!.height / 2)
       await expect(image).toHaveAttribute('src', first!.media!.url)
       await expect.poll(() => fullscreenElement(screen)).toBe('HTML')
 
@@ -422,11 +431,11 @@ test.describe('opening page', () => {
       await big2.getByRole('button', { name: 'Reveal', exact: true }).click()
       const play = big2.locator('button[data-opening-play]')
       await expect(play).toHaveAccessibleName(new RegExp(`${videoTitle}.*video`))
-      // No link on this card: no arrow.
-      await expect(big2.locator('[data-opening-link]')).toHaveCount(0)
       await play.click()
       const videoViewer = viewer(screen, videoTitle)
       await expect(videoViewer).toBeVisible()
+      // No link on this card: no arrow.
+      await expect(videoViewer.locator('[data-opening-link]')).toHaveCount(0)
       const video = videoViewer.locator('video')
       await expect(video).toBeVisible()
       await expect(video).toHaveAttribute('src', /^\/media\/[a-f0-9]{32}\.(mp4|webm)$/)
@@ -451,8 +460,6 @@ test.describe('opening page', () => {
       await viewer(screen, pictureTitle).getByRole('button', { name: 'Close', exact: true }).click()
       await expect(viewer(screen, pictureTitle)).toBeHidden()
       await expect(gridButton).toBeFocused()
-      // The grid card's arrow takes clicks above the card itself.
-      await cards(screen).nth(0).locator('a[data-opening-link]').click({ trial: true })
       // Card 3 has no media and no link: still decoration only.
       expect(await cards(screen).nth(2).locator('[data-opening-play]').evaluate((el) => el.tagName)).toBe('SPAN')
     } finally {

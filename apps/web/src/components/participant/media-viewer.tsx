@@ -1,10 +1,11 @@
 'use client'
 
-import { Play, X } from 'lucide-react'
+import { ArrowUpRight, Play, X } from 'lucide-react'
 import { createContext, use, useCallback, useEffectEvent, useId, useLayoutEffect, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
 import type { OpeningCard, OpeningMedia } from '@/lib/types'
 import { enterFullscreen, leaveFullscreen, useIdleAttribute } from './fullscreen'
+import { newTab, safeHref } from './opening-link'
 import { lockScroll } from './scroll-lock'
 
 /*
@@ -17,12 +18,15 @@ import { lockScroll } from './scroll-lock'
  * browsers ask for); closing it gives full screen back only if the viewer took it, and when the
  * browser leaves that full screen (Escape held) the viewer closes too. What it shows is fixed
  * when it opens, so the page's 10-second refresh never closes it or restarts a video.
+ *
+ * A card with a link as well gets a round gold arrow at the bottom of its picture or video,
+ * which opens the link (other sites in a new tab).
  */
 
 /** Whether the open viewer took the page full screen, shared with the click that opened it. */
 type Takeover = { owns: boolean; over: boolean }
 
-type Shown = { media: OpeningMedia; title: string; opener: HTMLElement }
+type Shown = { media: OpeningMedia; title: string; link: string | null; opener: HTMLElement }
 
 export type OpenMedia = (card: OpeningCard, opener: HTMLElement) => void
 
@@ -53,7 +57,7 @@ export function MediaViewerProvider({ children }: { children: React.ReactNode })
         else current.owns = true
       })
     }
-    setShown({ media: { url: media.url, type: media.type }, title: card.title, opener })
+    setShown({ media: { url: media.url, type: media.type }, title: card.title, link: safeHref(card.link), opener })
   }, [])
 
   /** The viewer is closing: full screen goes back if the viewer took it (and `leave`). */
@@ -91,7 +95,7 @@ function MediaViewer({
   ownsFullscreen: () => boolean
   onClosed: () => void
 }) {
-  const { media, title, opener } = shown
+  const { media, title, link, opener } = shown
   const titleId = useId()
   const dialogRef = useRef<HTMLDialogElement>(null)
   const videoRef = useRef<HTMLVideoElement>(null)
@@ -132,9 +136,9 @@ function MediaViewer({
   }
 
   const onClick = (event: React.MouseEvent<HTMLDialogElement>) => {
-    // A click on the black around the picture or video closes; the media and the buttons do not
-    // (the video's own controls count as the video).
-    if (event.target instanceof Element && event.target.closest('img, video, button')) return
+    // A click on the black around the picture or video closes; the media, the buttons and the
+    // link do not (the video's own controls count as the video).
+    if (event.target instanceof Element && event.target.closest('img, video, button, a')) return
     requestClose()
   }
 
@@ -239,38 +243,53 @@ function MediaViewer({
       onClick={onClick}
     >
       <div className="media-viewer-stage">
-        {media.type === 'image' ? (
-          // eslint-disable-next-line @next/next/no-img-element -- re-encoded WebP from the API, shown at full size
-          <img
-            {...mediaProps}
-            alt={title}
-            decoding="async"
-            onLoad={(event) => {
-              const image = event.currentTarget
-              fit(image.naturalWidth, image.naturalHeight)
-              setLoading(false)
-              appear(image)
-            }}
-          />
-        ) : (
-          <video
-            ref={videoRef}
-            {...mediaProps}
-            controls
-            autoPlay
-            playsInline
-            preload="auto"
-            // The page is full screen already; the video's own full-screen button would only confuse.
-            controlsList="nofullscreen"
-            onLoadedMetadata={(event) => fit(event.currentTarget.videoWidth, event.currentTarget.videoHeight)}
-            onCanPlay={() => setLoading(false)}
-            onPlaying={() => {
-              setLoading(false)
-              setBlocked(false)
-            }}
-            onWaiting={() => setLoading(true)}
-          />
-        )}
+        {/* The picture or video in its own box, so the link's arrow sits on it. */}
+        <div className="media-viewer-frame">
+          {media.type === 'image' ? (
+            // eslint-disable-next-line @next/next/no-img-element -- re-encoded WebP from the API, shown at full size
+            <img
+              {...mediaProps}
+              alt={title}
+              decoding="async"
+              onLoad={(event) => {
+                const image = event.currentTarget
+                fit(image.naturalWidth, image.naturalHeight)
+                setLoading(false)
+                appear(image)
+              }}
+            />
+          ) : (
+            <video
+              ref={videoRef}
+              {...mediaProps}
+              controls
+              autoPlay
+              playsInline
+              preload="auto"
+              // The page is full screen already; the video's own full-screen button would only confuse.
+              controlsList="nofullscreen"
+              onLoadedMetadata={(event) => fit(event.currentTarget.videoWidth, event.currentTarget.videoHeight)}
+              onCanPlay={() => setLoading(false)}
+              onPlaying={() => {
+                setLoading(false)
+                setBlocked(false)
+              }}
+              onWaiting={() => setLoading(true)}
+            />
+          )}
+          {link ? (
+            <a
+              href={link}
+              data-opening-link=""
+              title="Open the link"
+              aria-label={`Open the link for ${title}${link.startsWith('/') ? '' : ' (opens in a new tab)'}`}
+              className="media-viewer-link media-viewer-chrome"
+              {...newTab(link)}
+            >
+              <ArrowUpRight aria-hidden strokeWidth={2.25} />
+            </a>
+          ) : null}
+        </div>
         {waiting ? <span aria-hidden className="media-viewer-spinner" /> : null}
         {failed ? (
           <p role="alert" className="media-viewer-error">

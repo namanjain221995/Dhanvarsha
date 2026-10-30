@@ -67,7 +67,10 @@ The audience polls of the event brief ship with the API
 brief). `stagevote load-polls` puts them into the active programme in one step: one round
 per poll with one ballot (the question) and its options in order. P01–P14 become rounds
 1–14 and the optional break polls B01–B02 come last, so the main sequence keeps its
-numbers; open B01/B02 by hand during the break after P09. Each round carries an
+numbers; open B01/B02 ("Break question 1" and "2") by hand during the break after P09.
+Round names carry no poll id: voters see "TechSara Placement League", not "P04 — …".
+Rounds loaded by the first release, named "P04 — …", are renamed in place, votes and all,
+the next time the command runs. Each round carries an
 **organiser note** (when to open it and any special instruction, such as P04's "the
 official winner is decided by the highest bid"), shown only in the console.
 

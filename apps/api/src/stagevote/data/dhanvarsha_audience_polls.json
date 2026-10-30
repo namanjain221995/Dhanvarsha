@@ -3,7 +3,7 @@
   "polls": [
     {
       "id": "P01",
-      "name": "P01 — Before the event",
+      "name": "Before the event",
       "organiser_note": "When to show: Before the opening video.\nSection: Main event poll sequence",
       "ballot": {
         "kind": "mcq",
@@ -27,7 +27,7 @@
     },
     {
       "id": "P02",
-      "name": "P02 — The Call That Changes Everything",
+      "name": "The Call That Changes Everything",
       "organiser_note": "When to show: After the opening video.\nSection: Main event poll sequence",
       "ballot": {
         "kind": "mcq",
@@ -51,7 +51,7 @@
     },
     {
       "id": "P03",
-      "name": "P03 — Sahil Sir's Video",
+      "name": "Sahil Sir's Video",
       "organiser_note": "When to show: After Sahil Sir's video.\nSection: Main event poll sequence",
       "ballot": {
         "kind": "mcq",
@@ -75,7 +75,7 @@
     },
     {
       "id": "P04",
-      "name": "P04 — TechSara Placement League",
+      "name": "TechSara Placement League",
       "organiser_note": "When to show: After all Marketing pairs complete the segment.\nLabel the result Audience Favourite. The official winner is decided by the highest bid.\nSection: Department Challenge Polls",
       "ballot": {
         "kind": "team",
@@ -102,7 +102,7 @@
     },
     {
       "id": "P05",
-      "name": "P05 — Candidate Ki Adalat",
+      "name": "Candidate Ki Adalat",
       "organiser_note": "When to show: After all three employees have answered.\nSection: Department Challenge Polls",
       "ballot": {
         "kind": "individual",
@@ -123,7 +123,7 @@
     },
     {
       "id": "P06",
-      "name": "P06 — Training Challenge",
+      "name": "Training Challenge",
       "organiser_note": "When to show: After all three trainers have performed.\nCreate one combined vote covering both character performance and topic explanation.\nSection: Department Challenge Polls",
       "ballot": {
         "kind": "individual",
@@ -144,7 +144,7 @@
     },
     {
       "id": "P07",
-      "name": "P07 — Snake and Leaders",
+      "name": "Snake and Leaders",
       "organiser_note": "When to show: After the IS Department game.\nUse skill options only. No employee voting in this segment.\nSection: Department Challenge Polls",
       "ballot": {
         "kind": "mcq",
@@ -168,7 +168,7 @@
     },
     {
       "id": "P08",
-      "name": "P08 — Kaun Banega Policy-Pati",
+      "name": "Kaun Banega Policy-Pati",
       "organiser_note": "When to show: After both HR participants complete the challenge.\nShow as a fun audience preference.\nSection: HR Honours and Performance Polls",
       "ballot": {
         "kind": "individual",
@@ -186,7 +186,7 @@
     },
     {
       "id": "P09",
-      "name": "P09 — Part One Professional Honours",
+      "name": "Part One Professional Honours",
       "organiser_note": "When to show: Immediately after Part One Professional Honours and before the break.\nSection: HR Honours and Performance Polls",
       "ballot": {
         "kind": "mcq",
@@ -210,7 +210,7 @@
     },
     {
       "id": "P10",
-      "name": "P10 — Roast-o-Sphere Error 404 Not Found",
+      "name": "Roast-o-Sphere Error 404 Not Found",
       "organiser_note": "When to show: After the skit.\nSection: HR Honours and Performance Polls",
       "ballot": {
         "kind": "individual",
@@ -240,7 +240,7 @@
     },
     {
       "id": "P11",
-      "name": "P11 — Leaders Challenge Managers Catan Game",
+      "name": "Leaders Challenge Managers Catan Game",
       "organiser_note": "When to show: After the Leaders' Challenge.\nSection: HR Honours and Performance Polls",
       "ballot": {
         "kind": "individual",
@@ -273,7 +273,7 @@
     },
     {
       "id": "P12",
-      "name": "P12 — TechSara Shark Tank",
+      "name": "TechSara Shark Tank",
       "organiser_note": "When to show: After all three teams have pitched and completed questions.\nUse the idea names as the main option labels and the team members as supporting text.\nSection: Ideas Conversations and Closing Polls",
       "ballot": {
         "kind": "team",
@@ -307,7 +307,7 @@
     },
     {
       "id": "P13",
-      "name": "P13 — Owners Conversation",
+      "name": "Owners Conversation",
       "organiser_note": "When to show: After the conversation with Sahil and Rajvi.\nSection: Ideas Conversations and Closing Polls",
       "ballot": {
         "kind": "mcq",
@@ -331,7 +331,7 @@
     },
     {
       "id": "P14",
-      "name": "P14 — End of the event",
+      "name": "End of the event",
       "organiser_note": "When to show: At the close of Dhanvarsha.\nSection: Ideas Conversations and Closing Polls",
       "ballot": {
         "kind": "mcq",
@@ -355,7 +355,7 @@
     },
     {
       "id": "B01",
-      "name": "B01 — Optional break question",
+      "name": "Break question 1",
       "organiser_note": "When to show: During the break.\nOptional. Keep it out of the main P01–P14 sequence: open it only during the break after P09 (Part One Professional Honours).\nSection: Optional questions during the break",
       "ballot": {
         "kind": "mcq",
@@ -379,7 +379,7 @@
     },
     {
       "id": "B02",
-      "name": "B02 — Optional break question",
+      "name": "Break question 2",
       "organiser_note": "When to show: During the break.\nOptional. Keep it out of the main P01–P14 sequence: open it only during the break after P09 (Part One Professional Honours).\nSection: Optional questions during the break",
       "ballot": {
         "kind": "mcq",

@@ -10,8 +10,9 @@ stagevote/data; its wording is the organisers' and is stored exactly as written.
 Loading is one transaction under the programme live lock, like every event editor:
 
 * Nothing changes while an event of the active programme is open.
-* Each poll is matched to the non-archived event with exactly the same name. A missing
-  one is created. One that has never opened gets the file's organiser note, and its
+* Each poll is matched to the non-archived event with exactly the same name, or else to
+  one named "<id> — …" (the first release put the poll's id in front of every round's
+  name), which takes the file's name. A missing one is created. One that has never opened gets the file's organiser note, and its
   ballot and options are replaced when they differ from the file (kind, question,
   description, option names and members; while those match, a photo, affiliation or
   description added in the editor is kept). One that has opened keeps its ballot and
@@ -152,7 +153,7 @@ class LoadReport:
             if poll.outcome == UPDATED:
                 note = f" ({', '.join(poll.changed)})"
             elif poll.outcome == KEPT and poll.changed:
-                note = " (organiser note updated)"
+                note = f" ({' and '.join(poll.changed)} updated)"
             else:
                 note = ""
             out.append(f"  {poll.outcome:<{width}}  {poll.name}{note}")
@@ -283,13 +284,18 @@ async def load_polls(
     by_name: dict[str, list[Event]] = {}
     for event in current:
         by_name.setdefault(event.name, []).append(event)
+    matched: dict[str, Event] = {}
     for poll in polls:
-        if len(by_name.get(poll.name, [])) > 1:
+        candidates = by_name.get(poll.name) or (
+            [e for e in current if e.name.startswith(f"{poll.id} — ")] if poll.id else []
+        )
+        if len(candidates) > 1:
             raise SystemExit(
-                f"Two events are named “{poll.name}”. Rename or archive one of them, then load the "
-                "polls again. Nothing was changed."
+                f"Two events are named “{candidates[0].name}”. Rename or archive one of them, then "
+                "load the polls again. Nothing was changed."
             )
-    matched = {poll.name: by_name[poll.name][0] for poll in polls if poll.name in by_name}
+        if candidates:
+            matched[poll.name] = candidates[0]
     ballots_of, nominees_of, votes_of = await _contents(db, list(matched.values()))
 
     report = LoadReport(programme.name, source)
@@ -326,6 +332,10 @@ async def load_polls(
         opened = _opened(event, ballots, votes_of.get(event.id, 0))
         changes: dict[str, Any] = {}
         changed: list[str] = []
+        if event.name != poll.name:
+            changes["name"] = {"from": event.name, "to": poll.name}
+            event.name = poll.name
+            changed.append("name")
         if event.organiser_note != poll.organiser_note:
             changes["organiser_note"] = {"from": event.organiser_note, "to": poll.organiser_note}
             event.organiser_note = poll.organiser_note

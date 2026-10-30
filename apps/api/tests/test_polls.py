@@ -98,14 +98,16 @@ async def test_polls_load_in_file_order_ahead_of_other_rounds_and_reload_changes
     assert {e["status"] for e in events[:16]} == {"upcoming"}
     assert {(e["description"], e["rules"]) for e in events[:16]} == {("", "")}
 
-    # The brief's wording, checked here too: P01-P14 then the break polls B01 and B02.
-    assert [n.split(" — ")[0] for n in NAMES] == [f"P{i:02d}" for i in range(1, 15)] + ["B01", "B02"]
+    # The brief's wording, checked here too: P01-P14 then the break polls B01 and B02. Round
+    # names carry no id: voters see "TechSara Placement League", not "P04 — …".
+    assert [p["id"] for p in POLLS] == [f"P{i:02d}" for i in range(1, 15)] + ["B01", "B02"]
+    assert not [n for n in NAMES if " — " in n or n[:3] in {p["id"] for p in POLLS}]
     kinds = [by_name[n]["ballots"][0]["kind"] for n in NAMES]
     assert kinds == [
         "mcq", "mcq", "mcq", "team", "individual", "individual", "mcq", "individual",
         "mcq", "individual", "individual", "team", "mcq", "mcq", "mcq", "mcq",
     ]  # fmt: skip
-    first = by_name["P01 — Before the event"]
+    first = by_name["Before the event"]
     assert (
         first["organiser_note"]
         == "When to show: Before the opening video.\nSection: Main event poll sequence"
@@ -118,7 +120,7 @@ async def test_polls_load_in_file_order_ahead_of_other_rounds_and_reload_changes
         "Ready to cheer for my team",
         "Still settling in",
     ]
-    [pairs] = by_name["P04 — TechSara Placement League"]["ballots"]
+    [pairs] = by_name["TechSara Placement League"]["ballots"]
     assert pairs["description"] == "Audience Favourite. The official winner is decided by the highest bid."
     assert [(n["name"], n["members"]) for n in pairs["nominees"]] == [
         ("Jaimin & Sakshi", []),
@@ -127,7 +129,7 @@ async def test_polls_load_in_file_order_ahead_of_other_rounds_and_reload_changes
         ("Rutu & Avinash", []),
         ("Shubham & Yash", []),
     ]
-    [ideas] = by_name["P12 — TechSara Shark Tank"]["ballots"]
+    [ideas] = by_name["TechSara Shark Tank"]["ballots"]
     assert (ideas["kind"], ideas["title"]) == (
         "team",
         "Which team presented the best idea for TechSara's growth?",
@@ -137,7 +139,7 @@ async def test_polls_load_in_file_order_ahead_of_other_rounds_and_reload_changes
         ("Algo Lens", ["Suyash", "Maithilya"]),
         ("Project YOG", ["Srishti", "Ishita G.", "Nikita"]),
     ]
-    assert "During the break" in by_name["B01 — Optional break question"]["organiser_note"]
+    assert "During the break" in by_name["Break question 1"]["organiser_note"]
 
     # Live control offers P01 next, with its note; participants see 18 rounds and no note.
     live = (await admin.get("/live")).json()
@@ -295,6 +297,37 @@ async def test_rounds_that_never_opened_follow_the_file_and_opened_ones_keep_the
     assert again[2] == line("unchanged", second)
     assert again[5] == line(KEPT, fifth)
     assert again[-1] == "Nothing changed: 0 created, 0 updated, 15 unchanged, 1 kept, 0 archived."
+
+
+async def test_rounds_from_the_first_release_lose_the_id_in_front_of_their_names(world: World) -> None:
+    # The first release named the rounds "P04 — TechSara Placement League"; one has had votes.
+    played = await world.live_event(name=f"P05 — {NAMES[4]}", nominees=3)
+    draft = await world.event(name=f"P04 — {NAMES[3]}", nominees=2)
+    admin = await world.admin()
+    voter = await world.participant()
+    assert (await voter.vote(played.ballot.id, played.ballot.nominee_ids[0])).status_code == 201
+    assert (await admin.close_event(played.id)).status_code == 200
+
+    printed = await cli.load_polls()
+    assert printed[4] == line("updated", NAMES[3], " (name, organiser note, question and options)")
+    assert printed[5] == line(KEPT, NAMES[4], " (name and organiser note updated)")
+    assert printed[-1] == "Done: 14 created, 1 updated, 0 unchanged, 1 kept, 0 archived."
+
+    events = await _events(admin)
+    assert [e["name"] for e in events] == NAMES
+    by_name = {e["name"]: e for e in events}
+    # The same rounds, renamed in place: the one that opened keeps its ballot and its vote.
+    assert by_name[NAMES[3]]["id"] == str(draft.id)
+    kept = by_name[NAMES[4]]
+    assert (kept["id"], kept["status"], kept["ballots"][0]["vote_count"]) == (str(played.id), "closed", 1)
+    renamed = await world.factory.fetch(
+        "SELECT details->'name' AS name FROM audit_log WHERE target_id IN (:a, :b) "
+        "AND details->>'via' = 'load-polls' AND details ? 'name' AND action <> 'event.created'",
+        a=str(draft.id),
+        b=str(played.id),
+    )
+    assert sorted(r.name["from"] for r in renamed) == [f"P04 — {NAMES[3]}", f"P05 — {NAMES[4]}"]
+    assert (await cli.load_polls())[-1].startswith("Nothing changed:")
 
 
 async def test_a_file_of_your_own_is_checked_before_anything_changes(world: World, tmp_path: Path) -> None:

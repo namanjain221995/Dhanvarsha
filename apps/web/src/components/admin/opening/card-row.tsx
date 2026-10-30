@@ -143,7 +143,7 @@ export function CardRow({
             placeholder="https://… or /path"
             value={card.link}
             maxLength={500}
-            hint="With an image or video too, a round arrow beside the card's button opens this link."
+            hint="With an image or video too, an arrow at the bottom of it (shown full screen) opens this link."
             error={errors.link}
             onChange={(e) => onChange({ link: e.target.value })}
           />
