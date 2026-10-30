@@ -29,7 +29,7 @@ from stagevote.config import get_settings
 from stagevote.db import asyncpg_dsn, build_engine
 from stagevote.security import new_token, token_hash
 
-HEAD = "0011"
+HEAD = "0012"
 
 LINK_COLUMNS = (
     "SELECT column_name, data_type, is_nullable FROM information_schema.columns "
@@ -352,9 +352,6 @@ async def test_0008_adds_the_opening_page_and_drops_it_on_downgrade(scratch: Dat
         )
         with pytest.raises(asyncpg.CheckViolationError):
             await app.execute("UPDATE programmes SET opening = '[]'::jsonb WHERE id = $1", programme_id)
-        # Programmes created by the application get the empty page too.
-        created = await factory.create_programme(activate=False)
-        assert await owner.fetchval("SELECT opening::text FROM programmes WHERE id = $1", created) == "{}"
 
         await alembic(scratch, "0007", downgrade=True)
         assert await owner.fetchval("SELECT version_num FROM alembic_version") == "0007"
@@ -369,6 +366,10 @@ async def test_0008_adds_the_opening_page_and_drops_it_on_downgrade(scratch: Dat
         assert (
             await owner.fetchval("SELECT opening::text FROM programmes WHERE id = $1", programme_id) == "{}"
         )
+        # Programmes created by the application (whose model has the newest columns) get the
+        # empty page too.
+        created = await factory.create_programme(activate=False)
+        assert await owner.fetchval("SELECT opening::text FROM programmes WHERE id = $1", created) == "{}"
     finally:
         await app.close()
         await owner.close()
@@ -542,6 +543,50 @@ async def test_0011_makes_asset_sizes_64_bit(scratch: DatabaseInfo) -> None:
         assert await owner.fetchval(SIZE_COLUMN) == "integer"
         await alembic(scratch, "head")
         assert await owner.fetchval(SIZE_COLUMN) == "bigint"
+    finally:
+        await app.close()
+        await owner.close()
+
+
+WELCOME_COLUMNS = (
+    "SELECT column_name, data_type, character_maximum_length, column_default FROM information_schema.columns "
+    "WHERE table_name = 'programmes' AND column_name LIKE 'welcome%' ORDER BY column_name"
+)
+
+
+async def test_0012_adds_the_lobby_welcome_and_drops_it_on_downgrade(scratch: DatabaseInfo) -> None:
+    await alembic(scratch, "0011")
+    owner = await connect(scratch.owner_url)
+    app = await connect(scratch.app_url)
+    try:
+        programme_id = await old_programme(owner, "Dhanvarsha 2026")
+
+        await alembic(scratch, "0012")
+        assert [tuple(r) for r in await owner.fetch(WELCOME_COLUMNS)] == [
+            ("welcome_message", "text", None, "''::text"),
+            ("welcome_title", "character varying", 120, "''::character varying"),
+        ]
+        row = await owner.fetchrow(
+            "SELECT welcome_title, welcome_message FROM programmes WHERE id = $1", programme_id
+        )
+        assert tuple(row) == ("", "")
+
+        # The runtime role writes them through its existing grants; the database checks the length.
+        await app.execute(
+            "UPDATE programmes SET welcome_title = $1, welcome_message = $2 WHERE id = $3",
+            "Welcome to Dhanvarsha 2026",
+            "Keep this page open.\nThe first round opens soon.",
+            programme_id,
+        )
+        with pytest.raises(asyncpg.CheckViolationError):
+            await app.execute(
+                "UPDATE programmes SET welcome_message = $1 WHERE id = $2", "x" * 1001, programme_id
+            )
+
+        await alembic(scratch, "0011", downgrade=True)
+        assert await owner.fetch(WELCOME_COLUMNS) == []
+        await alembic(scratch, "head")
+        assert await owner.fetchval("SELECT welcome_title FROM programmes WHERE id = $1", programme_id) == ""
     finally:
         await app.close()
         await owner.close()

@@ -22,7 +22,7 @@ from ..services.assets import store_image
 from ..services.live import begin_transition, regenerate_schedule
 from ..services.programmes import active_programme, asset_urls, login_phase, server_now
 from ..state import audit, bump_state
-from .common import Model, SingleLine, clear_session_cookie, no_store, set_session_cookie
+from .common import Model, MultiLine, SingleLine, clear_session_cookie, no_store, set_session_cookie
 
 router = APIRouter(prefix="/api/v1")
 admin = APIRouter(prefix="/api/v1/admin", dependencies=[Depends(current_admin)])
@@ -146,6 +146,8 @@ def programme_settings(programme: Programme, urls: dict[uuid.UUID, str], now: da
         "description": programme.description,
         "instructions": programme.instructions,
         "help_contact": programme.help_contact,
+        "welcome_title": programme.welcome_title,
+        "welcome_message": programme.welcome_message,
         "logo_asset_id": str(programme.logo_asset_id) if programme.logo_asset_id else None,
         "logo_url": urls.get(programme.logo_asset_id) if programme.logo_asset_id else None,
         "banner_asset_id": str(programme.banner_asset_id) if programme.banner_asset_id else None,
@@ -186,6 +188,9 @@ class ProgrammePatch(Model):
     description: str | None = Field(default=None, max_length=4000)
     instructions: str | None = Field(default=None, max_length=4000)
     help_contact: SingleLine | None = Field(default=None, max_length=200)
+    # The lobby's text while no round is open; "" brings back the built-in text.
+    welcome_title: SingleLine | None = Field(default=None, max_length=120)
+    welcome_message: MultiLine | None = Field(default=None, max_length=1000)
     logo_asset_id: uuid.UUID | None = None
     banner_asset_id: uuid.UUID | None = None
     clear_logo: bool = False
@@ -230,6 +235,8 @@ async def patch_programme(
             "description",
             "instructions",
             "help_contact",
+            "welcome_title",
+            "welcome_message",
             "accent",
             "timezone",
             "countdown_enabled",

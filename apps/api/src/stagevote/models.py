@@ -128,6 +128,7 @@ class Programme(Base):
             name="ck_programmes_login_window",
         ),
         CheckConstraint("jsonb_typeof(opening) = 'object'", name="ck_programmes_opening_object"),
+        CheckConstraint("char_length(welcome_message) <= 1000", name="ck_programmes_welcome_message_length"),
         Index("uq_programmes_single_active", "is_active", unique=True, postgresql_where=text("is_active")),
     )
 
@@ -138,6 +139,9 @@ class Programme(Base):
     description: Mapped[str] = mapped_column(Text, nullable=False, default="")
     instructions: Mapped[str] = mapped_column(Text, nullable=False, default="")
     help_contact: Mapped[str] = mapped_column(String(200), nullable=False, default="")
+    # What a phone's lobby shows while no round is open; empty: the built-in text.
+    welcome_title: Mapped[str] = mapped_column(String(120), nullable=False, default="", server_default="")
+    welcome_message: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default="")
     logo_asset_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("assets.id", ondelete="RESTRICT")
     )

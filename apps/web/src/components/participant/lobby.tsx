@@ -3,6 +3,7 @@
 import { ArrowRight, BarChart3, ChevronRight, Drama, Lock } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import { useEffect, useRef, useState } from 'react'
+import { LOBBY_WELCOME } from '@/lib/lobby-welcome'
 import { type EventSummary, isAnswerReceipt, isQuestionKind, type Receipt, type Snapshot } from '@/lib/types'
 import { type ChipKind, Countdown, EventLogo, PageColumn, StatusChip, timeLabel, titleSize } from './bits'
 import { useParticipant } from './provider'
@@ -147,15 +148,70 @@ function LiveFeature({ event, snapshot }: { event: EventSummary; snapshot: Snaps
   )
 }
 
+/**
+ * "Welcome to Dhanvarsha 2026" in three lines: the greeting, the name and a closing year.
+ * Any other heading is shown whole as the name.
+ */
+function splitWelcome(title: string) {
+  const lead = /^(welcome(?:\s+(?:back\s+)?to)?)\s+(\S.*)$/i.exec(title)
+  const rest = lead ? lead[2]! : title
+  const year = /^(.*\S)\s+((?:19|20)\d{2})$/.exec(rest)
+  return { lead: lead ? lead[1]! : '', name: year ? year[1]! : rest, year: year ? year[2]! : '' }
+}
+
+/** A four-pointed star, for the ornament and the twinkles. */
+function Sparkle({ className }: { className: string }) {
+  return (
+    <svg aria-hidden focusable="false" viewBox="0 0 24 24" className={className}>
+      <path d="M12 0l2.2 9.8L24 12l-9.8 2.2L12 24l-2.2-9.8L0 12l9.8-2.2z" fill="currentColor" />
+    </svg>
+  )
+}
+
+/** The organiser's welcome (programme settings) while no round is open: navy and gold, alone on its card. */
+function WelcomeCard({ title, message }: { title: string; message: string }) {
+  const { lead, name, year } = splitWelcome(title)
+  // The name's size follows its longest word, so a word is never split on a phone.
+  const longest = Math.max(1, ...name.split(/\s+/).map((word) => word.length))
+  return (
+    <section className="lobby-welcome enter-up">
+      <span aria-hidden className="lobby-welcome-shine" />
+      <Sparkle className="lobby-welcome-twinkle" />
+      <Sparkle className="lobby-welcome-twinkle" />
+      <Sparkle className="lobby-welcome-twinkle" />
+      <div aria-hidden className="lobby-welcome-ornament">
+        <Sparkle className="lobby-welcome-ornament-star" />
+      </div>
+      {title ? (
+        <h2 className="lobby-welcome-heading">
+          {lead ? <span className="lobby-welcome-lead">{lead}</span> : null}
+          {/* Leading spaces keep the heading's words apart for screen readers. */}
+          <span className="lobby-welcome-name" style={{ '--word': longest } as React.CSSProperties}>
+            {lead ? ` ${name}` : name}
+          </span>
+          {year ? (
+            <span className="lobby-welcome-year">
+              <span aria-hidden className="lobby-welcome-rule" />
+              <span className="lobby-welcome-year-text">{` ${year}`}</span>
+              <span aria-hidden className="lobby-welcome-rule lobby-welcome-rule-end" />
+            </span>
+          ) : null}
+        </h2>
+      ) : null}
+      {message ? <p className="lobby-welcome-message">{message}</p> : null}
+    </section>
+  )
+}
+
 function WaitingCard({ snapshot }: { snapshot: Snapshot }) {
   const next = snapshot.events.find((e) => e.id === snapshot.next_event_id)
-  const tz = snapshot.programme.timezone
+  const { timezone: tz, welcome_title, welcome_message } = snapshot.programme
+  // The organiser's welcome replaces the built-in text and the "Next" line.
+  if (welcome_title || welcome_message) return <WelcomeCard title={welcome_title} message={welcome_message} />
   return (
     <section className="enter-up rounded-[var(--radius-hero)] border border-sand bg-paper p-6 shadow-[var(--shadow-card)]">
-      <h2 className="type-display text-[1.9rem]">The next round opens soon</h2>
-      <p className="mt-2 text-plum-soft">
-        Keep this page open. When the host opens a round, it appears here by itself.
-      </p>
+      <h2 className="type-display text-[1.9rem]">{LOBBY_WELCOME.title}</h2>
+      <p className="mt-2 text-plum-soft">{LOBBY_WELCOME.message}</p>
       {next ? (
         <div className="mt-5 flex items-center gap-3 border-t border-sand pt-4">
           <EventLogo src={next.logo_url} name={next.name} size={44} locked={!next.name} />

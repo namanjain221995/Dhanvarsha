@@ -125,6 +125,58 @@ async def test_hub_closes_only_the_signed_out_admin_session() -> None:
     assert kept.close_code is None
 
 
+async def test_the_lobby_welcome_is_set_in_the_programme_settings(world: World) -> None:
+    """The lobby's text while no round is open: empty until an organiser writes one."""
+    admin = await world.admin()
+    voter = await world.participant()
+    programme = (await voter.snapshot()).json()["programme"]
+    assert (programme["welcome_title"], programme["welcome_message"]) == ("", "")
+
+    version = await admin.settings_version()
+    resp = await admin.patch(
+        "/programme",
+        {
+            "settings_version": version,
+            "welcome_title": "  Welcome to Dhanvarsha 2026 ",
+            "welcome_message": "Keep this page open.\r\nThe first round opens soon.",
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    assert (resp.json()["welcome_title"], resp.json()["welcome_message"]) == (
+        "Welcome to Dhanvarsha 2026",
+        "Keep this page open.\nThe first round opens soon.",
+    )
+    programme = (await voter.snapshot()).json()["programme"]
+    assert (programme["welcome_title"], programme["welcome_message"]) == (
+        "Welcome to Dhanvarsha 2026",
+        "Keep this page open.\nThe first round opens soon.",
+    )
+    audit = await world.factory.fetchval(
+        "SELECT details->'welcome_title'->>'to' FROM audit_log WHERE action = 'programme.updated' "
+        "AND programme_id = :p ORDER BY created_at DESC LIMIT 1",
+        p=world.programme_id,
+    )
+    assert audit == "Welcome to Dhanvarsha 2026"
+
+    # One line for the heading; limits on both.
+    version = await admin.settings_version()
+    for field, value in (
+        ("welcome_title", "Welcome\nBcc: x@example.com"),
+        ("welcome_title", "w" * 121),
+        ("welcome_message", "m" * 1001),
+    ):
+        resp = await admin.patch("/programme", {"settings_version": version, field: value})
+        assert_error(resp, 422, "VALIDATION_FAILED")
+
+    # Empty brings back the built-in text.
+    resp = await admin.patch(
+        "/programme", {"settings_version": version, "welcome_title": "", "welcome_message": ""}
+    )
+    assert resp.status_code == 200, resp.text
+    programme = (await voter.snapshot()).json()["programme"]
+    assert (programme["welcome_title"], programme["welcome_message"]) == ("", "")
+
+
 async def test_names_reject_control_characters(world: World) -> None:
     """Names reach email headers; a newline must never get that far."""
     admin = await world.admin()

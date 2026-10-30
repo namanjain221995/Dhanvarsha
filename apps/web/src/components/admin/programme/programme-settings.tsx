@@ -9,6 +9,7 @@ import { describeError, errorCode, fieldErrors } from '@/lib/admin/errors'
 import { adminAction, useAdminQuery } from '@/lib/admin/query'
 import { useAdminSession, useAdminSignal } from '@/lib/admin/session'
 import type { Accent, ProgrammeSettings, RunMode } from '@/lib/admin/types'
+import { LOBBY_WELCOME } from '@/lib/lobby-welcome'
 import {
   canonicalTimeZone,
   formatWhen,
@@ -37,6 +38,8 @@ type Draft = {
   description: string
   instructions: string
   help_contact: string
+  welcome_title: string
+  welcome_message: string
   logo: { id: string | null; url: string | null }
   banner: { id: string | null; url: string | null }
   accent: Accent
@@ -55,6 +58,8 @@ function draftFrom(s: ProgrammeSettings): Draft {
     description: s.description,
     instructions: s.instructions,
     help_contact: s.help_contact,
+    welcome_title: s.welcome_title,
+    welcome_message: s.welcome_message,
     logo: { id: s.logo_asset_id, url: s.logo_url },
     banner: { id: s.banner_asset_id, url: s.banner_url },
     accent: s.accent,
@@ -74,7 +79,7 @@ const sameInstant = (a: string | null, b: string | null) => (a && b ? Date.parse
 function buildPatch(draft: Draft, base: ProgrammeSettings) {
   const errors: Record<string, string> = {}
   const patch: Record<string, unknown> = { settings_version: base.settings_version }
-  const text = ['name', 'description', 'instructions', 'help_contact'] as const
+  const text = ['name', 'description', 'instructions', 'help_contact', 'welcome_title', 'welcome_message'] as const
   for (const key of text) if (draft[key].trim() !== base[key]) patch[key] = draft[key].trim()
   if (!draft.name.trim()) errors.name = 'Give the programme a name.'
   if (draft.logo.id !== base.logo_asset_id) {
@@ -287,6 +292,34 @@ export function ProgrammeSettingsPage() {
                 onChange={(e) => update('help_contact', e.target.value)}
                 hint="Shown when a participant is stuck, for example “the help desk beside the stage”."
                 error={errors.help_contact}
+              />
+            </div>
+          </Panel>
+
+          <Panel
+            title="Lobby welcome"
+            description="What phones show at the top of the lobby while no round is open. With a welcome, the card shows only your text."
+          >
+            <div className="space-y-5">
+              <InputField
+                label="Welcome heading"
+                optional
+                maxLength={120}
+                value={draft.welcome_title}
+                placeholder={LOBBY_WELCOME.title}
+                onChange={(e) => update('welcome_title', e.target.value)}
+                hint={`For example “Welcome to ${draft.name.trim() || 'the programme'}”. With both boxes empty, phones show “${LOBBY_WELCOME.title}” and the next round.`}
+                error={errors.welcome_title}
+              />
+              <TextAreaField
+                label="Welcome message"
+                optional
+                rows={3}
+                maxLength={1000}
+                value={draft.welcome_message}
+                onChange={(e) => update('welcome_message', e.target.value)}
+                hint="A line or two under the heading, for example where to sit or when the first round starts."
+                error={errors.welcome_message}
               />
             </div>
           </Panel>

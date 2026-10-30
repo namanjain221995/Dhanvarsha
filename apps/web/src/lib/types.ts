@@ -8,6 +8,9 @@ export type PublicProgramme = {
   name: string
   description: string
   help_contact: string
+  /** The lobby's heading and message while no round is open; "" for the built-in text. */
+  welcome_title: string
+  welcome_message: string
   logo_url: string | null
   banner_url: string | null
   accent: Accent

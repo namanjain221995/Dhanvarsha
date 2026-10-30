@@ -68,6 +68,8 @@ def public_programme(programme: Programme, urls: dict[uuid.UUID, str], now: date
         "description": programme.description,
         "instructions": programme.instructions,
         "help_contact": programme.help_contact,
+        "welcome_title": programme.welcome_title,
+        "welcome_message": programme.welcome_message,
         "logo_url": urls.get(programme.logo_asset_id) if programme.logo_asset_id else None,
         "banner_url": urls.get(programme.banner_asset_id) if programme.banner_asset_id else None,
         "accent": programme.accent,

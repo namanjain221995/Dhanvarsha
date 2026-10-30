@@ -1704,6 +1704,229 @@ html:has([data-scene='opening']) body {
   cursor: none !important;
 }
 
+/* ---- the lobby welcome (lobby.tsx) ---------------------------------------------------- */
+/*
+ * The organiser's welcome while no round is open: a navy card in a gold frame, the greeting
+ * small and spaced, the name big in Cinzel gold, the year between two gold rules. A band of
+ * light crosses it now and then and three stars twinkle: transform and opacity only.
+ */
+.lobby-welcome {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  padding: 1.6rem 1.25rem 1.9rem;
+  container-type: inline-size;
+  border: 1px solid rgb(242 193 78 / 0.55);
+  border-radius: var(--radius-hero);
+  background:
+    radial-gradient(95% 70% at 50% 0%, rgb(70 112 228 / 0.5) 0%, rgb(70 112 228 / 0) 70%),
+    linear-gradient(180deg, #162a80 0%, #0c1b5c 52%, #08123f 100%);
+  box-shadow:
+    inset 0 1px 0 rgb(255 241 181 / 0.22),
+    0 1.4rem 2.6rem -1.4rem rgb(0 0 0 / 0.85),
+    0 0 2.6rem -0.8rem rgb(242 193 78 / 0.4);
+  color: #eef2ff;
+  text-align: center;
+}
+/* A glint along the top edge and a fine gold frame inside the border. */
+.lobby-welcome::before {
+  content: '';
+  position: absolute;
+  top: -1px;
+  left: 16%;
+  right: 16%;
+  height: 1px;
+  background: linear-gradient(90deg, rgb(255 241 181 / 0), #fff1b5, rgb(255 241 181 / 0));
+}
+.lobby-welcome::after {
+  content: '';
+  position: absolute;
+  inset: 7px;
+  border: 1px solid rgb(242 193 78 / 0.18);
+  border-radius: calc(var(--radius-hero) - 7px);
+  pointer-events: none;
+}
+.lobby-welcome-ornament,
+.lobby-welcome-heading,
+.lobby-welcome-message {
+  position: relative;
+  z-index: 1;
+}
+.lobby-welcome-ornament {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.65rem;
+  color: #f6d26b;
+}
+.lobby-welcome-ornament::before,
+.lobby-welcome-ornament::after {
+  content: '';
+  width: 3rem;
+  height: 1px;
+  background: linear-gradient(90deg, rgb(242 193 78 / 0), #f2c14e);
+}
+.lobby-welcome-ornament::after {
+  background: linear-gradient(90deg, #f2c14e, rgb(242 193 78 / 0));
+}
+.lobby-welcome-ornament-star {
+  width: 1rem;
+  height: 1rem;
+  filter: drop-shadow(0 0 6px rgb(242 193 78 / 0.75));
+}
+.lobby-welcome-heading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin-top: 0.95rem;
+}
+.lobby-welcome-lead {
+  /* The letter spacing also follows the last letter: the padding centres the word again. */
+  padding-left: 0.36em;
+  font-family: var(--font-sans);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.36em;
+  text-transform: uppercase;
+  color: #f2c14e;
+}
+.lobby-welcome-name {
+  max-width: 100%;
+  margin-top: 0.4rem;
+  font-family: var(--font-cinzel), 'Times New Roman', serif;
+  /* Cinzel capitals with this spacing take about 0.79em each: the longest word (--word
+     letters) fits the card's width. */
+  font-size: min(2.75rem, calc(100cqi / (var(--word, 10) * 0.8 + 0.3)));
+  font-weight: 700;
+  line-height: 1.08;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  overflow-wrap: break-word;
+  text-wrap: balance;
+  background: linear-gradient(180deg, #fff3c4 0%, #f6d26b 46%, #cf9a2e 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+  filter: drop-shadow(0 2px 14px rgb(242 193 78 / 0.3));
+}
+.lobby-welcome-year {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  margin-top: 0.6rem;
+  font-family: var(--font-cinzel), 'Times New Roman', serif;
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: #f6d26b;
+}
+.lobby-welcome-year-text {
+  padding-left: 0.5em;
+  letter-spacing: 0.5em;
+}
+.lobby-welcome-rule {
+  position: relative;
+  width: 2.6rem;
+  height: 1px;
+  background: linear-gradient(90deg, rgb(242 193 78 / 0), #f2c14e);
+}
+/* A small gold diamond at the inner end of each rule. */
+.lobby-welcome-rule::after {
+  content: '';
+  position: absolute;
+  top: -2.5px;
+  right: -3px;
+  width: 6px;
+  height: 6px;
+  background: #f6d26b;
+  rotate: 45deg;
+}
+.lobby-welcome-rule-end {
+  scale: -1 1;
+}
+.lobby-welcome-message {
+  max-width: 30rem;
+  margin: 1.1rem auto 0;
+  font-size: 0.98rem;
+  line-height: 1.55;
+  color: rgb(226 232 255 / 0.88);
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}
+.lobby-welcome-shine {
+  position: absolute;
+  top: -20%;
+  bottom: -20%;
+  left: 0;
+  width: 40%;
+  pointer-events: none;
+  background: linear-gradient(
+    100deg,
+    rgb(255 241 181 / 0) 0%,
+    rgb(255 241 181 / 0.09) 42%,
+    rgb(255 241 181 / 0.17) 50%,
+    rgb(255 241 181 / 0.09) 58%,
+    rgb(255 241 181 / 0) 100%
+  );
+  transform: translateX(-130%) skewX(-14deg);
+  animation: sv-welcome-shine 7s ease-in-out 1.4s infinite;
+}
+@keyframes sv-welcome-shine {
+  0% {
+    transform: translateX(-130%) skewX(-14deg);
+  }
+  30%,
+  100% {
+    transform: translateX(340%) skewX(-14deg);
+  }
+}
+.lobby-welcome-twinkle {
+  position: absolute;
+  width: 0.7rem;
+  height: 0.7rem;
+  color: #fff1b5;
+  opacity: 0.15;
+  animation: sv-welcome-twinkle 3.6s ease-in-out infinite;
+}
+.lobby-welcome-twinkle:nth-of-type(1) {
+  top: 14%;
+  left: 9%;
+}
+.lobby-welcome-twinkle:nth-of-type(2) {
+  top: 22%;
+  right: 10%;
+  width: 0.55rem;
+  height: 0.55rem;
+  animation-delay: -1.3s;
+}
+.lobby-welcome-twinkle:nth-of-type(3) {
+  bottom: 13%;
+  right: 16%;
+  animation-delay: -2.4s;
+  animation-duration: 4.2s;
+}
+@keyframes sv-welcome-twinkle {
+  0%,
+  100% {
+    opacity: 0.15;
+    transform: scale(0.55);
+  }
+  50% {
+    opacity: 0.95;
+    transform: scale(1);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .lobby-welcome-shine {
+    display: none;
+  }
+  .lobby-welcome-twinkle {
+    animation: none;
+    opacity: 0.6;
+  }
+}
+
 /* ---- the media viewer ------------------------------------------------------------------ */
 .media-viewer {
   position: fixed;

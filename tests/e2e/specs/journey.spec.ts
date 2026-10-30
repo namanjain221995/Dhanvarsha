@@ -41,6 +41,19 @@ test.describe('participant journey', () => {
     await expect(page.getByRole('heading', { name: 'The next round opens soon' })).toBeVisible()
     await noHorizontalOverflow(page)
 
+    // The organiser's welcome replaces the built-in text without a reload; empty brings it back.
+    await admin.patchProgramme({ welcome_title: `Welcome to Dhanvarsha ${tag}`, welcome_message: 'Find a seat.\nRound one starts soon.' })
+    try {
+      await expect(page.getByRole('heading', { name: `Welcome to Dhanvarsha ${tag}` })).toBeVisible({ timeout: 15_000 })
+      await expect(page.getByText('Round one starts soon.')).toBeVisible()
+      // The welcome shows alone: no "Next: Round …" line under it.
+      await expect(page.getByText(/^Next: Round/)).toHaveCount(0)
+      await noHorizontalOverflow(page)
+    } finally {
+      await admin.patchProgramme({ welcome_title: '', welcome_message: '' })
+    }
+    await expect(page.getByRole('heading', { name: 'The next round opens soon' })).toBeVisible({ timeout: 15_000 })
+
     // The organiser opens a round: the live card appears without a reload.
     const roundA = await admin.createEvent(`Journey A ${tag}`, ['Aurora', 'Borealis', 'Cirrus'])
     const roundB = await admin.createEvent(`Journey B ${tag}`, ['Delta', 'Echo', 'Foxtrot'])

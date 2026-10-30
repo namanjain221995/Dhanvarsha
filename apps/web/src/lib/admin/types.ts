@@ -147,6 +147,8 @@ export type ProgrammeSettings = {
   description: string
   instructions: string
   help_contact: string
+  welcome_title: string
+  welcome_message: string
   logo_asset_id: string | null
   logo_url: string | null
   banner_asset_id: string | null
