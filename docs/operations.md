@@ -130,6 +130,23 @@ docker compose -f compose.prod.yaml run --rm migrate stagevote load-polls --arch
 - If a button reports *Another organiser or the schedule changed the live state*, the
   page refreshes itself; check the new state before acting again.
 
+### The spotlight screen
+
+For reveals such as Professional Honours: put `https://<domain>/spotlight` on the big
+screen (press F for full screen). In the console, **Spotlight** holds the people: a picture,
+a name and an optional line under it (an award). Each shows on the screen as a face-down gold
+card; nobody needs to touch the screen.
+
+- *Show* brings that person's card to the middle of every screen showing `/spotlight`; it
+  scratches itself open and shows the picture and the name, then goes back to its place face
+  up after the *Time in the middle* (or stays until *Send back* when that is set to *Until I
+  send it back*). Showing someone else while a card is out sends the first one back first.
+- *Show again* brings a revealed card out once more, face up.
+- *Hide all again* turns every card face down at once (the people stay saved).
+- Screens follow within about a second. The public page names only people already shown.
+- To open it from the opening page, set a card's link to `/spotlight` in **Opening page**.
+- The spotlight is separate from events and votes: it never opens or closes a round.
+
 ### Help-desk answers
 
 Each invitation link works on one device: the first phone or browser that taps its button.

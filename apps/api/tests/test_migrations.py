@@ -1,7 +1,7 @@
 """Migrations 0006 (sign-in links), 0007 (question ballots), 0008 (the opening page),
-0009 (opening-page media) and 0010 (organiser notes), each on a throwaway database of its
-own: additive on the way up, and a downgrade that refuses to destroy data the previous
-schema cannot hold."""
+0009 (opening-page media), 0010 (organiser notes), 0012 (the lobby welcome) and 0013 (the
+spotlight screen), each on a throwaway database of its own: additive on the way up, and a
+downgrade that refuses to destroy data the previous schema cannot hold."""
 
 from __future__ import annotations
 
@@ -29,7 +29,7 @@ from stagevote.config import get_settings
 from stagevote.db import asyncpg_dsn, build_engine
 from stagevote.security import new_token, token_hash
 
-HEAD = "0012"
+HEAD = "0013"
 
 LINK_COLUMNS = (
     "SELECT column_name, data_type, is_nullable FROM information_schema.columns "
@@ -587,6 +587,52 @@ async def test_0012_adds_the_lobby_welcome_and_drops_it_on_downgrade(scratch: Da
         assert await owner.fetch(WELCOME_COLUMNS) == []
         await alembic(scratch, "head")
         assert await owner.fetchval("SELECT welcome_title FROM programmes WHERE id = $1", programme_id) == ""
+    finally:
+        await app.close()
+        await owner.close()
+
+
+SPOTLIGHT_COLUMN = (
+    "SELECT data_type, is_nullable, column_default FROM information_schema.columns "
+    "WHERE table_name = 'programmes' AND column_name = 'spotlight'"
+)
+
+
+async def test_0013_adds_the_spotlight_and_drops_it_on_downgrade(scratch: DatabaseInfo) -> None:
+    await alembic(scratch, "0012")
+    owner = await connect(scratch.owner_url)
+    app = await connect(scratch.app_url)
+    try:
+        programme_id = await old_programme(owner, "Dhanvarsha 2026")
+        await owner.execute(
+            "UPDATE programmes SET opening = $1::jsonb WHERE id = $2", '{"title": "Kept"}', programme_id
+        )
+
+        await alembic(scratch, "0013")
+        assert tuple(await owner.fetchrow(SPOTLIGHT_COLUMN)) == ("jsonb", "NO", "'{}'::jsonb")
+        # Every existing programme starts with an empty spotlight; nothing else changes.
+        row = await owner.fetchrow(
+            "SELECT spotlight::text, opening::text FROM programmes WHERE id = $1", programme_id
+        )
+        assert tuple(row) == ("{}", '{"title": "Kept"}')
+
+        # The runtime role saves it through its existing table grants; only an object fits.
+        await app.execute(
+            "UPDATE programmes SET spotlight = $1::jsonb WHERE id = $2", '{"title": "Honours"}', programme_id
+        )
+        with pytest.raises(asyncpg.CheckViolationError):
+            await app.execute("UPDATE programmes SET spotlight = '[]'::jsonb WHERE id = $1", programme_id)
+
+        await alembic(scratch, "0012", downgrade=True)
+        assert await owner.fetchrow(SPOTLIGHT_COLUMN) is None
+        assert await owner.fetchval("SELECT opening::text FROM programmes WHERE id = $1", programme_id) == (
+            '{"title": "Kept"}'
+        )
+        await alembic(scratch, "head")
+        assert await owner.fetchval("SELECT version_num FROM alembic_version") == HEAD
+        assert (
+            await owner.fetchval("SELECT spotlight::text FROM programmes WHERE id = $1", programme_id) == "{}"
+        )
     finally:
         await app.close()
         await owner.close()

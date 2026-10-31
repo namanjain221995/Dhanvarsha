@@ -11,6 +11,7 @@ import {
   RefreshCw,
   ScrollText,
   SlidersHorizontal,
+  Sparkles,
   Trophy,
   Users,
   Wifi,
@@ -37,6 +38,7 @@ const NAV: { href: string; label: string; icon: React.ReactNode; exact?: boolean
   { href: '/admin/email', label: 'Email', icon: <Mail aria-hidden className={iconClass} /> },
   { href: '/admin/programme', label: 'Programme settings', icon: <SlidersHorizontal aria-hidden className={iconClass} /> },
   { href: '/admin/opening', label: 'Opening page', icon: <MonitorPlay aria-hidden className={iconClass} /> },
+  { href: '/admin/spotlight', label: 'Spotlight', icon: <Sparkles aria-hidden className={iconClass} /> },
   { href: '/admin/audit', label: 'Audit log', icon: <ScrollText aria-hidden className={iconClass} /> },
 ]
 

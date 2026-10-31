@@ -31,7 +31,7 @@ function cinzel(canvas: HTMLCanvasElement): string {
 }
 
 /** Gold foil, glitter, a double frame and the instructions, at the canvas's own resolution. */
-function paintFoil(canvas: HTMLCanvasElement, ctx: CanvasRenderingContext2D) {
+export function paintFoil(canvas: HTMLCanvasElement, ctx: CanvasRenderingContext2D) {
   const w = canvas.width
   const h = canvas.height
   const unit = w / 100

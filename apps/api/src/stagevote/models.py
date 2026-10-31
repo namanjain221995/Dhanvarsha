@@ -129,6 +129,7 @@ class Programme(Base):
         ),
         CheckConstraint("jsonb_typeof(opening) = 'object'", name="ck_programmes_opening_object"),
         CheckConstraint("char_length(welcome_message) <= 1000", name="ck_programmes_welcome_message_length"),
+        CheckConstraint("jsonb_typeof(spotlight) = 'object'", name="ck_programmes_spotlight_object"),
         Index("uq_programmes_single_active", "is_active", unique=True, postgresql_where=text("is_active")),
     )
 
@@ -163,6 +164,11 @@ class Programme(Base):
     # The opening showcase page as the organiser saved it, {} until then. Every key is
     # optional: services/opening.py fills a missing one from the built-in page.
     opening: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
+    )
+    # The spotlight screen: the people the organiser reveals one at a time, and which of them
+    # are revealed now. {} until first saved: services/spotlight.py fills in the defaults.
+    spotlight: Mapped[dict[str, Any]] = mapped_column(
         JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
     )
     # state_version changes whenever anything a participant can see changes; it is the

@@ -22,6 +22,7 @@ from .api import (
     admin_results,
     opening,
     participant,
+    spotlight,
 )
 from .config import get_settings
 from .db import dispose_engine, init_engine
@@ -135,6 +136,8 @@ def create_app(*, start_hub: bool = True) -> FastAPI:
     app.include_router(admin_media.admin)
     app.include_router(opening.router)
     app.include_router(opening.admin)
+    app.include_router(spotlight.router)
+    app.include_router(spotlight.admin)
     app.include_router(live_routes.router)
     return app
 

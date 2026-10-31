@@ -205,3 +205,41 @@ export type PublicOpening = {
   cards: OpeningCard[]
   updated_at: string | null
 }
+
+/** One card of the spotlight screen: face down (an id only) until the organiser reveals it. */
+export type SpotlightCard =
+  | { id: string; revealed: false }
+  | {
+      id: string
+      revealed: true
+      name: string
+      /** A line under the name (an award, a team); may be "". */
+      detail: string
+      /** The person's picture (WebP), or null for none. */
+      image_url: string | null
+    }
+
+/** The organiser's latest Show: every screen plays it once, by `seq`. */
+export type SpotlightShown = {
+  id: string
+  seq: number
+  /** The organiser sent the card back to its place. */
+  back: boolean
+  /** This Show revealed the card (it scratches itself open); otherwise it comes out face up. */
+  first: boolean
+}
+
+/** GET /public/spotlight: the spotlight screen (/spotlight). Names only of revealed people. */
+export type PublicSpotlight = {
+  title: string
+  subtitle: string
+  /** The opening page's emblem; null shows the built-in TechSara mark. */
+  logo_url: string | null
+  /** How long a shown card stays in the middle; 0: until the organiser sends it back. */
+  hold_seconds: number
+  /** Raised by "Hide all again". */
+  epoch: number
+  seq: number
+  shown: SpotlightShown | null
+  cards: SpotlightCard[]
+}

@@ -227,6 +227,38 @@ export type AdminOpening = {
   settings_version: number
 }
 
+// ---- spotlight ----------------------------------------------------------------
+
+/** A person's uploaded picture (kind opening_media, an image) as the editor shows it. */
+export type AdminSpotlightImage = { url: string; name: string; byte_size: number; width: number; height: number }
+
+/** One person of the spotlight (/spotlight). `id` is chosen by the client. */
+export type AdminSpotlightEntry = {
+  id: string
+  name: string
+  /** A line under the name, e.g. an award; may be "". */
+  detail: string
+  image_asset_id: string | null
+  /** What `image_asset_id` points to (GET only; saving sends the id). */
+  image?: AdminSpotlightImage | null
+}
+
+/** GET /admin/spotlight: the saved spotlight and its live state. */
+export type AdminSpotlight = {
+  /** Each save raises it; a save must send the version it loaded. */
+  version: number
+  title: string
+  subtitle: string
+  /** 0: a shown card stays in the middle until sent back or someone else is shown. */
+  hold_seconds: number
+  entries: AdminSpotlightEntry[]
+  /** Ids revealed since the last "Hide all again", in the order shown. */
+  revealed: string[]
+  seq: number
+  shown: { id: string; seq: number; back: boolean; first: boolean } | null
+  epoch: number
+}
+
 // ---- events -------------------------------------------------------------------
 
 export type AdminNominee = {

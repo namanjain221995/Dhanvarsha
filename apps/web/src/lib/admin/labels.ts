@@ -137,6 +137,10 @@ const AUDIT_ACTIONS: Record<string, string> = {
   'schedule.failed': 'Scheduled opening failed',
   'schedule.missed': 'Scheduled opening missed',
   'schedule.resumed': 'Schedule resumed',
+  'spotlight.cards_hidden': 'Spotlight cards hidden again',
+  'spotlight.sent_back': 'Spotlight card sent back',
+  'spotlight.shown': 'Spotlight person shown',
+  'spotlight.updated': 'Spotlight people changed',
 }
 
 export function auditActionLabel(action: string): string {
@@ -157,6 +161,7 @@ export const AUDIT_PREFIXES: { value: string; label: string }[] = [
   { value: 'email.', label: 'Email' },
   { value: 'admin.', label: 'Organiser sign-ins' },
   { value: 'asset.', label: 'Uploads' },
+  { value: 'spotlight.', label: 'Spotlight' },
 ]
 
 export function humanize(code: string): string {
