@@ -1,5 +1,5 @@
 {
-  "source": "Dhanvarsha_Audience_Poll_Claude_Code.md (from Dhanvarsha_Audience_Poll_Tech_Brief.docx)",
+  "source": "Dhanvarsha_Audience_Poll_Tech_Brief_1.docx (final event details, 1 Nov 2026)",
   "polls": [
     {
       "id": "P01",
@@ -51,7 +51,7 @@
     },
     {
       "id": "P03",
-      "name": "Sahil Sir's Video",
+      "name": "The Origin of Techsara",
       "organiser_note": "When to show: After Sahil Sir's video.\nSection: Main event poll sequence",
       "ballot": {
         "kind": "mcq",
@@ -144,7 +144,7 @@
     },
     {
       "id": "P07",
-      "name": "Snake and Leaders",
+      "name": "Snake and Ladders",
       "organiser_note": "When to show: After the IS Department game.\nUse skill options only. No employee voting in this segment.\nSection: Department Challenge Polls",
       "ballot": {
         "kind": "mcq",
@@ -240,7 +240,7 @@
     },
     {
       "id": "P11",
-      "name": "Leaders Challenge Managers Catan Game",
+      "name": "Leaders Challenge",
       "organiser_note": "When to show: After the Leaders' Challenge.\nSection: HR Honours and Performance Polls",
       "ballot": {
         "kind": "individual",
