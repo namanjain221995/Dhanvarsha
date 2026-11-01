@@ -2527,3 +2527,20 @@ html:has([data-scene='opening']) body {
   width: 100%;
   height: 100%;
 }
+
+/* ---- the spotlight dealt on the opening page (opening-page.tsx, spotlight-launch.ts) ------ */
+/* After the first turn the flips bring the cards in; their own rise-in would play again. */
+[data-turned] .stage-rise {
+  animation: none;
+}
+/* Back to the opening cards: the round button in the top-left corner (and Escape). */
+.opening-back {
+  position: fixed;
+  top: max(0.75rem, env(safe-area-inset-top));
+  left: max(0.75rem, env(safe-area-inset-left));
+  z-index: 20;
+}
+[data-scene='opening'][data-fullscreen][data-idle] .opening-back:not(:focus-visible) {
+  opacity: 0;
+  pointer-events: none;
+}

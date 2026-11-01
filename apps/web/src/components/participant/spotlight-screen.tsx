@@ -1,13 +1,15 @@
 'use client'
 
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useEffectEvent, useLayoutEffect, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
 import { ApiError, participantApi } from '@/lib/api'
 import type { PublicSpotlight } from '@/lib/types'
 import { CoinRain } from './coin-rain'
 import { FullscreenToggle, useFullscreenStage, useIdleAttribute, useIsFullscreen } from './fullscreen'
 import { CardBack, lengthTier } from './opening-card-face'
+import { RevealBurst } from './reveal-burst'
 import type { Slot } from './reveal-stage'
+import { centreOf, fadeHeader, flipIn } from './spotlight-launch'
 import { SPOT_ASPECT, SpotlightFace, SpotlightStage, type SpotlightPerson } from './spotlight-stage'
 import { BrandEmblem, StageArcs } from './stage-sign-in'
 import { StarField } from './star-field'
@@ -23,6 +25,9 @@ import { StarField } from './star-field'
  * number (seq) and plays once; a screen that opens later shows the cards as they are, without
  * replaying the last Show. The API names only revealed people, so the page never holds the next
  * name before its moment.
+ *
+ * The same board also plays on the opening page itself (opening-page.tsx): a card linked to
+ * /spotlight turns the opening cards over and deals these in their place (`intro`).
  */
 
 const POLL_MS = 1000
@@ -32,8 +37,9 @@ const MIN_FIT_WIDTH = 96
 type Command = { id: string; seq: number; first: boolean }
 type Active = Command & { person: SpotlightPerson; number: number; origin: Slot }
 
-function useSpotlight() {
-  const [data, setData] = useState<PublicSpotlight | null>(null)
+/** The spotlight, asked every second; `initial` is an answer fetched a moment ago, if any. */
+export function useSpotlight(initial: PublicSpotlight | null = null) {
+  const [data, setData] = useState<PublicSpotlight | null>(initial)
   const [error, setError] = useState<string | null>(null)
   const [attempt, setAttempt] = useState(0)
 
@@ -111,19 +117,19 @@ function fitWidth(count: number, width: number, height: number, head: number): n
   return best >= MIN_FIT_WIDTH ? Math.floor(best) : 0
 }
 
-function Header({ data, headerRef }: { data: PublicSpotlight; headerRef: React.Ref<HTMLElement> }) {
+function Header({ data, headerRef, rise }: { data: PublicSpotlight; headerRef: React.Ref<HTMLElement>; rise: boolean }) {
   return (
     <header ref={headerRef} className="opening-header spot-header">
       <div className="stage-emblem-wrap opening-emblem">
         <BrandEmblem src={data.logo_url} />
       </div>
-      <h1 className="opening-heading stage-rise" style={{ animationDelay: '0.2s' }}>
+      <h1 className={`opening-heading ${rise ? 'stage-rise' : ''}`} style={{ animationDelay: '0.2s' }}>
         <span className="stage-title opening-title" data-size={lengthTier(data.title, 14, 24)}>
           {data.title}
         </span>
       </h1>
       {data.subtitle ? (
-        <p className="stage-tagline opening-tagline stage-rise" style={{ animationDelay: '0.3s' }}>
+        <p className={`stage-tagline opening-tagline ${rise ? 'stage-rise' : ''}`} style={{ animationDelay: '0.3s' }}>
           {data.subtitle}
         </p>
       ) : null}
@@ -131,8 +137,17 @@ function Header({ data, headerRef }: { data: PublicSpotlight; headerRef: React.R
   )
 }
 
-function Board({ data }: { data: PublicSpotlight }) {
+/**
+ * The header and the cards, following the organiser's commands. With `intro` the board arrives
+ * as a deal: the header comes out of a soft blur and the cards turn in from edge-on, from the
+ * middle outwards, then a burst of gold coins; `onIntroEnd` follows.
+ */
+export function SpotlightBoard({ data, intro = false, onIntroEnd }: { data: PublicSpotlight; intro?: boolean; onIntroEnd?: () => void }) {
   const headerRef = useRef<HTMLElement>(null)
+  const gridRef = useRef<HTMLUListElement>(null)
+  const [burst, setBurst] = useState(0)
+  // Fixed at mount: the cards rise in on their own only when there is no deal.
+  const [rise] = useState(!intro)
   const [cardWidth, setCardWidth] = useState(0)
   const [active, setActive] = useState<Active | null>(null)
   const [queued, setQueued] = useState<Command | null>(null)
@@ -251,12 +266,26 @@ function Board({ data }: { data: PublicSpotlight }) {
     })
   }, [])
 
+  const introAtMount = useEffectEvent(() => ({ intro, done: onIntroEnd }))
+  // The deal, once, as the board first shows (before the first paint, so nothing flashes).
+  useLayoutEffect(() => {
+    const { intro: dealing, done } = introAtMount()
+    if (!dealing) return
+    const grid = gridRef.current
+    const cards = grid ? [...grid.querySelectorAll('.spot-card')] : []
+    void fadeHeader(headerRef.current, 'in', 60)
+    void flipIn(cards, centreOf(grid), { delay: 220, spread: 420 }).then(() => {
+      setBurst((n) => n + 1)
+      done?.()
+    })
+  }, [])
+
   const style = cardWidth ? ({ '--spot-w': `${cardWidth}px` } as React.CSSProperties) : undefined
   return (
     <div className="opening-inner spot-inner" data-fit={cardWidth ? '' : undefined} style={style}>
-      <Header data={data} headerRef={headerRef} />
+      <Header data={data} headerRef={headerRef} rise={rise} />
       {count ? (
-        <ul aria-label="Spotlight" className="spot-grid">
+        <ul ref={gridRef} aria-label="Spotlight" className="spot-grid">
           {data.cards.map((card, index) => {
             const face = card.revealed && !pending.has(card.id)
             return (
@@ -265,7 +294,7 @@ function Board({ data }: { data: PublicSpotlight }) {
                 data-spot-slot={card.id}
                 data-face={face ? 'up' : 'down'}
                 data-away={active?.id === card.id ? '' : undefined}
-                className="spot-card stage-rise"
+                className={`spot-card ${rise ? 'stage-rise' : ''}`}
                 style={{ animationDelay: `${0.35 + index * 0.035}s` }}
                 aria-label={face ? [card.name, card.detail].filter(Boolean).join(', ') : `Card ${index + 1}, hidden`}
               >
@@ -293,6 +322,7 @@ function Board({ data }: { data: PublicSpotlight }) {
           onClosed={closed}
         />
       ) : null}
+      <RevealBurst fireKey={burst} anchor={gridRef} />
     </div>
   )
 }
@@ -322,7 +352,7 @@ export function SpotlightScreen() {
       <CoinRain />
       <FullscreenToggle />
       {data ? (
-        <Board data={data} />
+        <SpotlightBoard data={data} />
       ) : (
         <div className="opening-inner" aria-busy={!error}>
           <div className="opening-header">

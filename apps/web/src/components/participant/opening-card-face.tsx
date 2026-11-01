@@ -6,6 +6,7 @@ import type { OpeningCard } from '@/lib/types'
 import { useOpenMedia } from './media-viewer'
 import { OpeningIcon } from './opening-icons'
 import { newTab, safeHref } from './opening-link'
+import { isSpotlightLink, useOpenSpotlight } from './spotlight-launch'
 
 /*
  * The two sides of an opening card, shared by the grid and the big card of the reveal: the
@@ -61,6 +62,7 @@ function CardEmblem({ card }: { card: OpeningCard }) {
  */
 function PlayButton({ card, label, actionRef }: { card: OpeningCard; label: string; actionRef?: React.RefCallback<HTMLElement> }) {
   const openMedia = useOpenMedia()
+  const openSpotlight = useOpenSpotlight()
   const href = safeHref(card.link)
   const face = (
     <>
@@ -92,6 +94,23 @@ function PlayButton({ card, label, actionRef }: { card: OpeningCard; label: stri
       <span aria-hidden data-variant="gold" data-opening-play="" className="opening-play">
         {face}
       </span>
+    )
+  }
+  // On the opening page a link to /spotlight turns the cards into the spotlight's, in place.
+  if (openSpotlight && isSpotlightLink(href)) {
+    return (
+      <button
+        ref={actionRef}
+        type="button"
+        data-variant="gold"
+        data-opening-play=""
+        data-spotlight-launch=""
+        className="opening-play"
+        onClick={(event) => openSpotlight(event.currentTarget)}
+      >
+        {face}
+        <span className="sr-only">: {card.title}</span>
+      </button>
     )
   }
   const external = !href.startsWith('/')

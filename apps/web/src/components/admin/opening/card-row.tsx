@@ -143,7 +143,12 @@ export function CardRow({
             placeholder="https://… or /path"
             value={card.link}
             maxLength={500}
-            hint="With an image or video too, an arrow at the bottom of it (shown full screen) opens this link."
+            hint={
+              <>
+                Type <code>/spotlight</code> to make the button turn the cards over into the Spotlight&apos;s people, right on this page.
+                With an image or video too, an arrow at the bottom of it (shown full screen) opens this link.
+              </>
+            }
             error={errors.link}
             onChange={(e) => onChange({ link: e.target.value })}
           />

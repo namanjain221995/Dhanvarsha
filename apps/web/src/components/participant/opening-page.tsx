@@ -1,15 +1,18 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { ArrowLeft } from 'lucide-react'
+import { useCallback, useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { flushSync } from 'react-dom'
 import { ApiError, participantApi } from '@/lib/api'
-import type { OpeningCard, PublicOpening } from '@/lib/types'
+import type { OpeningCard, PublicOpening, PublicSpotlight } from '@/lib/types'
 import { CoinRain } from './coin-rain'
 import { FullscreenToggle, useFullscreenStage, useIdleAttribute, useIsFullscreen } from './fullscreen'
 import { MediaViewerProvider } from './media-viewer'
 import { CardBack, CardFace, FaceSpacer, IconGold, lengthTier } from './opening-card-face'
 import { liveReveals, prunedReveals, readReveals, saveReveals, useStoredReveals, withReveal } from './reveal-store'
 import { RevealStage, type RevealTarget } from './reveal-stage'
+import { centreOf, fadeHeader, flipAway, flipIn, isSpotlightLink, OpenSpotlightContext, reducedMotion } from './spotlight-launch'
+import { SpotlightBoard, useSpotlight } from './spotlight-screen'
 import { BrandEmblem, StageArcs } from './stage-sign-in'
 import { StarField } from './star-field'
 
@@ -29,6 +32,12 @@ import { StarField } from './star-field'
  *
  * For the presenter: a small full-screen button in the corner (and the "F" key), and a card's
  * button shows the organiser's uploaded picture or video full screen (media-viewer.tsx).
+ *
+ * A card linked to /spotlight turns the page into the spotlight without leaving it: its button
+ * turns every card over in a wave from the card pressed, and the spotlight's own cards (one per
+ * person in the console's Spotlight) are dealt in their place; from then on the screen follows
+ * the organiser's Show button (spotlight-screen.tsx). The round arrow in the corner (or Escape)
+ * deals the opening cards back. A projector reloaded meanwhile comes back to the spotlight.
  */
 
 const REFRESH_MS = 10_000
@@ -275,11 +284,209 @@ function Showcase({ opening }: { opening: PublicOpening }) {
   )
 }
 
+type Mode = 'opening' | 'leaving' | 'spotlight' | 'returning'
+
+const MODE_KEY = 'sv-opening-mode'
+
+function rememberSpotlight(on: boolean) {
+  try {
+    if (on) window.sessionStorage.setItem(MODE_KEY, 'spotlight')
+    else window.sessionStorage.removeItem(MODE_KEY)
+  } catch {
+    // Storage refused (a private window): a reload simply shows the opening cards.
+  }
+}
+
+function rememberedSpotlight(): boolean {
+  try {
+    return window.sessionStorage.getItem(MODE_KEY) === 'spotlight'
+  } catch {
+    return false
+  }
+}
+
+/** The spotlight in the opening page's place, loading itself (from a fresh answer when given). */
+function OpeningSpotlight({
+  initial,
+  intro,
+  onIntroEnd,
+}: {
+  initial: PublicSpotlight | null
+  intro: boolean
+  onIntroEnd: () => void
+}) {
+  const { data, error, retry } = useSpotlight(initial)
+  if (data) return <SpotlightBoard data={data} intro={intro} onIntroEnd={onIntroEnd} />
+  return (
+    <div className="opening-inner" aria-busy={!error}>
+      <div className="opening-header">
+        <div aria-hidden className="opening-emblem-placeholder" />
+        {error ? (
+          <div className="stage-note stage-note-danger mt-8 max-w-md text-center" role="alert">
+            <p className="font-semibold">We could not load the spotlight</p>
+            <p className="mt-1">{error} It tries again every second.</p>
+            <button type="button" onClick={retry} className="stage-link mt-3">
+              Try again now
+            </button>
+          </div>
+        ) : (
+          <p className="sr-only" role="status">
+            Loading…
+          </p>
+        )}
+      </div>
+    </div>
+  )
+}
+
+/** The round arrow in the top-left corner (and Escape): back to the opening cards. */
+function BackToOpening({ onBack }: { onBack: () => void }) {
+  const back = useEffectEvent(() => onBack())
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || event.defaultPrevented || event.repeat) return
+      // A dialog keeps its own Escape.
+      if (document.querySelector('dialog[open]')) return
+      event.preventDefault()
+      back()
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [])
+  return (
+    <button
+      type="button"
+      className="opening-round opening-back"
+      aria-label="Back to the opening cards"
+      title="Back to the opening cards (Esc)"
+      onClick={onBack}
+    >
+      <ArrowLeft aria-hidden strokeWidth={2} />
+    </button>
+  )
+}
+
 export function OpeningShowcase() {
   const { opening, error, retry } = useOpening()
   const rootRef = useRef<HTMLDivElement>(null)
   const fullscreen = useIsFullscreen()
   const [fitCols, fitRows] = useFit(opening?.cards.length ?? 0).split(' ')
+  const [mode, setMode] = useState<Mode>('opening')
+  // Which side is being dealt in with a flip (the other has just turned away).
+  const [intro, setIntro] = useState<'spotlight' | 'opening' | null>(null)
+  const [initialSpotlight, setInitialSpotlight] = useState<PublicSpotlight | null>(null)
+  // After the first turn the cards no longer rise in on their own: the flips bring them in.
+  const [turned, setTurned] = useState(false)
+  const [restored, setRestored] = useState(false)
+  const busy = useRef(false)
+  const spotlightMode = mode === 'spotlight' || mode === 'returning'
+
+  // A projector reloaded in the middle of the spotlight goes back to it (this browser tab only).
+  if (!restored && opening) {
+    setRestored(true)
+    if (rememberedSpotlight() && opening.cards.some((card) => isSpotlightLink(card.link))) {
+      setTurned(true)
+      setMode('spotlight')
+    }
+  }
+
+  /**
+   * A /spotlight card's button: the big card (when it was pressed there) turns away in a burst of
+   * light, every opening card turns over in a wave from the card pressed, the title leaves, and
+   * the spotlight is dealt in their place.
+   */
+  const launch = async (from: HTMLElement) => {
+    const root = rootRef.current
+    if (busy.current || mode !== 'opening' || !root) return
+    busy.current = true
+    const prefetch = participantApi<PublicSpotlight>('/public/spotlight', { timeoutMs: 8000 }).catch(() => null)
+    setTurned(true)
+    setMode('leaving')
+    const still = reducedMotion()
+    const dialog = from.closest('dialog')
+    const slot = dialog ? root.querySelector('.opening-card[data-away]') : from.closest('.opening-card')
+    const origin = centreOf(slot ?? from)
+    const waits: Promise<unknown>[] = []
+    if (dialog) {
+      const big = dialog.querySelector('.reveal-card')
+      if (big) {
+        for (const animation of big.getAnimations()) animation.cancel()
+        waits.push(
+          big
+            .animate(
+              still
+                ? [{ opacity: 1 }, { opacity: 0 }]
+                : [
+                    { transform: 'perspective(1400px) rotateY(0deg) scale(1)', opacity: 1, filter: 'brightness(1)' },
+                    { opacity: 1, filter: 'brightness(1.7)', offset: 0.55 },
+                    { transform: 'perspective(1400px) rotateY(-92deg) scale(0.78)', opacity: 0, filter: 'brightness(2)' },
+                  ],
+              { duration: still ? 200 : 560, easing: 'cubic-bezier(0.55, 0, 0.7, 0.2)', fill: 'forwards' },
+            )
+            .finished.catch(() => undefined),
+        )
+      }
+      if (!still) {
+        dialog.querySelector('.reveal-aura')?.animate(
+          [
+            { opacity: 0, transform: 'scale(0.8)' },
+            { opacity: 1, transform: 'scale(1.06)', offset: 0.3 },
+            { opacity: 0, transform: 'scale(1.45)' },
+          ],
+          { duration: 900, easing: 'ease-out' },
+        )
+      }
+      dialog.querySelector('.reveal-backdrop')?.animate([{ opacity: 1 }, { opacity: 0 }], {
+        duration: still ? 200 : 600,
+        delay: still ? 0 : 220,
+        easing: 'ease-in',
+        fill: 'forwards',
+      })
+      for (const element of dialog.querySelectorAll('.reveal-close, .reveal-actions')) {
+        element.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 160, fill: 'forwards' })
+      }
+    }
+    waits.push(flipAway([...root.querySelectorAll('.opening-grid > .opening-card')], origin, { delay: dialog ? 320 : 0, spread: 380 }))
+    waits.push(fadeHeader(root.querySelector('.opening-header'), 'out', dialog ? 240 : 60))
+    await Promise.all(waits)
+    const data = await prefetch
+    rememberSpotlight(true)
+    setInitialSpotlight(data)
+    setIntro('spotlight')
+    setMode('spotlight')
+    busy.current = false
+  }
+
+  /** Back: the spotlight's cards turn away from the middle out, and the opening cards come back. */
+  const back = async () => {
+    const root = rootRef.current
+    if (busy.current || mode !== 'spotlight' || !root) return
+    // A card is out in the middle: let it finish first.
+    if (root.querySelector('[data-spot-stage]')) return
+    busy.current = true
+    setMode('returning')
+    const grid = root.querySelector('.spot-grid')
+    await Promise.all([
+      flipAway([...root.querySelectorAll('.spot-grid > .spot-card')], centreOf(grid), { spread: 320 }),
+      fadeHeader(root.querySelector('.spot-header'), 'out', 80),
+    ])
+    rememberSpotlight(false)
+    setIntro('opening')
+    setMode('opening')
+    busy.current = false
+  }
+
+  // The opening cards dealt back in: from the middle outwards, before the first paint.
+  useLayoutEffect(() => {
+    if (intro !== 'opening' || mode !== 'opening') return
+    const root = rootRef.current
+    if (!root) return
+    const grid = root.querySelector('.opening-grid')
+    void fadeHeader(root.querySelector('.opening-header'), 'in', 60)
+    void flipIn([...root.querySelectorAll('.opening-grid > .opening-card')], centreOf(grid), { delay: 200, spread: 420 }).then(() =>
+      setIntro(null),
+    )
+  }, [intro, mode])
   // In full screen the corner button and the cursor fade while the pointer rests (globals.css).
   useIdleAttribute(rootRef)
   useFullscreenStage()
@@ -294,40 +501,47 @@ export function OpeningShowcase() {
     <div
       ref={rootRef}
       data-scene="opening"
+      data-spotlight={spotlightMode ? '' : undefined}
+      data-turned={turned ? '' : undefined}
       data-fullscreen={fullscreen ? '' : undefined}
-      data-fit={fitRows ? '' : undefined}
-      style={fitRows ? ({ '--fit-cols': fitCols, '--fit-rows': fitRows } as React.CSSProperties) : undefined}
+      data-fit={fitRows && !spotlightMode ? '' : undefined}
+      style={fitRows && !spotlightMode ? ({ '--fit-cols': fitCols, '--fit-rows': fitRows } as React.CSSProperties) : undefined}
       className="opening-page relative isolate min-h-dvh"
     >
-      <MediaViewerProvider>
-        <StageArcs />
-        <StarField />
-        <CoinRain />
-        <IconGold />
-        <FullscreenToggle />
-        {opening ? (
-          <Showcase opening={opening} />
-        ) : (
-          <div className="opening-inner" aria-busy={!error}>
-            <div className="opening-header">
-              <div aria-hidden className="opening-emblem-placeholder" />
-              {error ? (
-                <div className="stage-note stage-note-danger mt-8 max-w-md text-center" role="alert">
-                  <p className="font-semibold">We could not load the opening page</p>
-                  <p className="mt-1">{error} It tries again every 10 seconds.</p>
-                  <button type="button" onClick={retry} className="stage-link mt-3">
-                    Try again now
-                  </button>
-                </div>
-              ) : (
-                <p className="sr-only" role="status">
-                  Loading…
-                </p>
-              )}
+      <OpenSpotlightContext value={mode === 'opening' ? launch : null}>
+        <MediaViewerProvider>
+          <StageArcs />
+          <StarField />
+          <CoinRain />
+          <IconGold />
+          <FullscreenToggle />
+          {spotlightMode ? (
+            <OpeningSpotlight initial={initialSpotlight} intro={intro === 'spotlight'} onIntroEnd={() => setIntro(null)} />
+          ) : opening ? (
+            <Showcase opening={opening} />
+          ) : (
+            <div className="opening-inner" aria-busy={!error}>
+              <div className="opening-header">
+                <div aria-hidden className="opening-emblem-placeholder" />
+                {error ? (
+                  <div className="stage-note stage-note-danger mt-8 max-w-md text-center" role="alert">
+                    <p className="font-semibold">We could not load the opening page</p>
+                    <p className="mt-1">{error} It tries again every 10 seconds.</p>
+                    <button type="button" onClick={retry} className="stage-link mt-3">
+                      Try again now
+                    </button>
+                  </div>
+                ) : (
+                  <p className="sr-only" role="status">
+                    Loading…
+                  </p>
+                )}
+              </div>
             </div>
-          </div>
-        )}
-      </MediaViewerProvider>
+          )}
+          {mode === 'spotlight' ? <BackToOpening onBack={() => void back()} /> : null}
+        </MediaViewerProvider>
+      </OpenSpotlightContext>
     </div>
   )
 }

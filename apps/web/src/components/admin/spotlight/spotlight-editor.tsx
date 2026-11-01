@@ -211,8 +211,8 @@ function LivePanel({
       title="On the big screen"
       description={
         <>
-          Press <strong>Show</strong> and, on every screen showing <code>/spotlight</code>, that card comes to the front, scratches itself
-          open and shows the picture and the name. {hold}
+          Press <strong>Show</strong> and, on every screen showing the spotlight, that card comes to the front, scratches itself open and
+          shows the picture and the name. {hold}
         </>
       }
       actions={
@@ -488,7 +488,14 @@ export function SpotlightEditorPage() {
       >
         <PageHeader
           title="Spotlight"
-          description="Reveal people one at a time on the big screen at /spotlight: each card scratches itself open to show a picture and a name. Anyone can open the screen; nobody signs in, and it names only people you have shown."
+          description={
+            <>
+              Reveal people one at a time on the big screen: each card scratches itself open to show a picture and a name. On the
+              opening page, give a card the link <code>/spotlight</code> (in <strong>Opening page</strong>): its button turns every card
+              over and deals these cards in their place. The same cards are also at /spotlight on their own. The screen names only
+              people you have shown.
+            </>
+          }
           actions={
             <a
               href="/spotlight"
