@@ -109,7 +109,7 @@ function FirstVisit({ me, token, onDone }: { me: GalleryMe; token: string | null
 
 function GalleryHome({ me, person, onPerson }: { me: GalleryMe; person: GalleryPerson; onPerson: (person: GalleryPerson | null) => void }) {
   const route = useGalleryRoute()
-  const [queue] = useState(() => new UploadQueue())
+  const [queue] = useState(() => new UploadQueue(me.direct_uploads))
   const [managing, setManaging] = useState(false)
   const items = useSyncExternalStore(queue.subscribe, queue.getSnapshot, queue.getSnapshot)
   const sending = items.filter((item) => item.state === 'waiting' || item.state === 'sending').length

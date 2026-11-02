@@ -21,6 +21,9 @@ export type QueueItem = {
 }
 
 const SIMULTANEOUS = 3
+/** A dropped connection or a server restarting: worth trying again by itself before showing an error. */
+const QUIET_RETRIES = 2
+const QUIET_RETRY_MS = 2000
 /** Beyond this many pictures, showing every one would hold too much memory on a phone. */
 const MAX_PREVIEWS = 60
 
@@ -32,6 +35,9 @@ export class UploadQueue {
   private readonly listeners = new Set<() => void>()
   private readonly running = new Map<string, AbortController>()
   private nextId = 1
+
+  /** `direct`: files go straight to S3. */
+  constructor(private readonly direct = false) {}
 
   subscribe = (listener: () => void) => {
     this.listeners.add(listener)
@@ -113,7 +119,16 @@ export class UploadQueue {
     this.running.set(id, controller)
     this.patch(id, { state: 'sending', sent: 0, error: null })
     try {
-      await uploadToGallery(file, { signal: controller.signal, onProgress: (sent) => this.patch(id, { sent }) })
+      for (let attempt = 0; ; attempt += 1) {
+        try {
+          await uploadToGallery(file, { direct: this.direct, signal: controller.signal, onProgress: (sent) => this.patch(id, { sent }) })
+          break
+        } catch (error) {
+          const passing = error instanceof ApiError && (error.isNetwork || error.status >= 500) && error.code !== 'INSUFFICIENT_STORAGE'
+          if (!passing || controller.signal.aborted || attempt >= QUIET_RETRIES) throw error
+          await new Promise((resolve) => setTimeout(resolve, QUIET_RETRY_MS * (attempt + 1)))
+        }
+      }
       this.files.delete(id)
       this.patch(id, { state: 'done', sent: file.size })
     } catch (error) {

@@ -268,6 +268,20 @@ the console. See [architecture.md](architecture.md#photo-gallery) for how it wor
   link can use the disk down to `GALLERY_FREE_SPACE_RESERVE_BYTES`, where uploads stop for everyone. Set
   the `GALLERY_MAX_*` values if that becomes a problem. `scripts/backup.sh` includes the files, so
   backups grow with them.
+- **Files on S3.** With `GALLERY_S3_BUCKET` set, full-size files move to S3 and browsers fetch them through
+  signed links. Each file has one real copy at `files/<id>/`, and `people/<Name>/` holds a copy for each
+  named person in it, so renaming someone moves their folder. Unnamed groups get no folder. Thumbnails stay
+  on this machine. Files shared earlier move by themselves. There is no ceiling on S3 unless
+  `GALLERY_MAX_TOTAL_BYTES` sets one, so set a budget alert in AWS: the link needs no sign-in. The
+  IAM user needs only `s3:ListBucket`, `s3:GetBucketLocation` and `s3:ListBucketMultipartUploads` on the
+  bucket, and `s3:GetObject`, `s3:PutObject`, `s3:DeleteObject`, `s3:AbortMultipartUpload` and
+  `s3:ListMultipartUploadParts` on its objects. Keep Block Public Access on.
+- **Uploads go straight from each browser to S3,** so a hundred phones never queue on this machine's internet
+  line. That needs a CORS rule on the bucket allowing `PUT` from the site's address. Without it, or where a
+  network blocks S3, a browser falls back to sending the file through this server, which still works.
+- **The worker scales itself.** It handles `GALLERY_MIN_CONCURRENCY` files at once, one more for every 5 waiting
+  up to `GALLERY_MAX_CONCURRENCY`, and drops back whenever a round is open or other work has the machine over
+  85% busy. At most `GALLERY_READER_THREADS` of them use the CPU at a time. `tests/load/gallery-run.sh` measures it.
 - **What the analysis saw.** Under Files, **See analysis** shows a file with a box on each face, who it
   was matched with, the OpenCV score, what Qwen answered, and Qwen's description of the file. Only
   organisers see this. Visitors see the file with no marks.

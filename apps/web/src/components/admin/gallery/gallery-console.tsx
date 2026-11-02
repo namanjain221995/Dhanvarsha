@@ -90,6 +90,12 @@ function SharePanel({ summary, flash }: { summary: GallerySummary; flash: Flash 
           ['Waiting to be sorted', summary.pending.toLocaleString('en-IN')],
           ['Could not be read', summary.failed.toLocaleString('en-IN')],
           ['Space used', size],
+          [
+            'Stored in',
+            summary.storage.where === 's3'
+              ? `S3 bucket ${summary.storage.bucket}, with a folder per named person: about $${(summary.storage.monthly_usd ?? 0).toFixed(2)} a month`
+              : 'This machine',
+          ],
           ['Close matches', summary.model_enabled ? 'Checked by the vision model' : 'Left unmatched: no vision model is set'],
         ]}
       />

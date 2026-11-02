@@ -1,10 +1,13 @@
 """The gallery worker: reads the faces in uploaded files and sorts them into people.
 
 It runs on its own (`stagevote gallery-worker`), apart from the worker that sends email and opens
-rounds, so a long video can never delay either, and with a CPU and memory ceiling so it can never
-take much from the voting. Run exactly one: reading files happens side by side, but deciding who a
-face belongs to happens one file at a time (`_matching`), so two photos of a stranger arriving
-together cannot each start a new person.
+rounds, so a long video can never delay either. Run exactly one: reading files happens side by side, but
+deciding who a face belongs to happens one file at a time (`_matching`), so two photos of a stranger
+arriving together cannot each start a new person.
+
+It scales by itself: the longer the queue, the more files it reads at once, and it drops back as the queue
+empties, whenever a round is open for voting, and whenever the machine is busy with other work. Its
+container also has a low CPU priority, so what it uses is only what nothing else wants.
 
 Questions to the vision model happen outside any database transaction.
 """
@@ -13,25 +16,32 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import filecmp
+import hashlib
 import os
 import signal
 import socket
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 from sqlalchemy import select, text
+from sqlalchemy.exc import IntegrityError
 
 from ..config import Settings, get_settings
 from ..db import dispose_engine, init_engine, sessionmaker
 from ..logging import configure_logging, get_logger
-from ..models import GalleryFace, GalleryMedia, GalleryPerson
+from ..models import GalleryFace, GalleryMedia, GalleryPerson, GalleryStorageTrash
+from ..services import gallery_folders as folders
+from ..services import gallery_store as store
 from ..services.gallery import refresh_avatar
 from ..services.gallery_faces import Face
 from ..services.gallery_files import (
+    INCOMING,
     Prepared,
     UnreadableFile,
     prepare_image,
@@ -44,6 +54,7 @@ from ..services.gallery_match import (
     MATCH_AT,
     MAX_CANDIDATES,
     REFERENCES_PER_PERSON,
+    Candidate,
     Reference,
     candidates,
     from_bytes,
@@ -61,6 +72,34 @@ MAX_REMATCH_QUESTIONS = 40
 RETRY_MESSAGE = "This file could not be processed. Try again."
 # The same pixels read the same way give the same description: from this close, it is that face.
 SAME_FACE_AGAIN_AT = 0.9
+# When S3 cannot be reached, how long before trying its chores again. Files keep waiting safely here.
+STORAGE_RETRY_SECONDS = 30
+# How often to look over everyone's folder, in case something changed without saying so.
+RECHECK_TICKS = 900
+# One more file read at once for each this many waiting.
+FILES_PER_EXTRA = 5
+# Above this share of its cores in use, the machine has better things to do than a long queue.
+BUSY_SHARE = 0.85
+HASH_BLOCK = 8 * 1024 * 1024
+
+
+def wanted_concurrency(
+    *, waiting: int, voting: bool, machine_load: float, cpus: int, low: int, high: int
+) -> int:
+    """How many files to handle at once right now. `machine_load` leaves out this worker's own."""
+    if voting or machine_load >= cpus * BUSY_SHARE:
+        return low
+    return max(low, min(high, low + waiting // FILES_PER_EXTRA))
+
+
+def _hash_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as file:
+        while block := file.read(HASH_BLOCK):
+            digest.update(block)
+    return digest.hexdigest()
+
+
 MODEL_WORDS: dict[bool | None, str] = {True: "yes", False: "no", None: "no_answer"}
 
 
@@ -80,17 +119,33 @@ async def load_references(db: Any, programme_id: uuid.UUID) -> list[Reference]:
     rows = await db.execute(
         text(
             """
-            SELECT p.id AS person_id, p.embedding, p.aligned FROM gallery_people p
+            SELECT 'person' AS kind, p.id AS source_id, p.id AS person_id, p.embedding FROM gallery_people p
             WHERE p.programme_id = :p AND p.embedding IS NOT NULL
             UNION ALL
-            SELECT f.person_id, f.embedding, f.aligned
+            SELECT 'face', f.id, f.person_id, f.embedding
             FROM gallery_faces f JOIN gallery_people p ON p.id = f.person_id
             WHERE p.programme_id = :p AND f.is_reference
             """
         ),
         {"p": programme_id},
     )
-    return [Reference(row.person_id, from_bytes(row.embedding), row.aligned) for row in rows]
+    return [
+        Reference(row.person_id, from_bytes(row.embedding), None, (row.kind, row.source_id)) for row in rows
+    ]
+
+
+async def _aligned_crop(candidate: Candidate) -> bytes:
+    """The crop to show the model. Only close calls need one, so it is not loaded with every reference."""
+    if candidate.aligned is not None:
+        return candidate.aligned
+    assert candidate.source is not None
+    kind, source_id = candidate.source
+    table = "gallery_people" if kind == "person" else "gallery_faces"
+    async with sessionmaker()() as db, db.begin():
+        crop = (
+            await db.execute(text(f"SELECT aligned FROM {table} WHERE id = :i"), {"i": source_id})  # noqa: S608 - one of two names
+        ).scalar_one()
+    return bytes(crop)
 
 
 async def decide(
@@ -116,7 +171,7 @@ async def decide(
             asked += 1
             if asked > MAX_CANDIDATES:
                 return None, checked
-            said = await same_person(candidate.aligned, face.aligned)
+            said = await same_person(await _aligned_crop(candidate), face.aligned)
             entry["model"] = MODEL_WORDS[said]
             checked.append(entry)
             if said is True:
@@ -164,6 +219,13 @@ class GalleryWorker:
         self.stopping = asyncio.Event()
         self.in_flight: set[asyncio.Task[None]] = set()
         self._matching = asyncio.Lock()
+        self._storage_task: asyncio.Task[None] | None = None
+        self._storage_retry_at = 0.0
+        self.concurrency = settings.gallery_min_concurrency
+        # Reading happens on these threads and no others: each holds a copy of the face models.
+        self._readers = ThreadPoolExecutor(
+            max_workers=max(1, settings.gallery_reader_threads), thread_name_prefix="gallery-reader"
+        )
 
     # ---- the queue ------------------------------------------------------------------
 
@@ -230,9 +292,12 @@ class GalleryWorker:
             else:
                 item.status = "failed"
                 if not retry and item.source_key:
-                    # Nothing can come of it, and it was never public: free the disk.
-                    source = Path(self.settings.media_root) / item.source_key
-                    await asyncio.to_thread(source.unlink, missing_ok=True)
+                    # Nothing can come of it, and it was never public: free the space.
+                    if item.source_on_s3:
+                        db.add(GalleryStorageTrash(s3_key=item.source_key))
+                    else:
+                        source = Path(self.settings.media_root) / item.source_key
+                        await asyncio.to_thread(source.unlink, missing_ok=True)
                     item.source_key = None
 
     # ---- one file -------------------------------------------------------------------
@@ -258,11 +323,57 @@ class GalleryWorker:
             if item is None or item.status != "processing" or not item.source_key:
                 return
             kind, source_key, programme_id = item.kind, item.source_key, item.programme_id
-        source = Path(self.settings.media_root) / source_key
-        if not source.exists():
-            raise UnreadableFile("The uploaded file is missing.")
+            original_name, on_s3 = item.original_name, item.source_on_s3
         started = time.monotonic()
-        prepared = await asyncio.to_thread(prepare_image if kind == "image" else prepare_video, source)
+        root = Path(self.settings.media_root)
+        if not on_s3:
+            source = root / source_key
+            if not source.exists():
+                raise UnreadableFile("The uploaded file is missing.")
+            await self._read_and_store(media_id, programme_id, kind, original_name, source, None, started)
+            await asyncio.to_thread(source.unlink, missing_ok=True)
+            return
+        # Sent straight to S3: it comes here only to be read, and then it goes.
+        source = root / INCOMING / uuid.uuid4().hex
+        await asyncio.to_thread(source.parent.mkdir, parents=True, exist_ok=True)
+        try:
+            await asyncio.to_thread(store.download_file, source_key, source)
+            if await self._first_of_its_kind(
+                media_id, source_key, await asyncio.to_thread(_hash_file, source)
+            ):
+                await self._read_and_store(
+                    media_id, programme_id, kind, original_name, source, source_key, started
+                )
+        finally:
+            await asyncio.to_thread(source.unlink, missing_ok=True)
+
+    async def _first_of_its_kind(self, media_id: uuid.UUID, source_key: str, digest: str) -> bool:
+        """The same file sent twice counts once, for everyone. The second copy simply goes away."""
+        try:
+            async with sessionmaker()() as db, db.begin():
+                await db.execute(
+                    text("UPDATE gallery_media SET sha256 = :h WHERE id = :m"), {"h": digest, "m": media_id}
+                )
+            return True
+        except IntegrityError:
+            async with sessionmaker()() as db, db.begin():
+                db.add(GalleryStorageTrash(s3_key=source_key))
+                await db.execute(text("DELETE FROM gallery_media WHERE id = :m"), {"m": media_id})
+            return False
+
+    async def _read_and_store(
+        self,
+        media_id: uuid.UUID,
+        programme_id: uuid.UUID,
+        kind: str,
+        original_name: str,
+        source: Path,
+        s3_source: str | None,
+        started: float,
+    ) -> None:
+        prepared = await asyncio.get_running_loop().run_in_executor(
+            self._readers, prepare_image if kind == "image" else prepare_video, source
+        )
         written: list[str | None] = [
             prepared.storage_key,
             prepared.display_key,
@@ -274,14 +385,44 @@ class GalleryWorker:
                 lambda: [write_public(face.crop, "webp") for face, _ in prepared.faces]
             )
             written += crops
+            # On S3 before the file counts as ready. Its keys never change, so a retry just replaces it.
+            remote = (
+                await asyncio.to_thread(
+                    self._send_to_s3, media_id, original_name, prepared, source, s3_source
+                )
+                if store.enabled()
+                else None
+            )
             async with self._matching:
-                stored = await self._store(media_id, programme_id, kind, prepared, crops, started)
+                stored = await self._store(
+                    media_id, programme_id, kind, prepared, crops, started, remote, s3_source
+                )
         except Exception:
             await asyncio.to_thread(remove_public, written)
             raise
         if not stored:  # an organiser removed it while it was being read
             await asyncio.to_thread(remove_public, written)
-        await asyncio.to_thread(source.unlink, missing_ok=True)
+            if remote:
+                async with sessionmaker()() as db, db.begin():
+                    db.add_all([GalleryStorageTrash(s3_key=key) for key in set(remote)])
+        elif remote:  # S3 holds the full-size files now; the small pictures stay here
+            await asyncio.to_thread(remove_public, [prepared.storage_key, prepared.display_key])
+
+    def _send_to_s3(
+        self, media_id: uuid.UUID, original_name: str, prepared: Prepared, source: Path, s3_source: str | None
+    ) -> tuple[str, str]:
+        root = Path(self.settings.media_root)
+        storage = store.file_key(media_id, original_name, store.extension_of(prepared.storage_key))
+        if s3_source and filecmp.cmp(source, root / prepared.storage_key, shallow=False):
+            # Already in the bucket, byte for byte: a copy there uses none of this machine's internet line.
+            store.copy_object(s3_source, storage)
+        else:
+            store.upload_file(root / prepared.storage_key, storage)
+        if prepared.display_key == prepared.storage_key:
+            return storage, storage
+        display = store.playable_key(media_id, store.extension_of(prepared.display_key))
+        store.upload_file(root / prepared.display_key, display)
+        return storage, display
 
     async def _store(
         self,
@@ -291,6 +432,8 @@ class GalleryWorker:
         prepared: Prepared,
         crops: list[str],
         started: float,
+        remote: tuple[str, str] | None,
+        s3_source: str | None,
     ) -> bool:
         async with sessionmaker()() as db, db.begin():
             references = await load_references(db, programme_id)
@@ -326,7 +469,9 @@ class GalleryWorker:
             await db.flush()
             for person_id in touched:
                 await refresh_avatar(db, person_id)
-            item.storage_key, item.display_key = prepared.storage_key, prepared.display_key
+            await folders.mark_folders(db, list(touched))
+            item.storage_key, item.display_key = remote or (prepared.storage_key, prepared.display_key)
+            item.location = "s3" if remote else "local"
             item.thumb_key = prepared.thumb_key
             item.width, item.height = prepared.width, prepared.height
             item.duration_ms = prepared.duration_ms
@@ -343,6 +488,8 @@ class GalleryWorker:
                 "frames": [{"ms": ms, "key": key} for ms, key in prepared.frames],
             }
             item.status = "ready"
+            if s3_source:
+                db.add(GalleryStorageTrash(s3_key=s3_source))
             item.source_key = None
             item.lease_owner, item.lease_expires_at, item.last_error = None, None, None
             item.processed_at = (await db.execute(text("SELECT now()"))).scalar_one()
@@ -394,6 +541,8 @@ class GalleryWorker:
                         text("DELETE FROM gallery_people WHERE id = ANY(:ids) AND enrolled_at IS NULL"),
                         {"ids": list(joins)},
                     )
+                if joins:
+                    await folders.mark_folders(db, [person_id])
                 # A newer selfie that arrived meanwhile keeps the flag, and is looked for next.
                 await db.execute(
                     text(
@@ -440,8 +589,8 @@ class GalleryWorker:
             return (
                 await db.execute(
                     text(
-                        "SELECT id, kind, display_key FROM gallery_media "
-                        "WHERE status = 'ready' AND analysis = '{}'::jsonb ORDER BY created_at LIMIT 1"
+                        "SELECT id, kind, display_key FROM gallery_media WHERE status = 'ready' "
+                        "AND location = 'local' AND analysis = '{}'::jsonb ORDER BY created_at LIMIT 1"
                     )
                 )
             ).first()
@@ -449,8 +598,8 @@ class GalleryWorker:
     async def _fill_in_analysis(self, row: Any) -> None:
         """Read one older file again, for where its faces are. Who they belong to stays as it is."""
         try:
-            reading = await asyncio.to_thread(
-                read_again, row.kind, Path(self.settings.media_root) / row.display_key
+            reading = await asyncio.get_running_loop().run_in_executor(
+                self._readers, read_again, row.kind, Path(self.settings.media_root) / row.display_key
             )
             async with sessionmaker()() as db, db.begin():
                 item = await db.get(GalleryMedia, row.id)
@@ -483,10 +632,58 @@ class GalleryWorker:
                     {"m": row.id},
                 )
 
+    # ---- S3 --------------------------------------------------------------------------
+
+    async def _storage_chores(self) -> None:
+        try:
+            await folders.do_some_work()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            # Nothing is lost: everything waits in the database, and the files stay where they are.
+            log.exception("S3 work failed; trying again shortly")
+            self._storage_retry_at = time.monotonic() + STORAGE_RETRY_SECONDS
+
+    async def _start_storage_chores(self) -> None:
+        if not store.enabled() or self.stopping.is_set() or time.monotonic() < self._storage_retry_at:
+            return
+        if self._storage_task is not None and not self._storage_task.done():
+            return
+        if await folders.has_work():
+            self._storage_task = asyncio.create_task(self._storage_chores())
+            self.in_flight.add(self._storage_task)
+            self._storage_task.add_done_callback(self.in_flight.discard)
+
     # ---- lifecycle --------------------------------------------------------------------
 
+    async def _scale(self) -> None:
+        async with sessionmaker()() as db, db.begin():
+            row = (
+                await db.execute(
+                    text(
+                        """
+                        SELECT (SELECT count(*) FROM gallery_media WHERE status = 'queued' AND next_attempt_at <= now()) AS waiting,
+                               EXISTS (SELECT 1 FROM events WHERE status = 'open' AND archived_at IS NULL) AS voting
+                        """
+                    )
+                )
+            ).one()
+        wanted = wanted_concurrency(
+            waiting=row.waiting,
+            voting=row.voting,
+            # What else is running: this worker's own files must not count as the machine being busy.
+            machine_load=max(0.0, os.getloadavg()[0] - len(self.in_flight)),
+            cpus=os.cpu_count() or 1,
+            low=self.settings.gallery_min_concurrency,
+            high=self.settings.gallery_max_concurrency,
+        )
+        if wanted != self.concurrency:
+            log.info("gallery worker scaled", extra={"reading_at_once": wanted, "waiting": row.waiting})
+            self.concurrency = wanted
+
     async def tick(self) -> None:
-        capacity = self.settings.gallery_concurrency - len(self.in_flight)
+        await self._scale()
+        capacity = self.concurrency - len(self.in_flight)
         if capacity > 0:
             for media_id in await self.lease(capacity):
                 task = asyncio.create_task(self.process(media_id))
@@ -500,6 +697,7 @@ class GalleryWorker:
                 task = asyncio.create_task(self._fill_in_analysis(unread))
                 self.in_flight.add(task)
                 task.add_done_callback(self.in_flight.discard)
+        await self._start_storage_chores()
 
     async def run(self) -> None:
         log.info(
@@ -511,6 +709,8 @@ class GalleryWorker:
             try:
                 if ticks % 30 == 0:
                     await self.recover()
+                if ticks % RECHECK_TICKS == RECHECK_TICKS - 1 and store.enabled():
+                    await folders.recheck_everyone()
                 await self.tick()
             except asyncio.CancelledError:
                 raise

@@ -48,13 +48,14 @@ class Face:
     detector_score: float = 0.0
 
 
-_lock = threading.Lock()
-_models: tuple[cv2.FaceDetectorYN, cv2.FaceRecognizerSF] | None = None
+# The models keep state while they run, so each thread has its own (about 45 MB). Callers use small fixed
+# thread pools, which is also what bounds their number.
+_local = threading.local()
 
 
 def _load() -> tuple[cv2.FaceDetectorYN, cv2.FaceRecognizerSF]:
-    global _models
-    if _models is None:
+    models = getattr(_local, "models", None)
+    if models is None:
         folder = Path(get_settings().gallery_models_dir)
         try:
             detector = cv2.FaceDetectorYN.create(
@@ -66,8 +67,9 @@ def _load() -> tuple[cv2.FaceDetectorYN, cv2.FaceRecognizerSF]:
                 "GALLERY_UNAVAILABLE", "Face matching is not available right now. Try again later.", 503
             ) from exc
         cv2.setNumThreads(max(1, get_settings().gallery_cv_threads))
-        _models = (detector, recogniser)
-    return _models
+        models = (detector, recogniser)
+        _local.models = models
+    return models
 
 
 def _crop(bgr: np.ndarray, box: np.ndarray) -> bytes:
@@ -142,33 +144,32 @@ def find_faces(bgr: np.ndarray, *, min_px: int = MIN_FACE_PX) -> list[Face]:
     if max(bgr.shape[:2]) == 0:
         return []
     height, width = bgr.shape[:2]
-    with _lock:
-        detector, recogniser = _load()
-        rows = sorted(_detect(detector, bgr), key=lambda row: float(row[2] * row[3]), reverse=True)
-        faces: list[Face] = []
-        for box in rows[:MAX_FACES]:
-            size = round(float(min(box[2], box[3])))
-            if size < min_px:
-                continue
-            aligned = recogniser.alignCrop(bgr, box)
-            feature = recogniser.feature(aligned).flatten().astype(np.float32)
-            norm = float(np.linalg.norm(feature))
-            if norm == 0:
-                continue
-            ok, jpeg = cv2.imencode(".jpg", aligned, [cv2.IMWRITE_JPEG_QUALITY, 92])
-            if not ok:
-                continue
-            faces.append(
-                Face(
-                    embedding=feature / norm,
-                    aligned=jpeg.tobytes(),
-                    crop=_crop(bgr, box),
-                    size_px=size,
-                    quality=float(box[14]) * min(1.0, size / FULL_QUALITY_PX),
-                    box=_share_of_picture(box, height, width),
-                    detector_score=round(float(box[14]), 3),
-                )
+    detector, recogniser = _load()
+    rows = sorted(_detect(detector, bgr), key=lambda row: float(row[2] * row[3]), reverse=True)
+    faces: list[Face] = []
+    for box in rows[:MAX_FACES]:
+        size = round(float(min(box[2], box[3])))
+        if size < min_px:
+            continue
+        aligned = recogniser.alignCrop(bgr, box)
+        feature = recogniser.feature(aligned).flatten().astype(np.float32)
+        norm = float(np.linalg.norm(feature))
+        if norm == 0:
+            continue
+        ok, jpeg = cv2.imencode(".jpg", aligned, [cv2.IMWRITE_JPEG_QUALITY, 92])
+        if not ok:
+            continue
+        faces.append(
+            Face(
+                embedding=feature / norm,
+                aligned=jpeg.tobytes(),
+                crop=_crop(bgr, box),
+                size_px=size,
+                quality=float(box[14]) * min(1.0, size / FULL_QUALITY_PX),
+                box=_share_of_picture(box, height, width),
+                detector_score=round(float(box[14]), 3),
             )
+        )
     return faces
 
 

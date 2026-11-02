@@ -56,7 +56,20 @@ x-api-env: &api-env
   GALLERY_MAX_PERSON_BYTES: ${GALLERY_MAX_PERSON_BYTES:-0}
   GALLERY_UPLOADS_PER_HOUR: ${GALLERY_UPLOADS_PER_HOUR:-0}
   GALLERY_FREE_SPACE_RESERVE_BYTES: ${GALLERY_FREE_SPACE_RESERVE_BYTES:-21474836480}
+  GALLERY_MIN_CONCURRENCY: ${GALLERY_MIN_CONCURRENCY:-2}
+  GALLERY_MAX_CONCURRENCY: ${GALLERY_MAX_CONCURRENCY:-16}
+  GALLERY_READER_THREADS: ${GALLERY_READER_THREADS:-8}
+  GALLERY_S3_BUCKET: ${GALLERY_S3_BUCKET:-}
+  GALLERY_S3_REGION: ${GALLERY_S3_REGION:-us-east-1}
+  GALLERY_S3_PREFIX: ${GALLERY_S3_PREFIX:-}
+  GALLERY_S3_URL_HOURS: ${GALLERY_S3_URL_HOURS:-12}
+  GALLERY_MAX_TOTAL_BYTES: ${GALLERY_MAX_TOTAL_BYTES:-0}
   LOG_LEVEL: ${LOG_LEVEL:-INFO}
+
+# Only the API and the gallery worker use S3, so only they get the key.
+x-s3-key: &s3-key
+  AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+  AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
 
 services:
   db:
@@ -99,7 +112,8 @@ services:
   api:
     image: stagevote-api:${STAGEVOTE_VERSION:-local}
     restart: always
-    environment: *api-env
+    environment:
+      <<: [*api-env, *s3-key]
     command:
       - uvicorn
       - stagevote.main:app
@@ -110,6 +124,9 @@ services:
       - --forwarded-allow-ips=*
       - --no-access-log
       - --timeout-graceful-shutdown=20
+      # Longer than Caddy keeps an idle connection (2 minutes), so Caddy always closes first and never sends
+      # a request down a connection this end has just closed, which reached the browser as a 502.
+      - --timeout-keep-alive=130
     # An organiser's analysis view asks the vision model on this machine what a file shows.
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -136,18 +153,21 @@ services:
       migrate:
         condition: service_completed_successfully
 
-  # Reads the faces in the photo gallery's files. Apart from the worker above and capped, so that
-  # no video can slow the voting. Run exactly one (worker/gallery.py). It reaches the vision model
-  # on this machine through GALLERY_MODEL_URL, and works without it.
+  # Reads the faces in the photo gallery's files, apart from the worker above. Run exactly one: it scales
+  # itself with the queue (worker/gallery.py). The low CPU priority gives way to the voting and to anything
+  # else on this machine, so it only uses idle cores. It reaches the vision model on this machine through
+  # GALLERY_MODEL_URL, and works without it.
   gallery-worker:
     image: stagevote-api:${STAGEVOTE_VERSION:-local}
     restart: always
-    environment: *api-env
+    environment:
+      <<: [*api-env, *s3-key]
     command: ["stagevote", "gallery-worker"]
     stop_grace_period: 30s
-    cpus: ${GALLERY_WORKER_CPUS:-4}
-    mem_limit: ${GALLERY_WORKER_MEMORY:-6g}
-    pids_limit: 256
+    cpus: ${GALLERY_WORKER_CPUS:-12}
+    cpu_shares: 256
+    mem_limit: ${GALLERY_WORKER_MEMORY:-8g}
+    pids_limit: 512
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -168,6 +188,9 @@ services:
       NODE_ENV: production
       PORT: "3000"
       HOSTNAME: 0.0.0.0
+      # Pages load the gallery's full-size files straight from this bucket.
+      GALLERY_S3_BUCKET: ${GALLERY_S3_BUCKET:-}
+      GALLERY_S3_REGION: ${GALLERY_S3_REGION:-us-east-1}
     depends_on:
       - api
 

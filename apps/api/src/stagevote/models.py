@@ -682,6 +682,11 @@ class GalleryPerson(Base):
             postgresql_where=text("participant_id IS NOT NULL"),
         ),
         Index("ix_gallery_people_rematch", "updated_at", postgresql_where=text("rematch_pending")),
+        Index(
+            "ix_gallery_people_folder_due",
+            "updated_at",
+            postgresql_where=text("folder_wanted <> folder_done"),
+        ),
     )
 
     id: Mapped[uuid.UUID] = uuid_pk()
@@ -702,8 +707,50 @@ class GalleryPerson(Base):
     rematch_pending: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default=text("false")
     )
+    # Their folder on S3, and whether it is up to date: services/gallery_folders.py.
+    folder: Mapped[str | None] = mapped_column(String(120))
+    folder_wanted: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    folder_done: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     created_at: Mapped[datetime] = created_at_col()
     updated_at: Mapped[datetime] = updated_at_col()
+
+
+class GalleryPersonFile(Base):
+    """A copy of a file in a person's folder on S3. No foreign keys: the row must outlive a removed person
+    or file until the worker has deleted the copy."""
+
+    __tablename__ = "gallery_person_files"
+    __table_args__ = (Index("ix_gallery_person_files_media", "media_id"),)
+
+    person_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    media_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    s3_key: Mapped[str] = mapped_column(String(1024), nullable=False)
+    created_at: Mapped[datetime] = created_at_col()
+
+
+class GalleryDirectUpload(Base):
+    """A multipart upload a browser is sending straight to S3, until it completes."""
+
+    __tablename__ = "gallery_s3_uploads"
+    __table_args__ = (Index("ix_gallery_s3_uploads_created", "created_at"),)
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    person_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    s3_key: Mapped[str] = mapped_column(String(1024), nullable=False)
+    s3_upload_id: Mapped[str] = mapped_column(String(1024), nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    size: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    created_at: Mapped[datetime] = created_at_col()
+
+
+class GalleryStorageTrash(Base):
+    """An object on S3 waiting to be deleted by the worker."""
+
+    __tablename__ = "gallery_storage_trash"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    s3_key: Mapped[str] = mapped_column(String(1024), nullable=False)
+    created_at: Mapped[datetime] = created_at_col()
 
 
 class GalleryDevice(Base):
@@ -731,10 +778,16 @@ class GalleryMedia(Base):
     __table_args__ = (
         CheckConstraint(_in("kind", GALLERY_MEDIA_KINDS), name="ck_gallery_media_kind"),
         CheckConstraint(_in("status", GALLERY_MEDIA_STATUSES), name="ck_gallery_media_status"),
+        CheckConstraint("location IN ('local', 's3')", name="ck_gallery_media_location"),
         UniqueConstraint("programme_id", "sha256", name="uq_gallery_media_file"),
         Index("ix_gallery_media_due", "status", "next_attempt_at"),
         Index("ix_gallery_media_uploader", "uploader_person_id"),
         Index("ix_gallery_media_recent", "programme_id", "created_at"),
+        Index(
+            "ix_gallery_media_local",
+            "created_at",
+            postgresql_where=text("status = 'ready' AND location = 'local'"),
+        ),
     )
 
     id: Mapped[uuid.UUID] = uuid_pk()
@@ -744,8 +797,15 @@ class GalleryMedia(Base):
     kind: Mapped[str] = mapped_column(String(8), nullable=False)
     status: Mapped[str] = mapped_column(String(12), nullable=False, default="queued", server_default="queued")
     source_key: Mapped[str | None] = mapped_column(String(120))
-    storage_key: Mapped[str | None] = mapped_column(String(80))
-    display_key: Mapped[str | None] = mapped_column(String(80))
+    # True: the file as it arrived waits in the bucket, sent straight from the browser. Its sha256 is a
+    # placeholder until the worker has seen all of it.
+    source_on_s3: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
+    # local: names on the media volume. s3: keys in the bucket (services/gallery_store.py).
+    location: Mapped[str] = mapped_column(String(8), nullable=False, default="local", server_default="local")
+    storage_key: Mapped[str | None] = mapped_column(String(1024))
+    display_key: Mapped[str | None] = mapped_column(String(1024))
     thumb_key: Mapped[str | None] = mapped_column(String(80))
     content_type: Mapped[str] = mapped_column(String(64), nullable=False)
     byte_size: Mapped[int] = mapped_column(BigInteger, nullable=False)

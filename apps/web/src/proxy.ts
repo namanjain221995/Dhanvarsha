@@ -12,13 +12,19 @@ export function proxy(request: NextRequest) {
   const host = request.headers.get('x-forwarded-host') ?? request.headers.get('host') ?? ''
   const secure = forwardedProto === 'https'
   const socketOrigins = host ? (secure ? `wss://${host}` : `ws://${host} wss://${host}`) : ''
+  // The photo gallery's full-size files go to and come from its S3 bucket directly, through signed links.
+  const bucket = process.env.GALLERY_S3_BUCKET
+  const fileOrigins = bucket
+    ? ` https://${bucket}.s3.amazonaws.com https://${bucket}.s3.${process.env.GALLERY_S3_REGION ?? 'us-east-1'}.amazonaws.com`
+    : ''
   const csp = [
     "default-src 'self'",
     `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'${isDev ? " 'unsafe-eval'" : ''}`,
     "style-src 'self' 'unsafe-inline'",
-    "img-src 'self' data: blob:",
+    `img-src 'self' data: blob:${fileOrigins}`,
+    `media-src 'self'${fileOrigins}`,
     "font-src 'self'",
-    `connect-src 'self' ${socketOrigins}`.trim(),
+    `connect-src 'self' ${socketOrigins}${fileOrigins}`.trim(),
     "object-src 'none'",
     "base-uri 'self'",
     "form-action 'self'",

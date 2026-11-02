@@ -134,6 +134,13 @@ TEST_ENV = {
     "MAX_MEDIA_BYTES": "0",
     "MAX_MEDIA_IMAGE_BYTES": "0",
     "LOG_LEVEL": "INFO",
+    # Whatever the calling shell exported: no test may ever reach a real bucket or the vision model.
+    "GALLERY_S3_BUCKET": "",
+    "GALLERY_S3_PREFIX": "",
+    "GALLERY_MODEL_URL": "",
+    "AWS_ACCESS_KEY_ID": "testing",
+    "AWS_SECRET_ACCESS_KEY": "testing",
+    "AWS_DEFAULT_REGION": "us-east-1",
 }
 os.environ.update(TEST_ENV)
 os.environ.pop("WORKER_ID", None)

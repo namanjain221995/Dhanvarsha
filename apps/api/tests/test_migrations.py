@@ -29,7 +29,7 @@ from stagevote.config import get_settings
 from stagevote.db import asyncpg_dsn, build_engine
 from stagevote.security import new_token, token_hash
 
-HEAD = "0015"
+HEAD = "0017"
 
 LINK_COLUMNS = (
     "SELECT column_name, data_type, is_nullable FROM information_schema.columns "
@@ -710,6 +710,99 @@ async def test_0015_adds_the_analysis_columns_and_drops_them_on_downgrade(scratc
         assert await owner.fetchval(columns) == 0
         await alembic(scratch, "head")
         assert await owner.fetchval(columns) == 2
+    finally:
+        await app.close()
+        await owner.close()
+
+
+async def test_0016_starts_every_file_as_local_and_will_not_strand_files_on_s3(scratch: DatabaseInfo) -> None:
+    await alembic(scratch, "0015")
+    owner = await connect(scratch.owner_url)
+    app = await connect(scratch.app_url)
+    try:
+        programme_id = await old_programme(owner, "Dhanvarsha 2026")
+        media_id, person_id = uuid.uuid4(), uuid.uuid4()
+        await app.execute(
+            "INSERT INTO gallery_media (id, programme_id, kind, content_type, byte_size, sha256) "
+            "VALUES ($1, $2, 'image', 'image/png', 1, $3)",
+            media_id,
+            programme_id,
+            "d" * 64,
+        )
+        await app.execute(
+            "INSERT INTO gallery_people (id, programme_id, name) VALUES ($1, $2, 'Asha')",
+            person_id,
+            programme_id,
+        )
+
+        await alembic(scratch, "0016")
+        assert await owner.fetchval("SELECT location FROM gallery_media WHERE id = $1", media_id) == "local"
+        row = await owner.fetchrow(
+            "SELECT folder, folder_wanted, folder_done FROM gallery_people WHERE id = $1", person_id
+        )
+        assert tuple(row) == (None, 0, 0)
+        # The runtime role uses the new tables, keys may be as long as S3 allows, and folders stay unique.
+        await app.execute("INSERT INTO gallery_storage_trash (s3_key) VALUES ($1)", "k" * 1024)
+        await app.execute(
+            "INSERT INTO gallery_person_files (person_id, media_id, s3_key) VALUES ($1, $2, 'people/Asha/x.png')",
+            person_id,
+            media_id,
+        )
+        await app.execute("UPDATE gallery_media SET storage_key = $1 WHERE id = $2", "k" * 1024, media_id)
+        await app.execute("UPDATE gallery_people SET folder = 'Asha' WHERE id = $1", person_id)
+        with pytest.raises(asyncpg.UniqueViolationError):
+            await app.execute(
+                "INSERT INTO gallery_people (id, programme_id, name, folder) VALUES ($1, $2, 'A', 'ASHA')",
+                uuid.uuid4(),
+                programme_id,
+            )
+        with pytest.raises(asyncpg.CheckViolationError):
+            await app.execute("UPDATE gallery_media SET location = 'moon' WHERE id = $1", media_id)
+
+        # The previous release could not find a file on S3, so the downgrade refuses while there is one.
+        await app.execute("UPDATE gallery_media SET location = 's3' WHERE id = $1", media_id)
+        with pytest.raises(RuntimeError, match="on S3"):
+            await alembic(scratch, "0015", downgrade=True)
+        await owner.execute(
+            "UPDATE gallery_media SET location = 'local', storage_key = NULL WHERE id = $1", media_id
+        )
+        await alembic(scratch, "0015", downgrade=True)
+        assert await owner.fetchval("SELECT to_regclass('gallery_person_files')") is None
+        await alembic(scratch, "head")
+        assert await owner.fetchval("SELECT version_num FROM alembic_version") == HEAD
+    finally:
+        await app.close()
+        await owner.close()
+
+
+async def test_0017_adds_direct_uploads_and_will_not_strand_a_waiting_file(scratch: DatabaseInfo) -> None:
+    await alembic(scratch, "0016")
+    owner = await connect(scratch.owner_url)
+    app = await connect(scratch.app_url)
+    try:
+        programme_id = await old_programme(owner, "Dhanvarsha 2026")
+        media_id = uuid.uuid4()
+        await app.execute(
+            "INSERT INTO gallery_media (id, programme_id, kind, content_type, byte_size, sha256, source_key) "
+            "VALUES ($1, $2, 'image', 'image/png', 1, $3, 'x')",
+            media_id,
+            programme_id,
+            "e" * 64,
+        )
+        await alembic(scratch, "0017")
+        assert await owner.fetchval("SELECT source_on_s3 FROM gallery_media WHERE id = $1", media_id) is False
+        await app.execute(
+            "INSERT INTO gallery_s3_uploads (id, person_id, s3_key, s3_upload_id, name, size) "
+            "VALUES ('a', $1, 'k', 'u', 'n', 1)",
+            uuid.uuid4(),
+        )
+        await app.execute("UPDATE gallery_media SET source_on_s3 = true WHERE id = $1", media_id)
+        with pytest.raises(RuntimeError, match="wait on S3"):
+            await alembic(scratch, "0016", downgrade=True)
+        await owner.execute("UPDATE gallery_media SET source_on_s3 = false WHERE id = $1", media_id)
+        await alembic(scratch, "0016", downgrade=True)
+        assert await owner.fetchval("SELECT to_regclass('gallery_s3_uploads')") is None
+        await alembic(scratch, "head")
     finally:
         await app.close()
         await owner.close()

@@ -35,14 +35,17 @@ class Reference:
 
     person_id: uuid.UUID
     embedding: np.ndarray
-    aligned: bytes
+    # Loaded only when the model is asked: a big gallery has many references, compared for every file.
+    aligned: bytes | None = None
+    source: tuple[str, uuid.UUID] | None = None
 
 
 @dataclass(frozen=True)
 class Candidate:
     person_id: uuid.UUID
     score: float
-    aligned: bytes
+    aligned: bytes | None = None
+    source: tuple[str, uuid.UUID] | None = None
 
 
 def to_bytes(embedding: np.ndarray) -> bytes:
@@ -69,7 +72,9 @@ def candidates(embedding: np.ndarray, references: list[Reference]) -> list[Candi
         score = float(raw)
         current = best.get(reference.person_id)
         if score >= ASK_AT and (current is None or score > current.score):
-            best[reference.person_id] = Candidate(reference.person_id, score, reference.aligned)
+            best[reference.person_id] = Candidate(
+                reference.person_id, score, reference.aligned, reference.source
+            )
     return sorted(best.values(), key=lambda c: c.score, reverse=True)
 
 

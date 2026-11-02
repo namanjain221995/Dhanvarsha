@@ -28,13 +28,15 @@ dependencies = [
     "pillow-heif>=1.1,<2",
     "piexif>=1.1,<2",
     "httpx>=0.28,<0.29",
+    # The photo gallery's files on S3.
+    "boto3>=1.40,<2",
 ]
 
 [dependency-groups]
 dev = [
+    "moto[s3]>=5.1,<6",
     "pytest>=9.1,<10",
     "pytest-asyncio>=1.4,<2",
-    "httpx>=0.28,<0.29",
     "ruff>=0.17,<0.18",
     "mypy>=2.4,<3",
 ]

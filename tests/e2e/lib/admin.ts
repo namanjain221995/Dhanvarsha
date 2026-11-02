@@ -65,6 +65,14 @@ export class Admin {
     return (text ? JSON.parse(text) : {}) as T
   }
 
+  /** Empty the gallery: earlier runs, and tests that failed, leave people and files behind. */
+  async clearGallery() {
+    const { people } = await this.call<{ people: { id: string }[] }>('get', '/gallery/people?limit=1000')
+    for (const person of people) await this.call('delete', `/gallery/people/${person.id}`)
+    const { media } = await this.call<{ media: { id: string }[] }>('get', '/gallery/media?limit=1000')
+    for (const file of media) await this.call('delete', `/gallery/media/${file.id}`)
+  }
+
   /** Email everyone who has not had the gallery email yet. */
   sendGalleryEmail() {
     return this.call<{ queued: number; already: number; reserved: number }>('post', '/gallery/email/send')

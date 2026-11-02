@@ -53,6 +53,8 @@ export function Viewer({
 
   if (!item) return null
   const loading = item.type === 'image' && loadedId !== item.id && failedId !== item.id
+  // Sized before it loads, so the small picture fills the screen at once while the full one comes from S3.
+  const ratio = item.width > 0 && item.height > 0 ? item.width / item.height : null
 
   return (
     <dialog
@@ -91,7 +93,10 @@ export function Viewer({
             src={item.url}
             alt={item.name}
             // The small picture holds the place until the full one arrives.
-            style={{ backgroundImage: `url(${item.thumb_url})` }}
+            style={{
+              backgroundImage: `url(${item.thumb_url})`,
+              ...(ratio ? { aspectRatio: ratio, width: `min(100%, calc(100dvh * ${ratio}))` } : {}),
+            }}
             onLoad={() => setLoadedId(item.id)}
             onError={() => setFailedId(item.id)}
           />

@@ -107,8 +107,23 @@ class Settings(BaseSettings):
     gallery_max_person_bytes: int = 0
     gallery_uploads_per_hour: int = 0
     gallery_free_space_reserve_bytes: int = 20 * 1024 * 1024 * 1024
-    gallery_concurrency: int = 2
-    gallery_cv_threads: int = 2
+    # Full-size files on S3 (services/gallery_store.py). Empty: on the media volume. The prefix keeps a
+    # preview's files apart from the live site's in the same bucket. boto3 reads the key from AWS_* itself.
+    gallery_s3_bucket: str = ""
+    gallery_s3_region: str = "us-east-1"
+    gallery_s3_prefix: str = ""
+    gallery_s3_url_hours: int = 12
+    # A ceiling on all the files together, on S3 only. 0 is none, as the organisers chose: they pay for
+    # what is stored. Set it if the bill ever needs a limit.
+    gallery_max_total_bytes: int = 0
+    # How many files the worker handles at once: it grows with the queue up to the maximum, and shrinks when
+    # the queue is short or the machine is busy (worker/gallery.py). Most of a file's time on S3 is waiting
+    # for the network, so only the readers use the CPU, and they are fewer.
+    gallery_min_concurrency: int = 2
+    gallery_max_concurrency: int = 16
+    gallery_reader_threads: int = 8
+    # Threads for one reading. Files read side by side are what use more cores.
+    gallery_cv_threads: int = 1
     gallery_ffmpeg_threads: int = 4
 
     @field_validator("programme_timezone")

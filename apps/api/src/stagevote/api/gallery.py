@@ -20,6 +20,7 @@ from ..deps import AdminContext, check_origin, client_ip, current_admin
 from ..errors import AppError
 from ..models import EmailJob, GalleryMedia, GalleryPerson, Participant, Programme
 from ..services import gallery, media
+from ..services import gallery_store as store
 from ..services.invitations import message_id_for
 from ..services.programmes import active_programme, asset_urls
 from ..state import audit, emit
@@ -66,6 +67,7 @@ async def _me(db: AsyncSession, request: Request, response: Response, token: str
             "known": identity.from_email,
             "max_image_bytes": settings.gallery_max_image_bytes,
             "max_video_bytes": settings.gallery_max_video_bytes,
+            "direct_uploads": store.enabled(),
         }
     _remember(response, identity.device_token)
     return answer
@@ -124,15 +126,41 @@ async def delete_me(request: Request, db: AsyncSession = Depends(get_db)) -> Res
 # ---- uploading ---------------------------------------------------------------------------
 
 
+class GalleryUploadIn(UploadIn):
+    # Straight to S3 from the browser, when S3 is set up. A browser that cannot reach S3 sends False, and the
+    # file comes through this server instead.
+    direct: bool = False
+
+
+class PartsIn(Model):
+    numbers: list[int] = Field(min_length=1, max_length=100)
+
+
 @router.post("/uploads", status_code=201)
 async def start_upload(
-    body: UploadIn, request: Request, response: Response, db: AsyncSession = Depends(get_db)
+    body: GalleryUploadIn, request: Request, response: Response, db: AsyncSession = Depends(get_db)
 ) -> dict[str, Any]:
     no_store(response)
     async with db.begin():
         person = await gallery.require_person(db, request)
+    if body.direct and store.enabled():
+        return await gallery.start_direct_upload(db, person, body.name, body.size, body.content_type)
     upload_id = await gallery.start_upload(db, person, body.name, body.size, body.content_type)
-    return {"upload_id": upload_id, "chunk_size": media.CHUNK_SIZE}
+    return {"upload_id": upload_id, "chunk_size": media.CHUNK_SIZE, "mode": "server"}
+
+
+@router.post("/uploads/{upload_id}/parts")
+async def sign_parts(
+    upload_id: str, body: PartsIn, request: Request, response: Response, db: AsyncSession = Depends(get_db)
+) -> dict[str, Any]:
+    """Signed links for the next parts of a file going straight to S3."""
+    no_store(response)
+    async with db.begin():
+        person = await gallery.require_person(db, request)
+    row = await gallery.direct_upload(db, upload_id, person)
+    if row is None or any(not 1 <= number <= store.MAX_PARTS for number in body.numbers):
+        raise AppError("NOT_FOUND", "This upload was not found. Start the upload again.", 404)
+    return {"urls": await gallery.direct_part_urls(row, body.numbers)}
 
 
 @router.put("/uploads/{upload_id}")
@@ -159,6 +187,9 @@ async def complete_upload(
     no_store(response)
     async with db.begin():
         person = await gallery.require_person(db, request)
+    direct = await gallery.direct_upload(db, upload_id, person)
+    if direct is not None:
+        return await gallery.finish_direct_upload(db, direct, person, client_ip(request))
     upload = await gallery.load_upload(upload_id, person)
     return await gallery.finish_upload(db, upload, person, client_ip(request))
 
@@ -167,8 +198,12 @@ async def complete_upload(
 async def abort_upload(upload_id: str, request: Request, db: AsyncSession = Depends(get_db)) -> Response:
     async with db.begin():
         person = await gallery.require_person(db, request)
-    upload = await gallery.load_upload(upload_id, person)
-    await media.abort_upload(upload)
+    direct = await gallery.direct_upload(db, upload_id, person)
+    if direct is not None:
+        await gallery.abort_direct_upload(db, direct)
+    else:
+        upload = await gallery.load_upload(upload_id, person)
+        await media.abort_upload(upload)
     return Response(status_code=204, headers=NO_STORE)
 
 
@@ -320,6 +355,7 @@ async def admin_rename_person(
         if person is None or person.programme_id != programme.id:
             raise AppError("NOT_FOUND", "This person was not found.", 404)
         person.name = " ".join(body.name.split())
+        person.folder_wanted += 1
         await audit(
             db,
             ctx.actor,

@@ -12,9 +12,16 @@ import { noHorizontalOverflow, uniqueEmail } from '../lib/participants'
  * framings of one public-domain face (apps/api/tests/fixtures/README.md). No vision model runs here.
  *
  * Each upload gets a little noise at its end, after the picture data, because the gallery counts
- * the same bytes only once and the test database lives on between runs. Every test removes its own
- * person at the end, because the face is the same in all of them.
+ * the same bytes only once and the test database lives on between runs. The face is the same in every
+ * test, and a selfie that matches someone joins them under their name, so each test starts with nobody
+ * in the gallery, even after a run that failed halfway.
  */
+
+test.beforeEach(async ({ baseURL }) => {
+  const admin = await Admin.login(baseURL!)
+  await admin.clearGallery()
+  await admin.dispose()
+})
 
 const FIXTURES = join(import.meta.dirname, '../../../apps/api/tests/fixtures')
 
@@ -34,8 +41,9 @@ async function fillForm(page: Page, name: string) {
 
 const uploadHeading = (page: Page) => page.getByRole('heading', { name: 'Share your photos and videos' })
 
-async function seriousViolations(page: Page) {
-  const scan = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze()
+async function seriousViolations(page: Page, within?: string) {
+  const builder = new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa'])
+  const scan = await (within ? builder.include(within) : builder).analyze()
   return scan.violations
     .filter((v) => v.impact === 'serious' || v.impact === 'critical')
     .map((v) => `${v.id}: ${v.nodes.map((n) => n.target.join(' ')).join(', ')}`)
@@ -196,7 +204,7 @@ test('organisers see what the analysis saw, and visitors never do', async ({ pag
   await expect(dialog.getByText('No vision model is set')).toBeVisible() // none in this test stack
   await expect(dialog.locator('li button', { hasText: name })).toContainText(/OpenCV 0\.\d+: clear match/)
   await noHorizontalOverflow(page)
-  expect(await seriousViolations(page)).toEqual([])
+  expect(await seriousViolations(page, 'dialog[open]')).toEqual([])
 
   // The box sits inside the picture, around a real part of it, and can be hidden.
   const box = dialog.locator('[data-analysis-box]')

@@ -23,7 +23,7 @@ PROJECT=stagevote-e2e
 export STAGEVOTE_HTTP_PORT=3180 DB_HOST_PORT=55480 MAILPIT_UI_PORT=8085 MAILPIT_SMTP_PORT=1085 STAGEVOTE_BIND=127.0.0.1
 export APP_BASE_URL="http://localhost:${STAGEVOTE_HTTP_PORT}" MAILPIT_UI_URL="http://localhost:8085"
 # .env holds the live site's settings on a machine that serves it; this stack is a test stack.
-export APP_ENV=development COMPOSE_PROFILES= GALLERY_MODEL_URL=
+export APP_ENV=development COMPOSE_PROFILES= GALLERY_MODEL_URL= GALLERY_S3_BUCKET= AWS_ACCESS_KEY_ID= AWS_SECRET_ACCESS_KEY=
 # Isolated test stacks always deliver to their own Mailpit, whatever .env configures for
 # the main stack (a real provider must never receive synthetic test addresses).
 export EMAIL_PROVIDER=mailpit SMTP_HOST=mailpit SMTP_PORT=1025 SMTP_TLS_MODE=none SMTP_USERNAME= SMTP_PASSWORD= \

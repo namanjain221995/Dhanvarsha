@@ -19,6 +19,7 @@ import io
 import os
 import re
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
@@ -33,10 +34,19 @@ from ..config import get_settings
 from ..db import sessionmaker
 from ..deps import check_origin, client_ip, load_participant_session
 from ..errors import AppError
-from ..models import GalleryDevice, GalleryMedia, GalleryPerson, Participant, Programme
+from ..models import (
+    GalleryDevice,
+    GalleryDirectUpload,
+    GalleryMedia,
+    GalleryPerson,
+    GalleryStorageTrash,
+    Participant,
+    Programme,
+)
 from ..ratelimit import Limit, enforce, hit
 from ..security import is_token_shaped, new_token, token_hash
 from ..state import Actor, audit
+from . import gallery_store as store
 from . import media as uploads
 from .gallery_match import ASK_AT, MATCH_AT, SAME_SELFIE_AT, from_bytes, to_bytes
 from .gallery_model import MIN_CONFIDENCE, describe
@@ -47,10 +57,13 @@ from .programmes import active_programme, media_url
 ENROL_LIMIT_PER_IP = 300
 ENROL_WINDOW_SECONDS = 600
 MAX_SELFIE_BYTES = 11_000_000
+# What S3 Standard costs for a gigabyte for a month, near enough, for the organisers' estimate.
+S3_DOLLARS_PER_GB_MONTH = 0.025
 NAME_MAX = 80
 # The pages ask for a growing list, so a long page stays one simple request.
 PAGE_MAX = 1000
-_selfie_slots = asyncio.Semaphore(2)
+# Two selfies at a time per API process, with the face models of two threads and no more.
+_selfie_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="gallery-selfie")
 # One description at a time per API process: the model serves other work on this machine too.
 _describe_slots = asyncio.Semaphore(1)
 _ESCAPE_LIKE = re.compile(r"([\\%_])")
@@ -243,8 +256,7 @@ async def _describe_selfie(data: bytes) -> Any:
     # Imported here: only the requests that read a selfie need OpenCV in the API process.
     from .gallery_files import read_selfie
 
-    async with _selfie_slots:
-        return await asyncio.to_thread(read_selfie, data)
+    return await asyncio.get_running_loop().run_in_executor(_selfie_pool, read_selfie, data)
 
 
 async def _same_face(db: AsyncSession, programme_id: uuid.UUID, embedding: Any) -> GalleryPerson | None:
@@ -320,6 +332,7 @@ async def enrol(
             person.enrolled_at = person.enrolled_at or now
             person.consent_at = now
             person.rematch_pending = True
+            person.folder_wanted = (person.folder_wanted or 0) + 1
             if participant is not None and person.participant_id is None:
                 taken = await _person_of_participant(db, programme.id, participant.id)
                 if taken is None or taken.id == person.id:
@@ -435,6 +448,15 @@ def _reject_if_disk_is_low(size: int) -> None:
 async def start_upload(
     db: AsyncSession, person: GalleryPerson, name: str, size: int, content_type: str
 ) -> str:
+    await _check_room(db, person, size, content_type)
+    await asyncio.to_thread(_reject_if_disk_is_low, size)
+    upload = uploads.Upload(uuid.uuid4().hex, person.id, name, size, content_type)
+    await asyncio.to_thread(uploads.create_upload, upload)
+    return upload.upload_id
+
+
+async def _check_room(db: AsyncSession, person: GalleryPerson, size: int, content_type: str) -> None:
+    """Whatever an organiser has chosen to limit. Nothing, by default."""
     problem = _size_problem(size, content_type)
     if problem:
         raise problem
@@ -456,10 +478,107 @@ async def start_upload(
             ).scalar_one()
         if int(shared) + size > settings.gallery_max_person_bytes:
             raise AppError("FILE_TOO_LARGE", "You have reached the gallery's limit for one person.", 413)
-    await asyncio.to_thread(_reject_if_disk_is_low, size)
-    upload = uploads.Upload(uuid.uuid4().hex, person.id, name, size, content_type)
-    await asyncio.to_thread(uploads.create_upload, upload)
-    return upload.upload_id
+    if store.enabled() and settings.gallery_max_total_bytes > 0:
+        async with db.begin():
+            total = (
+                await db.execute(
+                    text("SELECT coalesce(sum(byte_size), 0) FROM gallery_media WHERE programme_id = :p"),
+                    {"p": person.programme_id},
+                )
+            ).scalar_one()
+        if int(total) + size > settings.gallery_max_total_bytes:
+            raise AppError("INSUFFICIENT_STORAGE", "The gallery is full for now. Tell the organisers.", 507)
+
+
+# ---- straight from the browser to S3 --------------------------------------------------------
+
+
+async def start_direct_upload(
+    db: AsyncSession, person: GalleryPerson, name: str, size: int, content_type: str
+) -> dict[str, Any]:
+    await _check_room(db, person, size, content_type)
+    upload_id = uuid.uuid4().hex
+    key = store.incoming_key(upload_id)
+    s3_upload_id = await asyncio.to_thread(store.start_multipart, key)
+    async with db.begin():
+        db.add(
+            GalleryDirectUpload(
+                id=upload_id,
+                person_id=person.id,
+                s3_key=key,
+                s3_upload_id=s3_upload_id,
+                name=name[:255],
+                size=size,
+            )
+        )
+    return {"upload_id": upload_id, "part_size": store.part_size_for(size), "mode": "s3"}
+
+
+async def direct_upload(
+    db: AsyncSession, upload_id: str, person: GalleryPerson
+) -> GalleryDirectUpload | None:
+    """The person's own upload to S3 with this id, or None: it may be an upload through this server."""
+    async with db.begin():
+        row = await db.get(GalleryDirectUpload, upload_id)
+        return row if row is not None and row.person_id == person.id else None
+
+
+async def direct_part_urls(row: GalleryDirectUpload, numbers: list[int]) -> dict[str, str]:
+    def sign() -> dict[str, str]:
+        return {str(number): store.part_url(row.s3_key, row.s3_upload_id, number) for number in numbers}
+
+    return await asyncio.to_thread(sign)
+
+
+async def finish_direct_upload(
+    db: AsyncSession, row: GalleryDirectUpload, person: GalleryPerson, ip: str
+) -> dict[str, Any]:
+    """Everything has reached S3: check it and queue it. The first bytes decide what it is, as for any file."""
+    key, s3_upload_id, name, size, upload_id = row.s3_key, row.s3_upload_id, row.name, row.size, row.id
+    parts = await asyncio.to_thread(store.uploaded_parts, key, s3_upload_id)
+    received = sum(int(part["Size"]) for part in parts)
+    if received != size:
+        raise AppError(
+            "UPLOAD_INCOMPLETE",
+            "The whole file has not arrived yet. Send the rest, then complete the upload.",
+            409,
+            {"received": received, "size": size},
+        )
+    await asyncio.to_thread(store.finish_multipart, key, s3_upload_id, parts)
+    found = sniff(await asyncio.to_thread(store.first_bytes, key))
+    problem = AppError("INVALID_MEDIA", INVALID_FILE, 422) if found is None else _size_problem(size, found[0])
+    if problem:
+        async with db.begin():
+            db.add(GalleryStorageTrash(s3_key=key))
+            await db.execute(text("DELETE FROM gallery_s3_uploads WHERE id = :i"), {"i": upload_id})
+        raise problem
+    assert found is not None
+    item = GalleryMedia(
+        programme_id=person.programme_id,
+        kind="video" if found[0].startswith("video/") else "image",
+        source_key=key,
+        source_on_s3=True,
+        content_type=found[0],
+        byte_size=size,
+        # Only the worker sees all of it: it puts the real hash here, and spots a file sent twice.
+        sha256=f"pending-{upload_id}",
+        original_name=name,
+        uploader_person_id=person.id,
+        uploader_ip=ip[:64],
+    )
+    async with db.begin():
+        db.add(item)
+        await db.flush()
+        await db.execute(text("DELETE FROM gallery_s3_uploads WHERE id = :i"), {"i": upload_id})
+        media_id = item.id
+    return {"status": "uploaded", "duplicate": False, "id": str(media_id)}
+
+
+async def abort_direct_upload(db: AsyncSession, row: GalleryDirectUpload) -> None:
+    key, s3_upload_id, upload_id = row.s3_key, row.s3_upload_id, row.id
+    await asyncio.to_thread(store.abort_multipart, key, s3_upload_id)
+    async with db.begin():
+        await db.execute(text("DELETE FROM gallery_s3_uploads WHERE id = :i"), {"i": upload_id})
 
 
 async def load_upload(upload_id: str, person: GalleryPerson) -> uploads.Upload:
@@ -555,12 +674,20 @@ async def finish_upload(
 # ---- reading the gallery -----------------------------------------------------------------
 
 
+def _download_name(row: Any) -> str:
+    base = row.original_name.rsplit(".", 1)[0] if "." in row.original_name else row.original_name
+    return f"{base or 'dhanvarsha'}.{store.extension_of(row.storage_key or '')}"
+
+
 def media_view(row: Any) -> dict[str, Any]:
+    on_s3 = row.location == "s3" and row.storage_key and row.display_key
     return {
         "id": str(row.id),
         "type": row.kind,
-        "url": media_url(row.display_key),
-        "download_url": media_url(row.storage_key),
+        "url": store.signed_url(row.display_key) if on_s3 else media_url(row.display_key),
+        "download_url": store.signed_url(row.storage_key, _download_name(row))
+        if on_s3
+        else media_url(row.storage_key),
         "thumb_url": media_url(row.thumb_key),
         "width": row.width,
         "height": row.height,
@@ -649,8 +776,8 @@ async def person_page(
     rows = await db.execute(
         text(
             """
-            SELECT m.id, m.kind, m.display_key, m.storage_key, m.thumb_key, m.width, m.height, m.duration_ms,
-                   m.original_name, count(*) OVER () AS total,
+            SELECT m.id, m.kind, m.location, m.display_key, m.storage_key, m.thumb_key, m.width, m.height,
+                   m.duration_ms, m.original_name, count(*) OVER () AS total,
                    count(*) FILTER (WHERE m.kind = 'video') OVER () AS videos
             FROM gallery_media m
             WHERE m.status = 'ready'
@@ -673,7 +800,8 @@ async def person_page(
             "videos": videos,
             "is_me": person.id == me,
         },
-        "media": [media_view(row) for row in items],
+        # Signing a long page of links takes a moment, and must not hold up other requests.
+        "media": await asyncio.to_thread(lambda: [media_view(row) for row in items]),
         "total": total,
     }
 
@@ -710,8 +838,26 @@ async def summary(db: AsyncSession, programme_id: uuid.UUID) -> dict[str, Any]:
         )
     ).one()
     settings = get_settings()
+    copies = (
+        await db.execute(
+            text(
+                "SELECT coalesce(sum(m.byte_size), 0) FROM gallery_person_files f "
+                "JOIN gallery_media m ON m.id = f.media_id WHERE m.programme_id = :p"
+            ),
+            {"p": programme_id},
+        )
+    ).scalar_one()
+    on_s3 = store.enabled()
+    gigabytes = (int(counts.bytes) + int(copies)) / 1024**3
     return {
         "share_url": f"{settings.app_base_url}/gallery",
+        "storage": {
+            "where": "s3" if on_s3 else "local",
+            "bucket": settings.gallery_s3_bucket if on_s3 else None,
+            "folder_bytes": int(copies),
+            "monthly_usd": round(gigabytes * S3_DOLLARS_PER_GB_MONTH, 2) if on_s3 else None,
+            "max_total_bytes": settings.gallery_max_total_bytes if on_s3 else 0,
+        },
         "photos": int(counts.photos),
         "videos": int(counts.videos),
         "pending": int(counts.pending),
@@ -734,8 +880,8 @@ async def admin_media(
     rows = await db.execute(
         text(
             f"""
-            SELECT m.id, m.kind, m.status, m.display_key, m.storage_key, m.thumb_key, m.width, m.height,
-                   m.duration_ms, m.original_name, m.byte_size, m.face_count, m.last_error, m.created_at,
+            SELECT m.id, m.kind, m.status, m.location, m.display_key, m.storage_key, m.thumb_key, m.width,
+                   m.height, m.duration_ms, m.original_name, m.byte_size, m.face_count, m.last_error, m.created_at,
                    m.uploader_ip, p.name AS uploader, count(*) OVER () AS total
             FROM gallery_media m LEFT JOIN gallery_people p ON p.id = m.uploader_person_id
             WHERE m.programme_id = :p {statuses[kind]}
@@ -746,8 +892,9 @@ async def admin_media(
         {"p": programme_id, "offset": offset, "limit": limit},
     )
     items = list(rows)
-    return {
-        "media": [
+
+    def view() -> list[dict[str, Any]]:
+        return [
             {
                 **media_view(row),
                 "status": row.status,
@@ -759,9 +906,9 @@ async def admin_media(
                 "uploader_ip": row.uploader_ip or "",
             }
             for row in items
-        ],
-        "total": int(items[0].total) if items else 0,
-    }
+        ]
+
+    return {"media": await asyncio.to_thread(view), "total": int(items[0].total) if items else 0}
 
 
 async def delete_media(db: AsyncSession, programme_id: uuid.UUID, media_id: uuid.UUID, actor: Actor) -> bool:
@@ -778,7 +925,13 @@ async def delete_media(db: AsyncSession, programme_id: uuid.UUID, media_id: uuid
             )
         )
         people = list({f.person_id for f in faces})
-        source = Path(get_settings().media_root) / item.source_key if item.source_key else None
+        source = (
+            Path(get_settings().media_root) / item.source_key
+            if item.source_key and not item.source_on_s3
+            else None
+        )
+        if item.source_key and item.source_on_s3:
+            db.add(GalleryStorageTrash(s3_key=item.source_key))
         keys: list[str | None] = [
             item.storage_key,
             item.display_key,
@@ -786,6 +939,11 @@ async def delete_media(db: AsyncSession, programme_id: uuid.UUID, media_id: uuid
             *[f.crop_key for f in faces],
             *[frame["key"] for frame in (item.analysis or {}).get("frames", [])],
         ]
+        if item.location == "s3":
+            # The worker deletes them from S3, and their copies in people's folders, which it can retry.
+            keys = keys[2:]
+            for s3_key in {item.storage_key, item.display_key} - {None}:
+                db.add(GalleryStorageTrash(s3_key=s3_key))
         await audit(
             db,
             actor,
@@ -799,6 +957,10 @@ async def delete_media(db: AsyncSession, programme_id: uuid.UUID, media_id: uuid
         await db.flush()
         for person_id in people:
             await refresh_avatar(db, person_id)
+        await db.execute(
+            text("UPDATE gallery_people SET folder_wanted = folder_wanted + 1 WHERE id = ANY(:ids)"),
+            {"ids": people},
+        )
         await db.execute(
             text(
                 "DELETE FROM gallery_people p WHERE p.enrolled_at IS NULL AND p.id = ANY(:ids) "
@@ -984,6 +1146,7 @@ async def merge_people(db: AsyncSession, source_id: uuid.UUID, target_id: uuid.U
         target.avatar_key, target.enrolled_at = source.avatar_key, source.enrolled_at
         target.consent_at = source.consent_at
     target.name = target.name or source.name
+    target.folder_wanted = (target.folder_wanted or 0) + 1
     await db.delete(source)
     await db.flush()
     if participant is not None and target.participant_id is None:

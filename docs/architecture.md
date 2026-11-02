@@ -388,3 +388,12 @@ Nothing here touches events, votes or the voters' sign-in. `services/gallery.py`
   description from small copies of the file, once, so it adds no load until someone looks. Files read
   before this existed are read again by the worker when it is idle, which leaves their matches as they
   were and records no comparison history for them.
+- **S3** (`services/gallery_store.py`, `services/gallery_folders.py`). A file counts as ready only once it is
+  on S3. Folders work like a thermostat: anything that changes a person raises `folder_wanted`, and the worker
+  copies and deletes the difference between what should be in the folder and what `gallery_person_files`
+  says is there. Every step can be repeated, so a stopped worker or an unreachable S3 only delays the folders.
+- **Direct uploads and scaling.** With S3 set up, the browser sends each file in parts straight to S3 through
+  signed links; the API only signs and then checks. The worker fetches each file to read it, copies it inside
+  the bucket when its bytes did not change, and otherwise sends the changed copy back. Reading runs on a fixed
+  pool of threads, each with its own copy of the models, and how many run at once follows the queue, whether a
+  round is open and how busy the machine is. Deciding who a face belongs to stays one file at a time.

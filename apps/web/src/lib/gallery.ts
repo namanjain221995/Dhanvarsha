@@ -14,6 +14,8 @@ export type GalleryMe = {
   known: boolean
   max_image_bytes: number
   max_video_bytes: number
+  /** Files go straight from this browser to S3. */
+  direct_uploads: boolean
 }
 
 export type PersonCard = GalleryPerson & { photos: number; videos: number; is_me: boolean }
@@ -39,8 +41,117 @@ export const galleryApi = <T>(path: string, options?: RequestOptions) => partici
 
 const call = <T>(path: string, options: RequestOptions) => participantApi<T>(path, options)
 
-export function uploadToGallery(file: File, options: ChunkedOptions = {}) {
-  return uploadInChunks<{ status: string; duplicate: boolean }>(call, '/gallery/uploads', file, options)
+type Uploaded = { status: string; duplicate: boolean }
+
+/** S3 could not be reached from this browser at all: its network blocks it, or the bucket has no CORS rule. */
+class DirectBlocked extends Error {}
+
+const PARTS_AT_ONCE = 3
+const PART_RETRIES = 3
+const PART_TIMEOUT_MS = 15 * 60_000
+const SIGNED_AT_ONCE = 20
+
+/** One part to its signed link. An XHR, not fetch: only XHR reports how far an upload has come. */
+function sendPart(url: string, part: Blob, signal: AbortSignal | undefined, onProgress: (sent: number) => void) {
+  return new Promise<void>((resolve, reject) => {
+    const xhr = new XMLHttpRequest()
+    const onAbort = () => xhr.abort()
+    signal?.addEventListener('abort', onAbort, { once: true })
+    const done = (finish: () => void) => {
+      signal?.removeEventListener('abort', onAbort)
+      finish()
+    }
+    xhr.open('PUT', url)
+    xhr.timeout = PART_TIMEOUT_MS
+    xhr.upload.onprogress = (event) => onProgress(event.loaded)
+    xhr.onload = () =>
+      done(() => (xhr.status >= 200 && xhr.status < 300 ? resolve() : reject(new ApiError(xhr.status, 'S3_REFUSED', 'The upload was refused. Try again.'))))
+    const failed = () => done(() => reject(new ApiError(0, 'NETWORK', 'The connection dropped. Try again.')))
+    xhr.onerror = failed
+    xhr.ontimeout = failed
+    xhr.onabort = () => done(() => reject(new ApiError(0, 'ABORTED', 'The upload was cancelled.')))
+    xhr.send(part)
+  })
+}
+
+/**
+ * The file goes straight to S3 in parts, so a hundred phones never queue on the server's internet line.
+ * This server only signs the links, and checks the whole file when it has arrived.
+ */
+async function uploadDirect(file: File, { signal, onProgress }: ChunkedOptions): Promise<Uploaded> {
+  const started = await galleryApi<{ upload_id: string; part_size: number }>('/uploads', {
+    method: 'POST',
+    body: { name: file.name.slice(0, 255) || 'upload', size: file.size, content_type: file.type || 'application/octet-stream', direct: true },
+    signal,
+  })
+  const path = `/uploads/${encodeURIComponent(started.upload_id)}`
+  const count = Math.max(1, Math.ceil(file.size / started.part_size))
+  const sent = new Array<number>(count).fill(0)
+  const report = () => onProgress?.(sent.reduce((total, value) => total + value, 0), file.size)
+  const links = new Map<number, string>()
+  let reachedS3 = false
+  let next = 1
+
+  const linkFor = async (number: number) => {
+    if (!links.has(number)) {
+      const numbers = Array.from({ length: Math.min(SIGNED_AT_ONCE, count - number + 1) }, (_, index) => number + index)
+      const { urls } = await galleryApi<{ urls: Record<string, string> }>(`${path}/parts`, { method: 'POST', body: { numbers }, signal })
+      for (const [key, value] of Object.entries(urls)) links.set(Number(key), value)
+    }
+    return links.get(number) as string
+  }
+
+  const sendOne = async (number: number) => {
+    const part = file.slice((number - 1) * started.part_size, number * started.part_size)
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        await sendPart(await linkFor(number), part, signal, (value) => {
+          sent[number - 1] = value
+          report()
+        })
+        reachedS3 = true
+        sent[number - 1] = part.size
+        report()
+        return
+      } catch (error) {
+        sent[number - 1] = 0
+        if (signal?.aborted || !(error instanceof ApiError) || !error.isNetwork) throw error
+        if (!reachedS3) throw new DirectBlocked()
+        if (attempt >= PART_RETRIES) throw error
+        await new Promise((resolve) => setTimeout(resolve, 1000 * 2 ** attempt))
+      }
+    }
+  }
+
+  const sender = async () => {
+    while (next <= count) {
+      const number = next
+      next += 1
+      await sendOne(number)
+    }
+  }
+
+  try {
+    onProgress?.(0, file.size)
+    await Promise.all(Array.from({ length: Math.min(PARTS_AT_ONCE, count) }, sender))
+    // The server checks the first bytes and joins the parts: a large file takes a moment.
+    return await galleryApi<Uploaded>(`${path}/complete`, { method: 'POST', timeoutMs: 300_000, signal })
+  } catch (error) {
+    void galleryApi(path, { method: 'DELETE' }).catch(() => {})
+    throw error
+  }
+}
+
+export async function uploadToGallery(file: File, options: ChunkedOptions & { direct?: boolean } = {}): Promise<Uploaded> {
+  const through = () => uploadInChunks<Uploaded>(call, '/gallery/uploads', file, options)
+  if (!options.direct) return through()
+  try {
+    return await uploadDirect(file, options)
+  } catch (error) {
+    // Blocked from S3 here: the file comes through the server instead, slower but sure.
+    if (error instanceof DirectBlocked) return through()
+    throw error
+  }
 }
 
 export const isEnrolRequired = (error: unknown) => error instanceof ApiError && error.code === 'GALLERY_ENROL_REQUIRED'
@@ -64,7 +175,8 @@ export function formatDuration(ms: number): string {
 
 /** The name to save a file under: the name it was uploaded with and the type it has now. */
 export function downloadName(item: GalleryItem): string {
-  const extension = item.download_url.split('.').pop() ?? ''
+  // The link may be signed, with a long query after the file's name.
+  const extension = item.download_url.split('?')[0]?.split('.').pop() ?? ''
   const base = (item.name || 'dhanvarsha').replace(/\.[^.]+$/, '') || 'dhanvarsha'
   return extension ? `${base}.${extension}` : base
 }

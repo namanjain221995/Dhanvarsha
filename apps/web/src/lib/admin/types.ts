@@ -551,6 +551,7 @@ export type GallerySummary = {
   enrolled: number
   unnamed: number
   model_enabled: boolean
+  storage: { where: 's3' | 'local'; bucket: string | null; folder_bytes: number; monthly_usd: number | null; max_total_bytes: number }
   email: { to_send: number; already: number; reserved: number }
 }
 

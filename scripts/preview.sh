@@ -16,6 +16,8 @@ export APP_ENV=development COMPOSE_PROFILES= APP_BASE_URL="http://localhost:3100
 export EMAIL_PROVIDER=mailpit SMTP_HOST=mailpit SMTP_PORT=1025 SMTP_TLS_MODE=none SMTP_USERNAME= SMTP_PASSWORD= \
   GOOGLE_SERVICE_ACCOUNT_FILE= GOOGLE_WORKSPACE_SENDER= MAIL_FROM="Dhanvarsha preview <noreply@example.com>"
 export GALLERY_MODEL_URL="${GALLERY_MODEL_URL:-http://host.docker.internal:8000/v1}"
+# Same bucket as the live site if .env sets one, under its own prefix, so the two never meet.
+export GALLERY_S3_PREFIX=preview/
 COMPOSE="docker compose -p $PROJECT -f compose.yaml"
 BUILD="--build"
 case "${1:-}" in

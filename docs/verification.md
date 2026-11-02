@@ -342,3 +342,23 @@ accuracy figure.
 |---|---|
 | Real Qwen3.6 description of the sample group photo | Described the scene and counted 16 people; OpenCV found 16 faces |
 | A 150 MB photo, over the former 100 MB limit, on the preview | Uploaded in 0.9 s, read in 0.3 s |
+
+### Files on S3 and 200 users (2026-11-03)
+
+`tests/load/gallery-run.sh`: 200 users at once on an isolated stack, with S3 off and no Cloudflare or office line in the path, against a gallery of 5,000 files and 30,000 faces. Each sent 5 photos of 12 megapixels through the server, and browsed.
+
+| Step | p50 | p95 |
+|---|---|---|
+| The form, with its selfie | 3.6 s | 8.6 s |
+| People page | 69 ms | 295 ms |
+| A person's page | 23 ms | 246 ms |
+| Thumbnails | under 1 ms | 2 ms |
+| Upload chunk | 37 ms | 592 ms |
+
+No request failed, all 1,000 photos arrived in 26 s, and the worker read 4.5 files a second, scaling itself from 2 to 16 and back.
+
+On the real bucket through the preview: files moved, sent and read, folders followed, and a photo downloaded byte for byte, in Chromium with a Pixel profile and on a desktop; the iPhone profile (WebKit) fetched the same link. The fallback through the server ran before the bucket had a CORS rule. With the rule in place and web security on, a new photo went from the preview page straight to S3, was read, and downloaded byte for byte, with nothing left in `incoming/`. S3 answered a preflight for the production address and for `http://localhost:3100`, and refused another origin with 403. From this office to N. Virginia the worker read 1.1 files a second, and a 3 MB photo took about 4 seconds to send.
+
+Whole browser suite: 61 passed, 60 skipped by each spec's browser rules, 2 failed. Both failures are the `sign-in, lobby and ballot pages have no serious axe violations` test reporting low contrast in `.gold-frame-tile` on the voting pages, as before this work.
+
+Not checked: real phones, 200 real connections through Cloudflare, a Mumbai bucket's speed, a real upload from the production address (it needs the deploy).
