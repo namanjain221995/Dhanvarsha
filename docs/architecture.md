@@ -382,3 +382,9 @@ Nothing here touches events, votes or the voters' sign-in. `services/gallery.py`
   nobody starts an unnamed person, listed once seen in two files. A new selfie then absorbs the unnamed
   groups it matches. Only one worker decides at a time, so two photos of a stranger cannot each start a
   new person.
+- **The analysis view** (organisers only). `gallery_faces.analysis` keeps each face's box, the detector's
+  score and whom it was compared with; `gallery_media.analysis` keeps how the file was read and, for a
+  video, the frames a face was clearest in. Opening a file's analysis asks the vision model for a short
+  description from small copies of the file, once, so it adds no load until someone looks. Files read
+  before this existed are read again by the worker when it is idle, which leaves their matches as they
+  were and records no comparison history for them.

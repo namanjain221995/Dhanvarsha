@@ -1,6 +1,6 @@
 'use client'
 
-import { Copy, Film, RotateCcw, Save, Search, Send, Trash2, Undo2, UserPen } from 'lucide-react'
+import { Copy, Film, RotateCcw, Save, ScanFace, Search, Send, Trash2, Undo2, UserPen } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { Coin } from '@/components/gallery/coin'
 import { Button } from '@/components/ui/button'
@@ -19,6 +19,7 @@ import type {
 import { plural } from '@/lib/admin/labels'
 import { countLabel } from '@/lib/gallery'
 import { ConfirmDialog } from '../confirm'
+import { AnalysisDialog } from './analysis-dialog'
 import { LivePreview } from '../email/invitation-template'
 import { InputField, SelectField, TextAreaField } from '../form'
 import { EmptyState, FilterChips, FlashRegion, KeyValue, LoadError, MiniButton, PageHeader, Pagination, Panel, SkeletonBlock, StatusChip, useFlash } from '../primitives'
@@ -296,6 +297,7 @@ function FilesPanel({ flash, onChanged }: { flash: Flash; onChanged: () => void 
   const [page, setPage] = useState(1)
   const query = useAdminQuery<AdminGalleryMediaList>('/admin/gallery/media', { status: filter, offset: (page - 1) * MEDIA_PAGE, limit: MEDIA_PAGE })
   const [removing, setRemoving] = useState<AdminGalleryMedia | null>(null)
+  const [analysing, setAnalysing] = useState<AdminGalleryMedia | null>(null)
   const [busy, setBusy] = useState(false)
 
   const remove = async () => {
@@ -379,6 +381,13 @@ function FilesPanel({ flash, onChanged }: { flash: Flash; onChanged: () => void 
                 )}
                 {item.error ? <p className="text-plum-soft">{item.error}</p> : null}
                 <div className="flex flex-wrap gap-1 pt-1">
+                  {item.status === 'ready' ? (
+                    <MiniButton onClick={() => setAnalysing(item)}>
+                      <ScanFace aria-hidden className="size-4" />
+                      See analysis
+                      <span className="sr-only"> of {item.name}</span>
+                    </MiniButton>
+                  ) : null}
                   {item.status === 'failed' ? (
                     <MiniButton onClick={() => void retry(item)}>
                       <RotateCcw aria-hidden className="size-4" />
@@ -397,6 +406,7 @@ function FilesPanel({ flash, onChanged }: { flash: Flash; onChanged: () => void 
         </ul>
       ) : null}
       {query.data ? <Pagination page={page} pageSize={MEDIA_PAGE} total={query.data.total} onPage={setPage} label="Files" busy={query.pending} /> : null}
+      {analysing ? <AnalysisDialog mediaId={analysing.id} name={analysing.name} onClose={() => setAnalysing(null)} /> : null}
       {removing ? (
         <ConfirmDialog
           open

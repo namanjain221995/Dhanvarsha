@@ -51,9 +51,13 @@ EXIF_GPS_IFD = 0x8825
 # Sampling a video: one frame a second, at most this many, at most this large.
 FRAME_EDGE = 1920
 MAX_FRAMES = 300
+# Larger than 8K would not fit in the worker's memory ceiling. There is no limit on a video's length.
 MAX_VIDEO_EDGE = 8192
-MAX_VIDEO_SECONDS = 4 * 3600
 MAX_FACES_PER_VIDEO = 40
+# The frames kept for the organisers' analysis view: each one a face was seen clearest in, and a few
+# spread over the video, so a video with no faces can be described too.
+FRAME_KEEP_EDGE = 1280
+SPREAD_FRAMES = 4
 FFMPEG_MIN_SECONDS = 1800
 # A face seen only once in a video counts only when it is large enough to be someone in the shot.
 MIN_PASSING_FACE_PX = 48
@@ -76,6 +80,19 @@ class Prepared:
     height: int
     duration_ms: int = 0
     faces: list[tuple[Face, int | None]] = field(default_factory=list)
+    frames: list[tuple[int, str]] = field(default_factory=list)
+    frames_read: int = 1
+    faces_seen: int = 0
+
+
+@dataclass
+class Reading:
+    """What OpenCV saw in a file, apart from the file's own public copies."""
+
+    faces: list[tuple[Face, int | None]]
+    frames: list[tuple[int, str]]
+    frames_read: int
+    faces_seen: int
 
 
 @dataclass(frozen=True)
@@ -201,6 +218,7 @@ def prepare_image(source: Path) -> Prepared:
                 pixels = _analysis_pixels(image)
             except (OSError, ValueError, SyntaxError, Image.DecompressionBombError) as exc:
                 raise UnreadableFile("This picture could not be read.") from exc
+        faces: list[tuple[Face, int | None]] = [(face, None) for face in find_faces(pixels)]
         with _open_checked(root() / storage) as public:
             upright = ImageOps.exif_transpose(public) or public
             width, height = upright.width, upright.height
@@ -212,7 +230,8 @@ def prepare_image(source: Path) -> Prepared:
             thumb_key=thumb,
             width=width,
             height=height,
-            faces=[(face, None) for face in find_faces(pixels)],
+            faces=faces,
+            faces_seen=len(faces),
         )
     except Exception:
         remove_public(written)
@@ -326,8 +345,6 @@ def video_info(source: Path) -> VideoInfo:
     form = answer.get("format")
     seconds = _number(form.get("duration")) if isinstance(form, dict) else 0.0
     seconds = seconds or _number(video.get("duration"))
-    if seconds > MAX_VIDEO_SECONDS:
-        raise UnreadableFile("This video is too long.")
     if _rotated(video):
         width, height = height, width
     return VideoInfo(
@@ -433,20 +450,56 @@ def _frames(source: Path, info: VideoInfo, folder: Path) -> Iterator[tuple[Path,
         yield frame, round(index / rate * 1000)
 
 
-def _video_faces(source: Path, info: VideoInfo) -> list[tuple[Face, int | None]]:
+def _spread(moments: list[int]) -> set[int]:
+    if len(moments) <= SPREAD_FRAMES:
+        return set(moments)
+    return {moments[round(i * (len(moments) - 1) / (SPREAD_FRAMES - 1))] for i in range(SPREAD_FRAMES)}
+
+
+def _frame_picture(image: Image.Image) -> bytes:
+    small = image.convert("RGB")
+    small.thumbnail((FRAME_KEEP_EDGE, FRAME_KEEP_EDGE), Image.Resampling.LANCZOS)
+    out = io.BytesIO()
+    small.save(out, format="WEBP", quality=80, method=4)
+    return out.getvalue()
+
+
+def read_video(source: Path, info: VideoInfo) -> Reading:
+    """The faces in a video, each with its clearest sighting, and the frames worth keeping."""
     tracks: list[Track] = []
-    frames = 0
+    seen = 0
     with tempfile.TemporaryDirectory(prefix="gallery-frames-") as name:
+        paths: dict[int, Path] = {}
         for path, moment in _frames(source, info, Path(name)):
-            frames += 1
+            paths[moment] = path
             with _open_checked(path) as image:
                 pixels = _analysis_pixels(image)
-            path.unlink(missing_ok=True)
             for face in find_faces(pixels):
+                seen += 1
                 group_frames(tracks, face.embedding, face.quality, moment, face)
-    kept = [t for t in tracks if t.seen > 1 or frames < 3 or _face(t).size_px >= MIN_PASSING_FACE_PX]
-    kept.sort(key=lambda t: (t.seen, t.quality), reverse=True)
-    return [(_face(t), t.frame_ms) for t in kept[:MAX_FACES_PER_VIDEO]]
+        total = len(paths)
+        kept = [t for t in tracks if t.seen > 1 or total < 3 or _face(t).size_px >= MIN_PASSING_FACE_PX]
+        kept.sort(key=lambda t: (t.seen, t.quality), reverse=True)
+        kept = kept[:MAX_FACES_PER_VIDEO]
+        moments = {t.frame_ms for t in kept} | _spread(sorted(paths))
+        frames: list[tuple[int, str]] = []
+        try:
+            for moment in sorted(moments):
+                with _open_checked(paths[moment]) as image:
+                    frames.append((moment, write_public(_frame_picture(image), "webp")))
+        except Exception:
+            remove_public([key for _, key in frames])
+            raise
+    return Reading([(_face(t), t.frame_ms) for t in kept], frames, total, seen)
+
+
+def read_again(kind: str, public: Path) -> Reading:
+    """What OpenCV sees in a file already public, for one read before the analysis view existed."""
+    if kind == "video":
+        return read_video(public, video_info(public))
+    with _open_checked(public) as image:
+        faces = find_faces(_analysis_pixels(image))
+    return Reading([(face, None) for face in faces], [], 1, len(faces))
 
 
 def _face(track: Track) -> Face:
@@ -470,6 +523,8 @@ def prepare_video(source: Path) -> Prepared:
         storage = storage or display
         thumb = _poster(root() / display, info)
         written.append(thumb)
+        reading = read_video(root() / display, info)
+        written += [key for _, key in reading.frames]
         return Prepared(
             storage_key=storage,
             display_key=display,
@@ -477,7 +532,10 @@ def prepare_video(source: Path) -> Prepared:
             width=info.width,
             height=info.height,
             duration_ms=round(info.seconds * 1000),
-            faces=_video_faces(root() / display, info),
+            faces=reading.faces,
+            frames=reading.frames,
+            frames_read=reading.frames_read,
+            faces_seen=reading.faces_seen,
         )
     except Exception:
         remove_public(written)

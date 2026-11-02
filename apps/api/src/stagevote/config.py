@@ -95,16 +95,17 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     worker_id: str | None = None
 
-    # The photo gallery (/gallery). Its link has no sign-in, so unlike the organisers' uploads
-    # its files have limits, and the disk keeps a reserve for the database and the voting.
+    # The photo gallery (/gallery). The vision model is an OpenAI-style address on this machine, such
+    # as http://host.docker.internal:8000/v1. Empty: only OpenCV's clear matches count.
     gallery_models_dir: str = "/app/models"
-    # An OpenAI-style address of the vision model that settles close matches, such as
-    # http://host.docker.internal:8000/v1. Empty: only OpenCV's clear matches count.
     gallery_model_url: str = ""
     gallery_model_name: str = "Qwen/Qwen3.6-35B-A3B-NVFP4"
-    gallery_max_image_bytes: int = 100 * 1024 * 1024
-    gallery_max_video_bytes: int = 8 * 1024 * 1024 * 1024
-    gallery_max_person_bytes: int = 100 * 1024 * 1024 * 1024
+    # 0 is no limit, as the organisers asked: per photo, per video, per person, and files per person
+    # per hour. Only the reserve stays, so uploads can never fill the disk under the database.
+    gallery_max_image_bytes: int = 0
+    gallery_max_video_bytes: int = 0
+    gallery_max_person_bytes: int = 0
+    gallery_uploads_per_hour: int = 0
     gallery_free_space_reserve_bytes: int = 20 * 1024 * 1024 * 1024
     gallery_concurrency: int = 2
     gallery_cv_threads: int = 2

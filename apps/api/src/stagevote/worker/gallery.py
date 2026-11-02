@@ -16,6 +16,7 @@ import contextlib
 import os
 import signal
 import socket
+import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -35,6 +36,7 @@ from ..services.gallery_files import (
     UnreadableFile,
     prepare_image,
     prepare_video,
+    read_again,
     remove_public,
     write_public,
 )
@@ -57,6 +59,9 @@ MAX_ATTEMPTS = 3
 # Close calls one selfie may put to the model, across the groups already found.
 MAX_REMATCH_QUESTIONS = 40
 RETRY_MESSAGE = "This file could not be processed. Try again."
+# The same pixels read the same way give the same description: from this close, it is that face.
+SAME_FACE_AGAIN_AT = 0.9
+MODEL_WORDS: dict[bool | None, str] = {True: "yes", False: "no", None: "no_answer"}
 
 
 @dataclass(frozen=True)
@@ -68,6 +73,7 @@ class Assignment:
     score: float | None
     matched_by: str
     is_reference: bool
+    checked: list[dict[str, Any]]
 
 
 async def load_references(db: Any, programme_id: uuid.UUID) -> list[Reference]:
@@ -89,22 +95,37 @@ async def load_references(db: Any, programme_id: uuid.UUID) -> list[Reference]:
 
 async def decide(
     face: Face, references: list[Reference], taken: set[uuid.UUID]
-) -> tuple[uuid.UUID, float, str] | None:
-    """The person this face belongs to, if any: the clear match, or what the model confirms."""
+) -> tuple[tuple[uuid.UUID, float, str] | None, list[dict[str, Any]]]:
+    """The person this face belongs to, if any (the clear match, or what the model confirms), and
+    the record of who was considered, for the organisers' analysis view."""
     asked = 0
+    checked: list[dict[str, Any]] = []
     for candidate in candidates(face.embedding, references):
         if candidate.person_id in taken:
             continue
+        entry = {
+            "person_id": str(candidate.person_id),
+            "score": round(candidate.score, 3),
+            "model": "not_asked",
+        }
         answer = verdict(candidate.score)
         if answer == "match":
-            return candidate.person_id, candidate.score, "opencv"
+            checked.append(entry)
+            return (candidate.person_id, candidate.score, "opencv"), checked
         if answer == "ask":
             asked += 1
             if asked > MAX_CANDIDATES:
-                return None
-            if await same_person(candidate.aligned, face.aligned) is True:
-                return candidate.person_id, candidate.score, "model"
-    return None
+                return None, checked
+            said = await same_person(candidate.aligned, face.aligned)
+            entry["model"] = MODEL_WORDS[said]
+            checked.append(entry)
+            if said is True:
+                return (candidate.person_id, candidate.score, "model"), checked
+    return None, checked
+
+
+def _where_it_is(face: Face) -> dict[str, Any]:
+    return {"box": list(face.box), "detector_score": face.detector_score, "size_px": face.size_px}
 
 
 async def assign_faces(
@@ -117,7 +138,7 @@ async def assign_faces(
     for reference in references:
         per_person[reference.person_id] = per_person.get(reference.person_id, 0) + 1
     for face in faces:
-        decision = await decide(face, references, taken)
+        decision, checked = await decide(face, references, taken)
         if decision is None:
             person_id, score, how, is_new = uuid.uuid4(), None, "new", True
         else:
@@ -132,7 +153,7 @@ async def assign_faces(
             per_person[person_id] = count + 1
         if one_face_each:  # one picture cannot show the same person twice
             taken.add(person_id)
-        assignments.append(Assignment(person_id, is_new, score, how, stands_for))
+        assignments.append(Assignment(person_id, is_new, score, how, stands_for, checked))
     return assignments
 
 
@@ -240,15 +261,21 @@ class GalleryWorker:
         source = Path(self.settings.media_root) / source_key
         if not source.exists():
             raise UnreadableFile("The uploaded file is missing.")
+        started = time.monotonic()
         prepared = await asyncio.to_thread(prepare_image if kind == "image" else prepare_video, source)
-        written: list[str | None] = [prepared.storage_key, prepared.display_key, prepared.thumb_key]
+        written: list[str | None] = [
+            prepared.storage_key,
+            prepared.display_key,
+            prepared.thumb_key,
+            *[key for _, key in prepared.frames],
+        ]
         try:
             crops = await asyncio.to_thread(
                 lambda: [write_public(face.crop, "webp") for face, _ in prepared.faces]
             )
             written += crops
             async with self._matching:
-                stored = await self._store(media_id, programme_id, kind, prepared, crops)
+                stored = await self._store(media_id, programme_id, kind, prepared, crops, started)
         except Exception:
             await asyncio.to_thread(remove_public, written)
             raise
@@ -257,7 +284,13 @@ class GalleryWorker:
         await asyncio.to_thread(source.unlink, missing_ok=True)
 
     async def _store(
-        self, media_id: uuid.UUID, programme_id: uuid.UUID, kind: str, prepared: Prepared, crops: list[str]
+        self,
+        media_id: uuid.UUID,
+        programme_id: uuid.UUID,
+        kind: str,
+        prepared: Prepared,
+        crops: list[str],
+        started: float,
     ) -> bool:
         async with sessionmaker()() as db, db.begin():
             references = await load_references(db, programme_id)
@@ -286,6 +319,7 @@ class GalleryWorker:
                         match_score=assignment.score,
                         matched_by=assignment.matched_by,
                         is_reference=assignment.is_reference,
+                        analysis={**_where_it_is(face), "checked": assignment.checked},
                     )
                 )
                 touched.add(assignment.person_id)
@@ -297,6 +331,17 @@ class GalleryWorker:
             item.width, item.height = prepared.width, prepared.height
             item.duration_ms = prepared.duration_ms
             item.face_count = len(prepared.faces)
+            item.analysis = {
+                "frames_read": prepared.frames_read,
+                "faces_seen": prepared.faces_seen,
+                "took_ms": round((time.monotonic() - started) * 1000),
+                "model_questions": sum(
+                    entry["model"] != "not_asked"
+                    for assignment in assignments
+                    for entry in assignment.checked
+                ),
+                "frames": [{"ms": ms, "key": key} for ms, key in prepared.frames],
+            }
             item.status = "ready"
             item.source_key = None
             item.lease_owner, item.lease_expires_at, item.last_error = None, None, None
@@ -388,6 +433,56 @@ class GalleryWorker:
                     joins[group_id] = (score, "model")
         return joins
 
+    # ---- files read before the analysis view existed -------------------------------------
+
+    async def _next_unread(self) -> Any:
+        async with sessionmaker()() as db, db.begin():
+            return (
+                await db.execute(
+                    text(
+                        "SELECT id, kind, display_key FROM gallery_media "
+                        "WHERE status = 'ready' AND analysis = '{}'::jsonb ORDER BY created_at LIMIT 1"
+                    )
+                )
+            ).first()
+
+    async def _fill_in_analysis(self, row: Any) -> None:
+        """Read one older file again, for where its faces are. Who they belong to stays as it is."""
+        try:
+            reading = await asyncio.to_thread(
+                read_again, row.kind, Path(self.settings.media_root) / row.display_key
+            )
+            async with sessionmaker()() as db, db.begin():
+                item = await db.get(GalleryMedia, row.id)
+                if item is None:  # an organiser removed it meanwhile
+                    remove_public([key for _, key in reading.frames])
+                    return
+                stored = (
+                    await db.execute(select(GalleryFace).where(GalleryFace.media_id == row.id))
+                ).scalars()
+                for face in stored:
+                    known = from_bytes(face.embedding)
+                    found = [(float(known @ new.embedding), new, ms) for new, ms in reading.faces]
+                    best = max(found, key=lambda entry: entry[0], default=None)
+                    if best is not None and best[0] >= SAME_FACE_AGAIN_AT:
+                        face.analysis = _where_it_is(best[1])
+                        face.frame_ms = best[2]
+                item.analysis = {
+                    "frames_read": reading.frames_read,
+                    "faces_seen": reading.faces_seen,
+                    "frames": [{"ms": ms, "key": key} for ms, key in reading.frames],
+                }
+        except Exception:
+            # Not again and again: the view works without it, and says nothing was read.
+            log.exception("older gallery file not read again", extra={"media_id": str(row.id)})
+            async with sessionmaker()() as db, db.begin():
+                await db.execute(
+                    text(
+                        """UPDATE gallery_media SET analysis = '{"read_again": false}'::jsonb WHERE id = :m"""
+                    ),
+                    {"m": row.id},
+                )
+
     # ---- lifecycle --------------------------------------------------------------------
 
     async def tick(self) -> None:
@@ -399,6 +494,12 @@ class GalleryWorker:
                 task.add_done_callback(self.in_flight.discard)
         while not self.stopping.is_set() and await self.rematch():
             pass
+        if not self.in_flight and not self.stopping.is_set():
+            unread = await self._next_unread()
+            if unread is not None:
+                task = asyncio.create_task(self._fill_in_analysis(unread))
+                self.in_flight.add(task)
+                task.add_done_callback(self.in_flight.discard)
 
     async def run(self) -> None:
         log.info(

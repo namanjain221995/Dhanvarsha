@@ -29,7 +29,7 @@ from stagevote.config import get_settings
 from stagevote.db import asyncpg_dsn, build_engine
 from stagevote.security import new_token, token_hash
 
-HEAD = "0014"
+HEAD = "0015"
 
 LINK_COLUMNS = (
     "SELECT column_name, data_type, is_nullable FROM information_schema.columns "
@@ -653,7 +653,7 @@ async def test_0014_adds_the_gallery_and_removes_its_data_on_downgrade(scratch: 
             await owner.execute(job, uuid.uuid4(), programme_id, "gallery", "<one@b.c>")
 
         await alembic(scratch, "0014")
-        assert await owner.fetchval("SELECT version_num FROM alembic_version") == HEAD
+        assert await owner.fetchval("SELECT version_num FROM alembic_version") == "0014"
         await owner.execute(job, uuid.uuid4(), programme_id, "gallery", "<two@b.c>")
         await owner.execute(job, uuid.uuid4(), programme_id, "test", "<three@b.c>")
         # The runtime role reads and writes the new tables, and only known statuses fit.
@@ -676,6 +676,40 @@ async def test_0014_adds_the_gallery_and_removes_its_data_on_downgrade(scratch: 
         assert await owner.fetchval("SELECT count(*) FROM email_jobs WHERE kind = 'test'") == 1
         await alembic(scratch, "head")
         assert await owner.fetchval("SELECT version_num FROM alembic_version") == HEAD
+    finally:
+        await app.close()
+        await owner.close()
+
+
+async def test_0015_adds_the_analysis_columns_and_drops_them_on_downgrade(scratch: DatabaseInfo) -> None:
+    await alembic(scratch, "0014")
+    owner = await connect(scratch.owner_url)
+    app = await connect(scratch.app_url)
+    try:
+        programme_id = await old_programme(owner, "Dhanvarsha 2026")
+        media_id = uuid.uuid4()
+        await app.execute(
+            "INSERT INTO gallery_media (id, programme_id, kind, content_type, byte_size, sha256) "
+            "VALUES ($1, $2, 'image', 'image/png', 1, $3)",
+            media_id,
+            programme_id,
+            "c" * 64,
+        )
+
+        await alembic(scratch, "0015")
+        # A file read before this revision starts empty, which tells the worker to read it again.
+        assert (
+            await owner.fetchval("SELECT analysis::text FROM gallery_media WHERE id = $1", media_id) == "{}"
+        )
+        await app.execute(
+            """UPDATE gallery_media SET analysis = '{"frames_read": 1}' WHERE id = $1""", media_id
+        )
+
+        await alembic(scratch, "0014", downgrade=True)
+        columns = "SELECT count(*) FROM information_schema.columns WHERE column_name = 'analysis' AND table_name LIKE 'gallery%'"
+        assert await owner.fetchval(columns) == 0
+        await alembic(scratch, "head")
+        assert await owner.fetchval(columns) == 2
     finally:
         await app.close()
         await owner.close()

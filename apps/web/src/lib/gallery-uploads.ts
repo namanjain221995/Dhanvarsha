@@ -57,7 +57,7 @@ export class UploadQueue {
       const id = String(this.nextId++)
       const isVideo = file.type.startsWith('video/')
       const limit = isVideo ? limits.video : limits.image
-      const tooBig = file.size > limit
+      const tooBig = limit > 0 && file.size > limit // 0 is no limit
       const empty = file.size === 0
       if (!tooBig && !empty) this.files.set(id, file)
       return {

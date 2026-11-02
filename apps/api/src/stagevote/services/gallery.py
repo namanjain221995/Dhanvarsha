@@ -15,6 +15,7 @@ import asyncio
 import base64
 import hashlib
 import hmac
+import io
 import os
 import re
 import uuid
@@ -23,6 +24,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from fastapi import Request, UploadFile
+from PIL import Image
 from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -36,19 +38,21 @@ from ..ratelimit import Limit, enforce, hit
 from ..security import is_token_shaped, new_token, token_hash
 from ..state import Actor, audit
 from . import media as uploads
-from .gallery_match import SAME_SELFIE_AT, from_bytes, to_bytes
+from .gallery_match import ASK_AT, MATCH_AT, SAME_SELFIE_AT, from_bytes, to_bytes
+from .gallery_model import MIN_CONFIDENCE, describe
 from .participants import name_from_email
 from .programmes import active_programme, media_url
 
 # At a venue hundreds of phones can share one public address.
 ENROL_LIMIT_PER_IP = 300
 ENROL_WINDOW_SECONDS = 600
-UPLOADS_PER_HOUR = 5000
 MAX_SELFIE_BYTES = 11_000_000
 NAME_MAX = 80
 # The pages ask for a growing list, so a long page stays one simple request.
 PAGE_MAX = 1000
 _selfie_slots = asyncio.Semaphore(2)
+# One description at a time per API process: the model serves other work on this machine too.
+_describe_slots = asyncio.Semaphore(1)
 _ESCAPE_LIKE = re.compile(r"([\\%_])")
 INVALID_FILE = "Upload a photo (JPEG, PNG, WebP, GIF, HEIC) or a video (MP4, MOV, WebM, MKV, AVI, 3GP)."
 _HEIF_BRANDS = {b"heic", b"heix", b"heim", b"heis", b"hevc", b"hevx", b"mif1", b"msf1"}
@@ -402,13 +406,14 @@ def sniff(head: bytes) -> tuple[str, str] | None:
 
 
 def _size_problem(size: int, content_type: str) -> AppError | None:
+    """A limit of 0 is no limit."""
     settings = get_settings()
     limit = (
         settings.gallery_max_image_bytes
         if content_type.startswith("image/")
         else settings.gallery_max_video_bytes
     )
-    if size <= limit:
+    if limit <= 0 or size <= limit:
         return None
     what = "Photos" if content_type.startswith("image/") else "Videos"
     return AppError("FILE_TOO_LARGE", f"{what} must be {limit // (1024 * 1024)} MB or smaller.", 413)
@@ -433,18 +438,24 @@ async def start_upload(
     problem = _size_problem(size, content_type)
     if problem:
         raise problem
-    limit = Limit(f"gallery-upload:{person.id}", UPLOADS_PER_HOUR, 3600)
-    async with db.begin():
-        await enforce(db, limit, message="That is a lot of files in one hour. Wait a while and continue.")
-        await hit(db, limit)
-        shared = (
-            await db.execute(
-                text("SELECT coalesce(sum(byte_size), 0) FROM gallery_media WHERE uploader_person_id = :p"),
-                {"p": person.id},
-            )
-        ).scalar_one()
-    if int(shared) + size > get_settings().gallery_max_person_bytes:
-        raise AppError("FILE_TOO_LARGE", "You have reached the gallery's limit for one person.", 413)
+    settings = get_settings()
+    if settings.gallery_uploads_per_hour > 0:
+        limit = Limit(f"gallery-upload:{person.id}", settings.gallery_uploads_per_hour, 3600)
+        async with db.begin():
+            await enforce(db, limit, message="That is a lot of files in one hour. Wait a while and continue.")
+            await hit(db, limit)
+    if settings.gallery_max_person_bytes > 0:
+        async with db.begin():
+            shared = (
+                await db.execute(
+                    text(
+                        "SELECT coalesce(sum(byte_size), 0) FROM gallery_media WHERE uploader_person_id = :p"
+                    ),
+                    {"p": person.id},
+                )
+            ).scalar_one()
+        if int(shared) + size > settings.gallery_max_person_bytes:
+            raise AppError("FILE_TOO_LARGE", "You have reached the gallery's limit for one person.", 413)
     await asyncio.to_thread(_reject_if_disk_is_low, size)
     upload = uploads.Upload(uuid.uuid4().hex, person.id, name, size, content_type)
     await asyncio.to_thread(uploads.create_upload, upload)
@@ -773,6 +784,7 @@ async def delete_media(db: AsyncSession, programme_id: uuid.UUID, media_id: uuid
             item.display_key,
             item.thumb_key,
             *[f.crop_key for f in faces],
+            *[frame["key"] for frame in (item.analysis or {}).get("frames", [])],
         ]
         await audit(
             db,
@@ -798,6 +810,138 @@ async def delete_media(db: AsyncSession, programme_id: uuid.UUID, media_id: uuid
     if source:
         await asyncio.to_thread(source.unlink, missing_ok=True)
     return True
+
+
+def _face_view(row: Any, number: int, names: dict[str, str]) -> dict[str, Any]:
+    analysis = row.analysis or {}
+    return {
+        "id": str(row.id),
+        "number": number,
+        "person_id": str(row.person_id),
+        "name": row.name,
+        "has_selfie": row.enrolled_at is not None,
+        "crop_url": media_url(row.crop_key),
+        "frame_ms": row.frame_ms,
+        "box": analysis.get("box"),
+        "detector_score": analysis.get("detector_score"),
+        "size_px": analysis.get("size_px"),
+        "match_score": round(row.match_score, 3) if row.match_score is not None else None,
+        "matched_by": row.matched_by,
+        # Whom it was compared with, under their names today. None: read before this was recorded.
+        "checked": [
+            {
+                "name": names.get(entry["person_id"], ""),
+                "listed": entry["person_id"] in names,
+                "score": entry["score"],
+                "model": entry["model"],
+            }
+            for entry in analysis["checked"]
+        ]
+        if "checked" in analysis
+        else None,
+    }
+
+
+async def analysis_view(db: AsyncSession, programme_id: uuid.UUID, media_id: uuid.UUID) -> dict[str, Any]:
+    """What OpenCV and the vision model made of one file, for the organisers only."""
+    item = await db.get(GalleryMedia, media_id)
+    if item is None or item.programme_id != programme_id:
+        raise _not_found()
+    faces = list(
+        await db.execute(
+            text(
+                """
+                SELECT f.id, f.person_id, f.crop_key, f.frame_ms, f.match_score, f.matched_by, f.analysis,
+                       p.name, p.enrolled_at
+                FROM gallery_faces f JOIN gallery_people p ON p.id = f.person_id
+                WHERE f.media_id = :m
+                """
+            ),
+            {"m": media_id},
+        )
+    )
+    mentioned = {entry["person_id"] for face in faces for entry in (face.analysis or {}).get("checked", [])}
+    names: dict[str, str] = {}
+    if mentioned:
+        rows = await db.execute(
+            text("SELECT id, name FROM gallery_people WHERE id = ANY(:ids)"),
+            {"ids": [uuid.UUID(value) for value in mentioned]},
+        )
+        names = {str(row.id): row.name for row in rows}
+
+    def place(face: Any) -> tuple[int, float, float]:
+        box = (face.analysis or {}).get("box") or [0.0, 0.0]
+        return (face.frame_ms or 0, float(box[0]), float(box[1]))
+
+    settings = get_settings()
+    analysis = item.analysis or {}
+    return {
+        "media": {
+            **media_view(item),
+            "status": item.status,
+            "byte_size": int(item.byte_size),
+            "error": item.last_error,
+            "uploaded_at": item.created_at,
+        },
+        # Empty for a file not read yet by this version: the worker is filling it in.
+        "read": bool(analysis),
+        "frames": [
+            {"ms": frame["ms"], "url": media_url(frame["key"])} for frame in analysis.get("frames", [])
+        ],
+        "frames_read": analysis.get("frames_read"),
+        "faces_seen": analysis.get("faces_seen"),
+        "took_ms": analysis.get("took_ms"),
+        "model_questions": analysis.get("model_questions"),
+        "description": analysis.get("description"),
+        "faces": [_face_view(face, index + 1, names) for index, face in enumerate(sorted(faces, key=place))],
+        "rules": {"match_at": MATCH_AT, "ask_at": ASK_AT, "model_confidence": MIN_CONFIDENCE},
+        "model_enabled": bool(settings.gallery_model_url),
+        "model_name": settings.gallery_model_name,
+    }
+
+
+def _pictures_to_describe(thumb_key: str | None, frame_keys: list[str]) -> list[bytes]:
+    """Small JPEG copies of pictures the worker made itself: a video's frames, or the thumbnail."""
+    root = Path(get_settings().media_root)
+    keys = frame_keys or ([thumb_key] if thumb_key else [])
+    pictures: list[bytes] = []
+    for key in keys:
+        out = io.BytesIO()
+        with Image.open(root / key) as image:
+            small = image.convert("RGB")
+            small.thumbnail((768, 768))
+            small.save(out, format="JPEG", quality=85)
+        pictures.append(out.getvalue())
+    return pictures
+
+
+async def describe_media(db: AsyncSession, programme_id: uuid.UUID, media_id: uuid.UUID) -> dict[str, Any]:
+    """Ask the vision model what a file shows, once. The answer is kept with the file."""
+    async with db.begin():
+        item = await db.get(GalleryMedia, media_id)
+        if item is None or item.programme_id != programme_id:
+            raise _not_found()
+        if item.status != "ready":
+            raise AppError("CONFLICT", "This file has not been read yet.", 409)
+        known = (item.analysis or {}).get("description")
+        if known:
+            return dict(known)
+        keys = [frame["key"] for frame in (item.analysis or {}).get("frames", [])]
+        spread = [keys[round(i * (len(keys) - 1) / 3)] for i in range(4)] if len(keys) > 4 else keys
+        thumb_key = item.thumb_key
+    if not get_settings().gallery_model_url:
+        raise AppError("MODEL_NOT_SET", "No vision model is set.", 409)
+    pictures = await asyncio.to_thread(_pictures_to_describe, thumb_key, spread)
+    async with _describe_slots:
+        answer = await describe(pictures)
+    if answer is None:
+        raise AppError("MODEL_UNAVAILABLE", "The vision model did not answer. Try again.", 503)
+    async with db.begin():
+        item = await db.get(GalleryMedia, media_id)
+        if item is None:
+            raise _not_found()
+        item.analysis = {**(item.analysis or {}), "description": answer}
+    return answer
 
 
 async def refresh_avatar(db: AsyncSession, person_id: uuid.UUID) -> None:

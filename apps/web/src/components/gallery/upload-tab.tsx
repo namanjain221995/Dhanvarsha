@@ -5,8 +5,9 @@ import { useRef, useState, useSyncExternalStore } from 'react'
 import { sizeLabel, type QueueItem, type UploadQueue } from '@/lib/gallery-uploads'
 import { goTo } from './route'
 
-/** How many finished files stay listed. Files in progress and failed ones are always listed. */
+/** How many finished and waiting files are listed. Files being sent and failed ones always are. */
 const SHOWN_DONE = 24
+const SHOWN_WAITING = 24
 
 export function UploadTab({ queue, limits }: { queue: UploadQueue; limits: { image: number; video: number } }) {
   const items = useSyncExternalStore(queue.subscribe, queue.getSnapshot, queue.getSnapshot)
@@ -17,7 +18,12 @@ export function UploadTab({ queue, limits }: { queue: UploadQueue; limits: { ima
   const failed = items.filter((item) => item.state === 'failed').length
   const active = items.length - done - failed
   const finished = items.filter((item) => item.state === 'done').slice(0, SHOWN_DONE)
-  const shown = [...items.filter((item) => item.state !== 'done'), ...finished]
+  const waiting = items.filter((item) => item.state === 'waiting')
+  const shown = [
+    ...items.filter((item) => item.state === 'sending' || item.state === 'failed'),
+    ...waiting.slice(-SHOWN_WAITING),
+    ...finished,
+  ]
 
   const addFiles = (files: FileList | null | undefined) => {
     if (files?.length) queue.add(Array.from(files), limits)
@@ -50,7 +56,10 @@ export function UploadTab({ queue, limits }: { queue: UploadQueue; limits: { ima
           Choose photos and videos
         </button>
         <p className="gallery-note">
-          Photos up to {sizeLabel(limits.image)}, videos up to {sizeLabel(limits.video)}. They are shared with everyone who has the link.
+          {limits.image > 0 || limits.video > 0
+            ? `Photos up to ${limits.image > 0 ? sizeLabel(limits.image) : 'any size'}, videos up to ${limits.video > 0 ? sizeLabel(limits.video) : 'any size'}. `
+            : 'As many photos and videos as you like, of any size. '}
+          They are shared with everyone who has the link.
         </p>
         <input
           ref={input}
@@ -95,7 +104,12 @@ export function UploadTab({ queue, limits }: { queue: UploadQueue; limits: { ima
               <QueueRow key={item.id} item={item} queue={queue} />
             ))}
           </ul>
-          {done > SHOWN_DONE ? <p className="gallery-note">The latest {SHOWN_DONE} are listed here.</p> : null}
+          {waiting.length > SHOWN_WAITING || done > SHOWN_DONE ? (
+            <p className="gallery-note">
+              {waiting.length > SHOWN_WAITING ? `${(waiting.length - SHOWN_WAITING).toLocaleString('en-IN')} more waiting. ` : ''}
+              {done > SHOWN_DONE ? `The latest ${SHOWN_DONE} uploaded are listed.` : ''}
+            </p>
+          ) : null}
         </section>
       ) : null}
     </div>

@@ -166,6 +166,73 @@ test('the email link fills in the name, follows to a second device and leaves vo
   await first.close()
 })
 
+test('organisers see what the analysis saw, and visitors never do', async ({ page, browser, baseURL }, info) => {
+  const unique = `${info.project.name}-${Date.now().toString(36)}`
+  const name = `Analysis ${unique}`
+  const file = `analysis-${unique}.jpg`
+  const visitor = await browser.newContext({ baseURL })
+  const guest = await visitor.newPage()
+  await guest.goto('/gallery')
+  await fillForm(guest, name)
+  await guest.getByRole('button', { name: 'Continue' }).click()
+  await expect(uploadHeading(guest)).toBeVisible({ timeout: 30_000 })
+  await guest.getByLabel('Choose photos and videos').setInputFiles({ ...portrait('portrait-wide.jpg'), name: file })
+  await expect(guest.getByText('1 file uploaded.')).toBeVisible({ timeout: 30_000 })
+
+  await page.goto('/admin/login')
+  await page.getByLabel('Email').fill(process.env.ADMIN_EMAIL!)
+  await page.getByLabel('Password', { exact: true }).fill(process.env.ADMIN_PASSWORD!)
+  await page.getByRole('button', { name: /sign in/i }).click()
+  await page.waitForURL((url) => !url.pathname.includes('login'))
+  const card = page.locator('li', { hasText: file })
+  await expect(async () => {
+    await page.goto('/admin/gallery')
+    await expect(card.getByRole('button', { name: /See analysis/ })).toBeVisible({ timeout: 3000 })
+  }).toPass({ timeout: 60_000 })
+
+  await card.getByRole('button', { name: /See analysis/ }).click()
+  const dialog = page.getByRole('dialog', { name: `Analysis of ${file}` })
+  await expect(dialog.getByText('Found 1 face in this photo.')).toBeVisible()
+  await expect(dialog.getByText('No vision model is set')).toBeVisible() // none in this test stack
+  await expect(dialog.locator('li button', { hasText: name })).toContainText(/OpenCV 0\.\d+: clear match/)
+  await noHorizontalOverflow(page)
+  expect(await seriousViolations(page)).toEqual([])
+
+  // The box sits inside the picture, around a real part of it, and can be hidden.
+  const box = dialog.locator('[data-analysis-box]')
+  await expect(box).toHaveCount(1)
+  const picture = (await dialog.locator('img').first().boundingBox())!
+  const area = (await box.boundingBox())!
+  expect(area.x).toBeGreaterThanOrEqual(picture.x)
+  expect(area.y).toBeGreaterThanOrEqual(picture.y)
+  expect(area.x + area.width).toBeLessThanOrEqual(picture.x + picture.width + 1)
+  expect(area.y + area.height).toBeLessThanOrEqual(picture.y + picture.height + 1)
+  expect(area.width).toBeGreaterThan(10)
+  await dialog.getByRole('checkbox', { name: 'Show boxes' }).uncheck()
+  await expect(box).toHaveCount(0)
+  await dialog.getByRole('button', { name: 'Close', exact: true }).click()
+  await expect(dialog).toBeHidden()
+
+  // The visitor's page shows the same file with no marks, and the API tells them nothing about it.
+  await guest.reload()
+  await guest.getByRole('button', { name: 'People', exact: true }).click()
+  await guest.getByRole('searchbox').fill(name)
+  await guest.getByRole('button', { name: /^You/ }).click()
+  await guest.locator('.gallery-photo button').first().click()
+  await expect(guest.locator('.gallery-viewer img')).toBeVisible()
+  await expect(guest.locator('[data-analysis-box]')).toHaveCount(0)
+  const page_ = await guest.request.get(`/api/v1/gallery/people?q=${encodeURIComponent(name)}`)
+  expect(await page_.text()).not.toContain('box')
+  await guest.goBack()
+  await removeMe(guest)
+  await visitor.close()
+
+  // Cleaning up: the file goes away with its analysis.
+  await card.getByRole('button', { name: /^Remove/ }).click()
+  await page.getByRole('button', { name: 'Remove the file' }).click()
+  await expect(card).toHaveCount(0)
+})
+
 test.describe('layout', () => {
   test.beforeEach(({}, info) => test.skip(info.project.name !== 'mobile-chromium', 'the width sweep runs once'))
 

@@ -766,6 +766,10 @@ class GalleryMedia(Base):
     lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_error: Mapped[str | None] = mapped_column(String(300))
     face_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    # How the file was read, for the organisers. Empty until the worker has read it.
+    analysis: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
+    )
     created_at: Mapped[datetime] = created_at_col()
     processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
@@ -797,5 +801,9 @@ class GalleryFace(Base):
     matched_by: Mapped[str] = mapped_column(String(12), nullable=False, default="new", server_default="new")
     is_reference: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default=text("false")
+    )
+    # Where it is in its picture and whom it was compared with, for the organisers only.
+    analysis: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
     )
     created_at: Mapped[datetime] = created_at_col()

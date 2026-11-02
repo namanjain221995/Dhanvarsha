@@ -264,8 +264,13 @@ the console. See [architecture.md](architecture.md#photo-gallery) for how it wor
   clear matches count, and the console says so.
 - **Checking the queue.** The console shows files waiting and files that could not be read. Worker
   logs: `docker compose -f compose.prod.yaml logs --tail 50 gallery-worker`. Run exactly one.
-- **Disk.** Files live in the `media` volume. Uploads stop when free space would fall below
-  `GALLERY_FREE_SPACE_RESERVE_BYTES`. `scripts/backup.sh` includes them, so backups grow with them.
+- **Disk.** Files live in the `media` volume. There is no limit on files by default, so anyone with the
+  link can use the disk down to `GALLERY_FREE_SPACE_RESERVE_BYTES`, where uploads stop for everyone. Set
+  the `GALLERY_MAX_*` values if that becomes a problem. `scripts/backup.sh` includes the files, so
+  backups grow with them.
+- **What the analysis saw.** Under Files, **See analysis** shows a file with a box on each face, who it
+  was matched with, the OpenCV score, what Qwen answered, and Qwen's description of the file. Only
+  organisers see this. Visitors see the file with no marks.
 - **Someone asks to be removed.** They can remove themselves from their own coin. An organiser can
   too, under People: that deletes the name, picture and every record of the face. Photos stay; remove
   a photo itself under Files.

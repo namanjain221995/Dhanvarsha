@@ -335,3 +335,10 @@ Run before the first deployment, on the host above, in the isolated stacks.
 Not checked: real phones (including a real camera and real iPhone files), accuracy across a whole
 event's photos, and capacity. One group photo and its crops are far too small a sample to state an
 accuracy figure.
+
+### Analysis view and no upload limits (2026-11-03)
+
+| Check | Result |
+|---|---|
+| Real Qwen3.6 description of the sample group photo | Described the scene and counted 16 people; OpenCV found 16 faces |
+| A 150 MB photo, over the former 100 MB limit, on the preview | Uploaded in 0.9 s, read in 0.3 s |

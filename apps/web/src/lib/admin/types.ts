@@ -577,3 +577,54 @@ export type AdminGalleryMediaList = { media: AdminGalleryMedia[]; total: number 
 export type AdminGalleryPerson = { id: string; name: string; avatar_url: string | null; photos: number; videos: number }
 
 export type AdminGalleryPeople = { people: AdminGalleryPerson[]; total: number; pending: number }
+
+export type GalleryFaceCheck = { name: string; listed: boolean; score: number; model: 'not_asked' | 'yes' | 'no' | 'no_answer' }
+
+export type GalleryFaceAnalysis = {
+  id: string
+  number: number
+  person_id: string
+  name: string
+  has_selfie: boolean
+  crop_url: string | null
+  frame_ms: number | null
+  box: [number, number, number, number] | null
+  detector_score: number | null
+  size_px: number | null
+  match_score: number | null
+  matched_by: 'new' | 'opencv' | 'model' | 'merge'
+  /** Null: read before comparisons were recorded. */
+  checked: GalleryFaceCheck[] | null
+}
+
+export type GalleryDescription = { summary: string; people: number }
+
+export type GalleryAnalysis = {
+  media: {
+    id: string
+    type: 'image' | 'video'
+    url: string | null
+    download_url: string | null
+    thumb_url: string | null
+    width: number
+    height: number
+    duration_ms: number
+    name: string
+    status: GalleryMediaStatus
+    byte_size: number
+    error: string | null
+    uploaded_at: string
+  }
+  /** False until the worker has read this file with the analysis view in place. */
+  read: boolean
+  frames: { ms: number; url: string }[]
+  frames_read: number | null
+  faces_seen: number | null
+  took_ms: number | null
+  model_questions: number | null
+  description: GalleryDescription | null
+  faces: GalleryFaceAnalysis[]
+  rules: { match_at: number; ask_at: number; model_confidence: number }
+  model_enabled: boolean
+  model_name: string
+}

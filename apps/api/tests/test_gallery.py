@@ -59,6 +59,8 @@ def _face(index: int, score: float = 1.0, size_px: int = 200) -> Face:
         crop=CROP.getvalue(),
         size_px=size_px,
         quality=score * min(1.0, size_px / 160),
+        box=(0.1, 0.2, 0.3, 0.4),
+        detector_score=0.9,
     )
 
 
@@ -333,16 +335,53 @@ async def test_size_limits_and_a_full_disk_refuse_at_the_start(
 ) -> None:
     await visitor.enrolled()
     settings = get_settings()
+    monkeypatch.setattr(settings, "gallery_max_image_bytes", 1000)
     too_big = await visitor.http.post(
-        f"{GALLERY}/uploads",
-        json={"name": "a.jpg", "size": settings.gallery_max_image_bytes + 1, "content_type": "image/jpeg"},
+        f"{GALLERY}/uploads", json={"name": "a.jpg", "size": 1001, "content_type": "image/jpeg"}
     )
     assert_error(too_big, 413, "FILE_TOO_LARGE")
+    monkeypatch.setattr(settings, "gallery_max_image_bytes", 0)
     monkeypatch.setattr(settings, "gallery_free_space_reserve_bytes", 1 << 62)
     full = await visitor.http.post(
         f"{GALLERY}/uploads", json={"name": "a.jpg", "size": 10, "content_type": "image/jpeg"}
     )
     assert_error(full, 507, "INSUFFICIENT_STORAGE")
+
+
+async def test_there_is_no_limit_on_size_or_number_by_default(
+    world: World, visitor: Visitor, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    await visitor.enrolled()
+    settings = get_settings()
+    assert settings.gallery_max_image_bytes == settings.gallery_max_video_bytes == 0
+    assert settings.gallery_max_person_bytes == settings.gallery_uploads_per_hour == 0
+    me = await visitor.me()
+    assert (me["max_image_bytes"], me["max_video_bytes"]) == (0, 0)
+    # A 50 TB video may start, whatever the disk has: only the disk itself can refuse it.
+    monkeypatch.setattr(gallery, "_reject_if_disk_is_low", lambda size: None)
+    monkeypatch.setattr(gallery.uploads, "_free_bytes", lambda path: 1 << 62)
+    huge = await visitor.http.post(
+        f"{GALLERY}/uploads",
+        json={"name": "all-day.mov", "size": 50 * 10**12, "content_type": "video/quicktime"},
+    )
+    assert huge.status_code == 201, huge.text
+    assert (await visitor.http.delete(f"{GALLERY}/uploads/{huge.json()['upload_id']}")).status_code == 204
+    for salt in range(3):
+        assert (await visitor.upload(_picture(1, salt=140 + salt))).status_code == 201
+
+
+async def test_the_limits_still_work_when_someone_sets_them(
+    world: World, visitor: Visitor, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    await visitor.enrolled()
+    settings = get_settings()
+    start = {"name": "a.png", "size": 1000, "content_type": "image/png"}
+    monkeypatch.setattr(settings, "gallery_uploads_per_hour", 1)
+    assert (await visitor.http.post(f"{GALLERY}/uploads", json=start)).status_code == 201
+    assert_error(await visitor.http.post(f"{GALLERY}/uploads", json=start), 429, "RATE_LIMITED")
+    monkeypatch.setattr(settings, "gallery_uploads_per_hour", 0)
+    monkeypatch.setattr(settings, "gallery_max_person_bytes", 100)
+    assert_error(await visitor.http.post(f"{GALLERY}/uploads", json=start), 413, "FILE_TOO_LARGE")
 
 
 async def test_someone_elses_upload_cannot_be_touched(world: World, visitor: Visitor) -> None:
@@ -742,6 +781,8 @@ async def test_visitors_cannot_use_the_organisers_routes(world: World, visitor: 
     assert (await visitor.http.get(f"{ADMIN}/media")).status_code == 401
     assert (await visitor.http.delete(f"{ADMIN}/media/{uuid.uuid4()}")).status_code == 401
     assert (await visitor.http.post(f"{ADMIN}/email/send")).status_code == 401
+    assert (await visitor.http.get(f"{ADMIN}/media/{uuid.uuid4()}/analysis")).status_code == 401
+    assert (await visitor.http.post(f"{ADMIN}/media/{uuid.uuid4()}/analysis/describe")).status_code == 401
 
 
 async def test_organisers_rename_and_merge_people(world: World, visitor: Visitor) -> None:
@@ -779,6 +820,165 @@ async def test_organisers_retry_a_file_only_when_it_failed_and_is_still_stored(
     await _sort(world)
     assert (
         await world.factory.fetchval("SELECT status FROM gallery_media WHERE id = :m", m=media_id) == "ready"
+    )
+
+
+# ---- what the analysis saw --------------------------------------------------------------------------
+
+
+async def test_organisers_see_each_face_with_its_box_and_how_it_was_decided(
+    world: World, visitor: Visitor, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def model(first: bytes, second: bytes) -> bool | None:
+        return second == b"aligned-1"  # yes for this close face, no for the other
+
+    monkeypatch.setattr(gallery_worker, "same_person", model)
+    me = await visitor.enrolled("Asha", person=1)
+    await Visitor(world.http()).enrolled("Ben", person=2)
+    await _sort(world)
+    upload = await visitor.upload(_picture(1, clear=42, second=2, salt=150), "stage.png")
+    await _sort(world)
+
+    admin = await world.admin()
+    view = (await admin.get(f"{ORGANISER}/media/{upload.json()['id']}/analysis")).json()
+    assert view["read"] is True and view["media"]["name"] == "stage.png"
+    assert view["frames_read"] == 1 and view["faces_seen"] == 2
+    assert view["model_questions"] == 1 and view["took_ms"] >= 0
+    assert view["rules"] == {"match_at": 0.5, "ask_at": 0.36, "model_confidence": 0.9}
+    assert [face["number"] for face in view["faces"]] == [1, 2]
+    by_name = {face["name"]: face for face in view["faces"]}
+    assert by_name["Asha"]["person_id"] == me
+    assert by_name["Asha"]["matched_by"] == "model"
+    assert by_name["Asha"]["checked"] == [{"name": "Asha", "listed": True, "score": 0.42, "model": "yes"}]
+    assert by_name["Ben"]["matched_by"] == "opencv"
+    assert by_name["Ben"]["checked"][0]["model"] == "not_asked"
+    for face in view["faces"]:
+        assert face["box"] == [0.1, 0.2, 0.3, 0.4] and face["detector_score"] == 0.9
+        assert face["crop_url"].endswith(".webp")
+    # Visitors get the file and nothing about the analysis.
+    item = (await visitor.page(me))["media"][0]
+    assert "box" not in str(item) and "analysis" not in item and "faces" not in item
+    assert_error(await admin.get(f"{ORGANISER}/media/{uuid.uuid4()}/analysis"), 404, "NOT_FOUND")
+
+
+async def test_a_refusal_and_a_silent_model_are_on_record(
+    world: World, visitor: Visitor, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    answers: list[bool | None] = [False, None]
+
+    async def model(first: bytes, second: bytes) -> bool | None:
+        return answers.pop(0)
+
+    monkeypatch.setattr(gallery_worker, "same_person", model)
+    await visitor.enrolled("Asha", person=1)
+    await _sort(world)
+    first = await visitor.upload(_picture(1, clear=41, salt=160))
+    second = await visitor.upload(_picture(1, clear=43, salt=161))
+    await _sort(world)
+    admin = await world.admin()
+    seen = []
+    for upload in (first, second):
+        view = (await admin.get(f"{ORGANISER}/media/{upload.json()['id']}/analysis")).json()
+        assert view["faces"][0]["matched_by"] == "new"
+        seen.append(view["faces"][0]["checked"][0]["model"])
+    assert sorted(seen) == ["no", "no_answer"]
+
+
+async def test_the_model_describes_a_file_once_when_an_organiser_asks(
+    world: World, visitor: Visitor, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    await visitor.enrolled()
+    await _sort(world)
+    upload = await visitor.upload(_picture(1, salt=170))
+    media_id = upload.json()["id"]
+    await _sort(world)
+    admin = await world.admin()
+    path = f"{ORGANISER}/media/{media_id}/analysis/describe"
+
+    monkeypatch.setattr(get_settings(), "gallery_model_url", "")
+    assert_error(await admin.post(path), 409, "MODEL_NOT_SET")
+    monkeypatch.setattr(get_settings(), "gallery_model_url", "http://model.test/v1")
+
+    calls: list[list[bytes]] = []
+    answers: list[dict[str, object] | None] = [None, {"summary": "People on a stage.", "people": 3}]
+
+    async def describe(pictures: list[bytes]) -> dict[str, object] | None:
+        calls.append(pictures)
+        return answers.pop(0)
+
+    monkeypatch.setattr(gallery, "describe", describe)
+    assert_error(await admin.post(path), 503, "MODEL_UNAVAILABLE")
+    described = await admin.post(path)
+    assert described.status_code == 200, described.text
+    assert described.json() == {"summary": "People on a stage.", "people": 3}
+    assert (await admin.post(path)).json() == described.json()  # kept: the model is not asked again
+    assert len(calls) == 2
+    assert calls[0][0].startswith(b"\xff\xd8\xff")  # a small JPEG copy
+    assert (await admin.get(f"{ORGANISER}/media/{media_id}/analysis")).json()[
+        "description"
+    ] == described.json()
+
+
+@pytest.mark.parametrize(
+    ("content", "expected"),
+    [
+        ('{"summary": " People  on stage. ", "people": 4}', {"summary": "People on stage.", "people": 4}),
+        ('{"summary": "x", "people": -2}', {"summary": "x", "people": 0}),
+        ('{"summary": "", "people": 1}', None),
+        ('{"people": 1}', None),
+        ("A group of people.", None),
+    ],
+)
+def test_reading_the_models_description(content: str, expected: dict[str, object] | None) -> None:
+    assert gallery_model.read_description(content) == expected
+
+
+async def test_a_file_read_before_the_analysis_view_is_filled_in_without_changing_its_matches(
+    world: World, visitor: Visitor
+) -> None:
+    me = await visitor.enrolled("Asha", person=1)
+    await _sort(world)
+    upload = await visitor.upload(_picture(1, second=7, salt=180))
+    media_id = upload.json()["id"]
+    await _sort(world)
+    before = await world.factory.fetch(
+        "SELECT id, person_id, matched_by FROM gallery_faces WHERE media_id = :m", m=media_id
+    )
+    assert len(before) == 2
+    await world.factory.execute("UPDATE gallery_media SET analysis = '{}'::jsonb WHERE id = :m", m=media_id)
+    await world.factory.execute(
+        "UPDATE gallery_faces SET analysis = '{}'::jsonb WHERE media_id = :m", m=media_id
+    )
+    admin = await world.admin()
+    path = f"{ORGANISER}/media/{media_id}/analysis"
+    waiting = (await admin.get(path)).json()
+    assert waiting["read"] is False and all(face["box"] is None for face in waiting["faces"])
+
+    await _sort(world)
+    view = (await admin.get(path)).json()
+    assert view["read"] is True and view["faces_seen"] == 2
+    assert all(face["box"] == [0.1, 0.2, 0.3, 0.4] for face in view["faces"])
+    assert all(face["checked"] is None for face in view["faces"])  # that record was never kept
+    after = await world.factory.fetch(
+        "SELECT id, person_id, matched_by FROM gallery_faces WHERE media_id = :m", m=media_id
+    )
+    assert sorted(map(tuple, after)) == sorted(map(tuple, before))
+    assert (await visitor.page(me))["person"]["photos"] == 1
+
+
+async def test_a_file_that_cannot_be_read_again_is_not_tried_forever(world: World, visitor: Visitor) -> None:
+    await visitor.enrolled()
+    await _sort(world)
+    upload = await visitor.upload(_picture(1, salt=190))
+    media_id = upload.json()["id"]
+    await _sort(world)
+    public = await world.factory.fetchval("SELECT display_key FROM gallery_media WHERE id = :m", m=media_id)
+    (_root() / public).write_bytes(b"no longer a picture")
+    await world.factory.execute("UPDATE gallery_media SET analysis = '{}'::jsonb WHERE id = :m", m=media_id)
+    await _sort(world)
+    assert (
+        await world.factory.fetchval("SELECT analysis::text FROM gallery_media WHERE id = :m", m=media_id)
+        == '{"read_again": false}'
     )
 
 
@@ -1090,6 +1290,10 @@ async def test_real_opencv_finds_a_face_in_a_real_video_and_counts_it_once(
     prepared = await asyncio.to_thread(gallery_files.prepare_video, clip)
     assert prepared.display_key == prepared.storage_key
     assert len(prepared.faces) == 1  # the same face in every frame is one sighting
+    assert prepared.frames_read == 4 and prepared.faces_seen >= 4
+    assert prepared.frames and all((_root() / key).exists() for _, key in prepared.frames)
+    box = prepared.faces[0][0].box
+    assert 0 < box[2] < 1 and 0 < box[3] < 1
 
     from stagevote.services.gallery_faces import find_faces
 

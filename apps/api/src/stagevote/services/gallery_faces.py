@@ -43,6 +43,9 @@ class Face:
     crop: bytes
     size_px: int
     quality: float
+    # Left, top, width and height as shares of the picture, for the organisers' analysis view.
+    box: tuple[float, float, float, float] = (0.0, 0.0, 0.0, 0.0)
+    detector_score: float = 0.0
 
 
 _lock = threading.Lock()
@@ -123,10 +126,22 @@ def _detect(detector: cv2.FaceDetectorYN, bgr: np.ndarray) -> list[np.ndarray]:
     return kept
 
 
+def _share_of_picture(box: np.ndarray, height: int, width: int) -> tuple[float, float, float, float]:
+    left, top = max(0.0, float(box[0])), max(0.0, float(box[1]))
+    right, bottom = min(float(width), float(box[0] + box[2])), min(float(height), float(box[1] + box[3]))
+    return (
+        round(left / width, 4),
+        round(top / height, 4),
+        round(max(0.0, right - left) / width, 4),
+        round(max(0.0, bottom - top) / height, 4),
+    )
+
+
 def find_faces(bgr: np.ndarray, *, min_px: int = MIN_FACE_PX) -> list[Face]:
     """Every clear face in a picture, largest first. `bgr` is left unchanged."""
     if max(bgr.shape[:2]) == 0:
         return []
+    height, width = bgr.shape[:2]
     with _lock:
         detector, recogniser = _load()
         rows = sorted(_detect(detector, bgr), key=lambda row: float(row[2] * row[3]), reverse=True)
@@ -150,6 +165,8 @@ def find_faces(bgr: np.ndarray, *, min_px: int = MIN_FACE_PX) -> list[Face]:
                     crop=_crop(bgr, box),
                     size_px=size,
                     quality=float(box[14]) * min(1.0, size / FULL_QUALITY_PX),
+                    box=_share_of_picture(box, height, width),
+                    detector_score=round(float(box[14]), 3),
                 )
             )
     return faces

@@ -245,6 +245,27 @@ async def admin_delete_media(
     return Response(status_code=204, headers=NO_STORE)
 
 
+@admin.get("/media/{media_id}/analysis")
+async def admin_media_analysis(
+    media_id: uuid.UUID, response: Response, db: AsyncSession = Depends(get_db)
+) -> dict[str, Any]:
+    """Where the faces are, whom each was matched with and how. Only organisers ever see this."""
+    no_store(response)
+    async with db.begin():
+        programme = await active_programme(db)
+        return await gallery.analysis_view(db, programme.id, media_id)
+
+
+@admin.post("/media/{media_id}/analysis/describe")
+async def admin_describe_media(
+    media_id: uuid.UUID, response: Response, db: AsyncSession = Depends(get_db)
+) -> dict[str, Any]:
+    no_store(response)
+    async with db.begin():
+        programme_id = (await active_programme(db)).id
+    return await gallery.describe_media(db, programme_id, media_id)
+
+
 @admin.post("/media/{media_id}/retry")
 async def admin_retry_media(
     media_id: uuid.UUID, response: Response, db: AsyncSession = Depends(get_db)
