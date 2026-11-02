@@ -25,6 +25,7 @@ from ..services.invitations import message_id_for
 from ..services.programmes import active_programme, asset_urls
 from ..state import audit, emit
 from .admin_media import UploadIn, read_chunk
+from .admin_participants import SendToIn, listed_people
 from .common import NO_STORE, Model, SingleLine, no_store, set_session_cookie
 
 router = APIRouter(prefix="/api/v1/gallery")
@@ -472,31 +473,37 @@ async def _email_counts(db: AsyncSession, programme_id: uuid.UUID) -> dict[str, 
     return {"to_send": len(send), "already": already, "reserved": reserved}
 
 
+def _queue_email(
+    db: AsyncSession, programme_id: uuid.UUID, people: list[Participant], ctx: AdminContext
+) -> None:
+    settings = get_settings()
+    for participant in people:
+        job_id = uuid.uuid4()
+        db.add(
+            EmailJob(
+                id=job_id,
+                programme_id=programme_id,
+                participant_id=participant.id,
+                kind="gallery",
+                recipient=participant.email,
+                status="queued",
+                max_attempts=settings.email_max_attempts,
+                message_id=message_id_for(job_id),
+                created_by_admin_id=ctx.admin_id,
+            )
+        )
+
+
 @admin.post("/email/send")
 async def send_gallery_email(
     response: Response, ctx: AdminContext = Depends(current_admin), db: AsyncSession = Depends(get_db)
 ) -> dict[str, Any]:
     """Email everyone who has not had it yet. Voters' sign-in links are not touched."""
     no_store(response)
-    settings = get_settings()
     async with db.begin():
         programme = await active_programme(db)
         send, already, reserved = await _recipients(db, programme.id)
-        for participant in send:
-            job_id = uuid.uuid4()
-            db.add(
-                EmailJob(
-                    id=job_id,
-                    programme_id=programme.id,
-                    participant_id=participant.id,
-                    kind="gallery",
-                    recipient=participant.email,
-                    status="queued",
-                    max_attempts=settings.email_max_attempts,
-                    message_id=message_id_for(job_id),
-                    created_by_admin_id=ctx.admin_id,
-                )
-            )
+        _queue_email(db, programme.id, send, ctx)
         await db.flush()
         await audit(
             db,
@@ -508,3 +515,60 @@ async def send_gallery_email(
         if send:
             await emit(db, programme.id, "email", {"n": len(send)})
     return {"queued": len(send), "already": already, "reserved": reserved}
+
+
+@admin.post("/email/send-to")
+async def send_gallery_email_to(
+    body: SendToIn,
+    response: Response,
+    ctx: AdminContext = Depends(current_admin),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """Email the addresses typed here, even someone who has had it, because the organiser asked.
+    Addresses not on the list yet become participants. Voters' sign-in links are not touched."""
+    no_store(response)
+    # Test stacks deliver to their own inbox, where a reserved address does no harm.
+    skip_reserved = get_settings().email_provider != "mailpit"
+    async with db.begin():
+        programme = await active_programme(db)
+        people, created = await listed_people(db, programme.id, body.to, ctx)
+        disabled = sorted(p.email for p in people if p.disabled_at is not None)
+        active = [p for p in people if p.disabled_at is None]
+        reserved = sorted(p.email for p in active if skip_reserved and _is_reserved(p.email))
+        recipients = [p for p in active if p.email not in reserved]
+        # Pressed twice before the first one went: one email is still on its way.
+        waiting = set(
+            (
+                await db.execute(
+                    select(EmailJob.participant_id).where(
+                        EmailJob.programme_id == programme.id,
+                        EmailJob.kind == "gallery",
+                        EmailJob.status.in_(("queued", "processing")),
+                    )
+                )
+            ).scalars()
+        )
+        send = [p for p in recipients if p.id not in waiting]
+        _queue_email(db, programme.id, send, ctx)
+        await db.flush()
+        await audit(
+            db,
+            ctx.actor,
+            "gallery.email_sent",
+            programme_id=programme.id,
+            details={
+                "queued": len(send),
+                "created": created,
+                "reserved": len(reserved),
+                "disabled": len(disabled),
+            },
+        )
+        if send:
+            await emit(db, programme.id, "email", {"n": len(send)})
+    return {
+        "queued": len(send),
+        "created": created,
+        "recipients": sorted(p.email for p in recipients),
+        "reserved": reserved,
+        "disabled": disabled,
+    }

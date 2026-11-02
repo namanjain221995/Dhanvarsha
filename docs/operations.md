@@ -259,6 +259,11 @@ remembers the browser), shares photos and videos in the Upload tab, and finds ev
 tab. Organisers share the link, send the gallery email and remove files under **Photo gallery** in
 the console. See [architecture.md](architecture.md#photo-gallery) for how it works.
 
+The gallery email goes to everyone on the participant list who has not had it, or to addresses typed
+with commas in **Send the gallery email to** (up to 50). A typed address gets the real email with its
+own link even if it had one before, and joins the participant list if it is new. **Send a preview to**
+takes commas too (up to 10), and its copies are marked `[Preview]` and carry the plain gallery link.
+
 - **The vision model.** Set `GALLERY_MODEL_URL` in `.env` (on the DGX host:
   `http://host.docker.internal:8000/v1`) and recreate `gallery-worker`. Without it, only OpenCV's
   clear matches count, and the console says so.

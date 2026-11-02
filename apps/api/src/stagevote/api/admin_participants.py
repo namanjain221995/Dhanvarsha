@@ -584,6 +584,48 @@ class SendToIn(Model):
     to: str = Field(min_length=3, max_length=50_000)
 
 
+async def listed_people(
+    db: AsyncSession, programme_id: uuid.UUID, raw: str, ctx: AdminContext
+) -> tuple[list[Participant], int]:
+    """(the people these addresses name, locked; how many of them are new). Addresses not on the
+    list yet become participants. All or nothing: one invalid address changes nothing."""
+    rows = await preview_import(db, programme_id, raw)
+    invalid = [r for r in rows if r.status == "invalid"]
+    if invalid:
+        listed = ", ".join(f"“{(r.email or r.input)[:80]}”" for r in invalid[:5])
+        raise validation(
+            f"Not a valid email address: {listed}. Nothing was sent.",
+            {"invalid": [r.input[:200] for r in invalid]},
+        )
+    keys = sorted({r.email_normalized for r in rows if r.email_normalized})
+    if not keys:
+        raise validation("Enter at least one email address.")
+    if len(keys) > MAX_DIRECT_INVITES:
+        raise validation(
+            f"Send to at most {MAX_DIRECT_INVITES} addresses here. "
+            "For a longer list, use Add people on the Participants page."
+        )
+    imported, created = await commit_import(db, programme_id, raw)
+    if created:
+        await audit(
+            db,
+            ctx.actor,
+            "participants.imported",
+            programme_id=programme_id,
+            details={"created": len(created), "summary": _summary(imported)},
+        )
+    ids = list(
+        (
+            await db.execute(
+                select(Participant.id).where(
+                    Participant.programme_id == programme_id, Participant.email_normalized.in_(keys)
+                )
+            )
+        ).scalars()
+    )
+    return await lock_participants(db, programme_id, ids), len(created)
+
+
 @router.post("/invitations/send-to")
 async def send_to(
     body: SendToIn,
@@ -598,41 +640,7 @@ async def send_to(
     no_store(response)
     async with db.begin():
         programme = await active_programme(db)
-        rows = await preview_import(db, programme.id, body.to)
-        invalid = [r for r in rows if r.status == "invalid"]
-        if invalid:
-            listed = ", ".join(f"“{(r.email or r.input)[:80]}”" for r in invalid[:5])
-            raise validation(
-                f"Not a valid email address: {listed}. Nothing was sent.",
-                {"invalid": [r.input[:200] for r in invalid]},
-            )
-        keys = sorted({r.email_normalized for r in rows if r.email_normalized})
-        if not keys:
-            raise validation("Enter at least one email address.")
-        if len(keys) > MAX_DIRECT_INVITES:
-            raise validation(
-                f"Send to at most {MAX_DIRECT_INVITES} addresses here. "
-                "For a longer list, use Add people on the Participants page."
-            )
-        imported, created = await commit_import(db, programme.id, body.to)
-        if created:
-            await audit(
-                db,
-                ctx.actor,
-                "participants.imported",
-                programme_id=programme.id,
-                details={"created": len(created), "summary": _summary(imported)},
-            )
-        ids = list(
-            (
-                await db.execute(
-                    select(Participant.id).where(
-                        Participant.programme_id == programme.id, Participant.email_normalized.in_(keys)
-                    )
-                )
-            ).scalars()
-        )
-        people = await lock_participants(db, programme.id, ids)
+        people, created = await listed_people(db, programme.id, body.to, ctx)
         disabled = sorted(p.email for p in people if p.disabled_at is not None)
         active = [p for p in people if p.disabled_at is None]
         resent = sum(1 for p in active if p.last_invited_at is not None)
@@ -641,7 +649,7 @@ async def send_to(
             await emit(db, programme.id, "email", {"n": len(jobs)})
     return {
         "ok": True,
-        "created": len(created),
+        "created": created,
         "invited": len(jobs),
         "resent": resent,
         "disabled": disabled,

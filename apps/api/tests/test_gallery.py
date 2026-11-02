@@ -1115,6 +1115,81 @@ async def test_a_real_provider_is_never_given_reserved_addresses(
     assert [r.recipient for r in recipients] == ["real@techsarasolutions.com"]
 
 
+async def test_the_email_goes_to_addresses_typed_with_commas(
+    world: World, worker: Worker, provider: RecordingProvider
+) -> None:
+    known = await world.factory.create_participant(
+        world.programme_id, activated=True, email="known@example.com"
+    )
+    off = await world.factory.create_participant(world.programme_id, activated=True, email="off@example.com")
+    await world.factory.execute("UPDATE participants SET disabled_at = now() WHERE id = :p", p=off.id)
+    admin = await world.admin()
+    path = f"{ORGANISER}/email/send-to"
+
+    # One bad address sends nothing and adds nobody.
+    broken = await admin.post(path, {"to": "new@example.com, broken@nowhere"})
+    assert broken.status_code == 422, broken.text
+    assert not await world.factory.fetch(
+        "SELECT id FROM email_jobs WHERE programme_id = :p AND kind = 'gallery'", p=world.programme_id
+    )
+    assert not await world.factory.fetch(
+        "SELECT id FROM participants WHERE programme_id = :p AND email = 'new@example.com'",
+        p=world.programme_id,
+    )
+
+    sent = await admin.post(path, {"to": "known@example.com, new@example.com; off@example.com"})
+    assert sent.status_code == 200, sent.text
+    assert sent.json() == {
+        "queued": 2,
+        "created": 1,
+        "recipients": ["known@example.com", "new@example.com"],
+        "reserved": [],
+        "disabled": ["off@example.com"],
+    }
+    # Pressed twice: the first email has not gone yet, so there is no second one.
+    assert (await admin.post(path, {"to": "known@example.com"})).json()["queued"] == 0
+
+    await worker.email_tick()
+    await drain(worker)
+    assert sorted(m.to for m in provider.sent) == ["known@example.com", "new@example.com"]
+    for message in provider.sent:
+        assert "/gallery#token=" in message.text and "[Preview]" not in message.subject
+        assert "/enter#token=" not in message.html  # never the voter's sign-in link
+    own = f"http://testserver/gallery#token={gallery.link_token(known.id)}"
+    assert own in next(m for m in provider.sent if m.to == "known@example.com").text
+
+    # Asked for by name, someone who has had it gets it again.
+    assert (await admin.post(path, {"to": "known@example.com"})).json()["queued"] == 1
+    # Everyone listed here now counts as having it, so the send-to-everyone button leaves them out.
+    assert (await admin.get(ORGANISER)).json()["email"]["to_send"] == 0
+
+
+async def test_a_real_provider_is_not_given_a_typed_reserved_address(
+    world: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(get_settings(), "email_provider", "smtp")
+    admin = await world.admin()
+    sent = await admin.post(f"{ORGANISER}/email/send-to", {"to": "guest@example.com"})
+    assert sent.status_code == 200, sent.text
+    assert sent.json()["queued"] == 0 and sent.json()["reserved"] == ["guest@example.com"]
+    assert not await world.factory.fetch(
+        "SELECT id FROM email_jobs WHERE programme_id = :p AND kind = 'gallery'", p=world.programme_id
+    )
+
+
+async def test_a_preview_goes_to_each_address_typed_with_commas(
+    world: World, worker: Worker, provider: RecordingProvider
+) -> None:
+    admin = await world.admin()
+    test = await admin.post("/email/test", {"to": "one@example.com, two@example.com", "template": "gallery"})
+    assert test.status_code == 200, test.text
+    assert test.json()["recipients"] == ["one@example.com", "two@example.com"]
+    await worker.email_tick()
+    await drain(worker)
+    assert sorted(m.to for m in provider.sent) == ["one@example.com", "two@example.com"]
+    assert all("[Preview]" in m.subject and "#token=" not in m.text for m in provider.sent)
+
+
 async def test_the_gallery_email_has_its_own_wording_and_preview(
     world: World, worker: Worker, provider: RecordingProvider
 ) -> None:

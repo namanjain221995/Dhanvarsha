@@ -12,6 +12,7 @@ import type {
   AdminGalleryMediaList,
   AdminGalleryPeople,
   AdminGalleryPerson,
+  GallerySendToResult,
   GallerySummary,
   InvitationTemplate,
   InvitationWording,
@@ -116,6 +117,8 @@ function EmailPanel({ summary, flash, onSent }: { summary: GallerySummary; flash
   const [sending, setSending] = useState(false)
   const [testTo, setTestTo] = useState('')
   const [testing, setTesting] = useState(false)
+  const [testSent, setTestSent] = useState<string | null>(null)
+  const [testError, setTestError] = useState<string | null>(null)
 
   const server = query.data
   const dirty = draft !== null && base !== null && !same(draft, base.wording)
@@ -176,11 +179,13 @@ function EmailPanel({ summary, flash, onSent }: { summary: GallerySummary; flash
   const sendTest = async (event: React.FormEvent) => {
     event.preventDefault()
     setTesting(true)
+    setTestSent(null)
+    setTestError(null)
     try {
-      await adminAction('/admin/email/test', { body: { to: testTo, template: 'gallery' } })
-      flash.show({ tone: 'success', message: `Preview sent to ${testTo}.` })
+      const result = await adminAction<{ recipients: string[] }>('/admin/email/test', { body: { to: testTo, template: 'gallery' } })
+      setTestSent(`Preview on its way to ${result.recipients.join(', ')}. See its progress on the Email page.`)
     } catch (failure) {
-      flash.fail(failure)
+      setTestError(describeError(failure))
     } finally {
       setTesting(false)
     }
@@ -274,6 +279,7 @@ function EmailPanel({ summary, flash, onSent }: { summary: GallerySummary; flash
               title="Gallery email preview"
               note="Example participant: Asha Rao. Each real email has that person’s own link."
             />
+            <SendToForm dirty={dirty} save={save} saving={saving} onSent={onSent} />
             <form onSubmit={(event) => void sendTest(event)} noValidate className="space-y-3 rounded-2xl border border-sand px-4 py-4">
               <InputField
                 label="Send a preview to"
@@ -282,17 +288,102 @@ function EmailPanel({ summary, flash, onSent }: { summary: GallerySummary; flash
                 spellCheck={false}
                 autoCapitalize="none"
                 value={testTo}
-                placeholder="you@example.com"
+                error={testError}
+                placeholder="asha@example.com, ravi@example.com"
+                hint="Separate addresses with commas (up to 10). Each one gets a copy marked [Preview]."
                 onChange={(e) => setTestTo(e.target.value)}
               />
               <Button type="submit" variant="secondary" busy={testing} disabled={!testTo.includes('@')}>
                 Send a preview
               </Button>
+              {testSent ? (
+                <Notice tone="success" role="status">
+                  {testSent}
+                </Notice>
+              ) : null}
             </form>
           </div>
         </div>
       ) : null}
     </Panel>
+  )
+}
+
+/** The real email for the people typed here, the way the invitation page does it. */
+function SendToForm({ dirty, save, saving, onSent }: { dirty: boolean; save: () => Promise<boolean>; saving: boolean; onSent: () => void }) {
+  const [to, setTo] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [confirming, setConfirming] = useState(false)
+  const [sent, setSent] = useState<{ tone: 'success' | 'warning'; message: string } | null>(null)
+  const count = to.split(/[\s,;]+/).filter((part) => part.includes('@')).length
+
+  const ask = (event: React.FormEvent) => {
+    event.preventDefault()
+    if (!count) {
+      setError('Enter at least one full email address, such as you@example.com.')
+      return
+    }
+    setError(null)
+    setConfirming(true)
+  }
+
+  const send = async () => {
+    setBusy(true)
+    setSent(null)
+    try {
+      if (dirty && !(await save())) return
+      const result = await adminAction<GallerySendToResult>('/admin/gallery/email/send-to', { body: { to }, timeoutMs: 60_000 })
+      const parts = [result.recipients.length ? `The gallery email is on its way to ${result.recipients.join(', ')}. See its progress on the Email page.` : 'Nobody was emailed.']
+      if (result.created) parts.push(`${plural(result.created, 'new participant')} added.`)
+      if (result.reserved.length) parts.push(`Not sent to test addresses: ${result.reserved.join(', ')}.`)
+      if (result.disabled.length) parts.push(`Not sent to disabled accounts: ${result.disabled.join(', ')}.`)
+      setSent({ tone: result.reserved.length || result.disabled.length ? 'warning' : 'success', message: parts.join(' ') })
+      setTo('')
+      onSent()
+    } catch (failure) {
+      setError(describeError(failure))
+    } finally {
+      setBusy(false)
+      setConfirming(false)
+    }
+  }
+
+  return (
+    <form onSubmit={ask} noValidate className="space-y-3 rounded-2xl border border-sand px-4 py-4">
+      <InputField
+        label="Send the gallery email to"
+        inputMode="email"
+        autoComplete="off"
+        spellCheck={false}
+        autoCapitalize="none"
+        value={to}
+        error={error}
+        placeholder="asha@example.com, ravi@example.com"
+        hint="Separate addresses with commas (up to 50). Each person gets the real email with their own link. People not on the participant list yet are added automatically."
+        onChange={(e) => setTo(e.target.value)}
+      />
+      <Button type="submit" busy={busy || (saving && dirty)}>
+        {busy ? null : <Send aria-hidden className="size-4" />}
+        {dirty ? 'Save wording and send the email' : 'Send the email'}
+      </Button>
+      {sent ? (
+        <Notice tone={sent.tone} role="status">
+          {sent.message}
+        </Notice>
+      ) : null}
+      {confirming ? (
+        <ConfirmDialog
+          open
+          title={`Send the gallery email to ${plural(count, 'person', 'people')}?`}
+          description={<>This sends a real email to each of them, even anyone who has had it before.{dirty ? ' Your unsaved wording is saved first.' : ''} Their sign-in links for voting do not change.</>}
+          confirmLabel="Send the email"
+          busy={busy}
+          onConfirm={() => void send()}
+          onClose={() => setConfirming(false)}
+        />
+      ) : null}
+    </form>
   )
 }
 

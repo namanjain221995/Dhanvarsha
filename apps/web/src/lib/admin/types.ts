@@ -541,6 +541,8 @@ export type AuditEntry = {
 
 export type AuditList = { total: number; page: number; items: AuditEntry[] }
 
+export type GallerySendToResult = { queued: number; created: number; recipients: string[]; reserved: string[]; disabled: string[] }
+
 export type GallerySummary = {
   share_url: string
   photos: number

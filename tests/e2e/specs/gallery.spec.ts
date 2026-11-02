@@ -143,6 +143,32 @@ test('only the gallery may ask for the camera, and media stays plain', async ({ 
   expect(waiting.status()).toBe(404)
 })
 
+test('the gallery email and its preview go to addresses typed with commas', async ({ page }, info) => {
+  test.skip(info.project.name !== 'desktop-chromium', 'admin flows run on desktop')
+  const previews = [uniqueEmail('preview-one'), uniqueEmail('preview-two')]
+  const people = [uniqueEmail('list-one'), uniqueEmail('list-two')]
+  await page.goto('/admin/login')
+  await page.getByLabel('Email').fill(process.env.ADMIN_EMAIL!)
+  await page.getByLabel('Password', { exact: true }).fill(process.env.ADMIN_PASSWORD!)
+  await page.getByRole('button', { name: /sign in/i }).click()
+  await page.waitForURL((url) => !url.pathname.includes('login'))
+  await page.goto('/admin/gallery')
+
+  await page.getByLabel('Send a preview to').fill(previews.join(', '))
+  await page.getByRole('button', { name: 'Send a preview', exact: true }).click()
+  for (const email of previews) await waitForMessage(email, '[Preview]')
+
+  await page.getByLabel('Send the gallery email to').fill(people.join(', '))
+  await page.getByRole('button', { name: 'Send the email', exact: true }).click()
+  await page.getByRole('dialog').getByRole('button', { name: 'Send the email' }).click()
+  await expect(page.getByText('The gallery email is on its way')).toBeVisible()
+  for (const email of people) {
+    const message = await waitForMessage(email, 'share your photos')
+    expect(message.text).toContain('/gallery#token=')
+    expect(message.text).not.toContain('/enter#token=')
+  }
+})
+
 test('the email link fills in the name, follows to a second device and leaves voting alone', async ({ browser, baseURL }) => {
   const admin = await Admin.login(baseURL!)
   const email = uniqueEmail('gallery')
