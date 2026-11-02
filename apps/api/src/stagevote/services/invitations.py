@@ -36,7 +36,7 @@ def sign_in_link(base_url: str, token: str) -> str:
     return f"{base_url}/enter#token={token}"
 
 
-def _message_id(job_id: uuid.UUID) -> str:
+def message_id_for(job_id: uuid.UUID) -> str:
     return f"<{job_id}@{get_settings().mail_from_domain}>"
 
 
@@ -135,7 +135,7 @@ async def issue_invitations(
             recipient=participant.email,
             status="queued",
             max_attempts=settings.email_max_attempts,
-            message_id=_message_id(job_id),
+            message_id=message_id_for(job_id),
             secret_ciphertext=encrypt_payload({LINK_TOKEN_KEY: token}),
             secret_expires_at=retry_until,
             created_by_admin_id=actor.id if actor.type == "admin" else None,
@@ -162,22 +162,28 @@ async def issue_invitations(
 
 
 async def queue_test_email(
-    db: AsyncSession, recipient: str, actor: Actor, programme_id: uuid.UUID | None
+    db: AsyncSession, recipient: str, actor: Actor, programme_id: uuid.UUID | None, *, kind: str = "test"
 ) -> EmailJob:
     job_id = uuid.uuid4()
     job = EmailJob(
         id=job_id,
         programme_id=programme_id,
-        kind="test",
+        kind=kind,
         recipient=recipient,
         status="queued",
         max_attempts=1,
-        message_id=_message_id(job_id),
+        message_id=message_id_for(job_id),
         created_by_admin_id=actor.id,
     )
     db.add(job)
     await db.flush()
-    await audit(db, actor, "email.test_queued", programme_id=programme_id, details={"recipient": recipient})
+    await audit(
+        db,
+        actor,
+        "email.test_queued",
+        programme_id=programme_id,
+        details={"recipient": recipient, "kind": kind},
+    )
     await emit(db, programme_id, "email", {"n": 1})
     return job
 

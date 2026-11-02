@@ -1,0 +1,15 @@
+{% if preview %}PREVIEW: this is how participants see this email. Their button also says who they are, so
+they only add a selfie.
+
+{% endif %}{{ programme_name }}: {{ heading }}
+
+{{ intro_text }}
+
+{{ button_label }}: {{ link }}
+
+This button knows it is you, so you only need to add a selfie. Please do not forward it. For anyone else, share this link instead: {{ share_link }}
+{% if closing_text %}
+{{ closing_text }}
+{% endif %}{% if help_contact %}
+Need help? Contact {{ help_contact }}.
+{% endif %}

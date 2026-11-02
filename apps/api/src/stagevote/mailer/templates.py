@@ -91,6 +91,26 @@ DEFAULT_INVITATION = Wording(
 )
 
 
+# The email that asks everyone to share their event photos and find themselves in them.
+DEFAULT_GALLERY = Wording(
+    subject="{programme}: share your photos and find yours",
+    heading="Thank you for being part of {programme}",
+    intro=(
+        "Hi {name},\n\n"
+        "The event is over, and between us we have hundreds of photos and videos from it. Put yours in one "
+        "place, and find every one you appear in."
+    ),
+    closing=(
+        "Take a selfie, then drop your photos and videos in the Upload tab.\n\n"
+        "Open the People tab and search for your name. Your page shows every photo and video you are in, "
+        "from anyone who shared them."
+    ),
+    button_label="Open the gallery",
+)
+
+DEFAULT_WORDING = {"invitation": DEFAULT_INVITATION, "gallery": DEFAULT_GALLERY}
+
+
 def format_local(value: datetime | None, tz: str) -> str | None:
     if value is None:
         return None
@@ -138,6 +158,17 @@ def render_invitation(
     context: dict[str, Any], wording: Wording, *, preview: bool = False
 ) -> tuple[str, str, str]:
     """Return (subject, text, html) for an invitation, or for a preview of one."""
+    return _render("invitation", context, wording, preview)
+
+
+def render_gallery(
+    context: dict[str, Any], wording: Wording, *, preview: bool = False
+) -> tuple[str, str, str]:
+    """Return (subject, text, html) for the gallery email, or for a preview of one."""
+    return _render("gallery", context, wording, preview)
+
+
+def _render(template: str, context: dict[str, Any], wording: Wording, preview: bool) -> tuple[str, str, str]:
     values = {
         "name": _single_line(context.get("display_name") or "") or "there",
         "programme": context["programme_name"],
@@ -163,9 +194,9 @@ def render_invitation(
     full.setdefault("logo_src", None)
     full.setdefault("banner_src", None)
     full.setdefault("mark_src", None)
-    text = _text.get_template("invitation.txt").render(full)
+    text = _text.get_template(f"{template}.txt").render(full)
     # The gold look has its own night-blue design; every other accent uses the light one.
-    page = "invitation_stage.html" if full.get("theme") == "stage" else "invitation.html"
+    page = f"{template}_stage.html" if full.get("theme") == "stage" else f"{template}.html"
     html = _html.get_template(page).render(full)
     return subject, text, html
 

@@ -65,6 +65,11 @@ export class Admin {
     return (text ? JSON.parse(text) : {}) as T
   }
 
+  /** Email everyone who has not had the gallery email yet. */
+  sendGalleryEmail() {
+    return this.call<{ queued: number; already: number; reserved: number }>('post', '/gallery/email/send')
+  }
+
   live() {
     return this.call<{
       live_version: number

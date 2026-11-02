@@ -199,6 +199,8 @@ else
 fi
 echo "== building and starting version $STAGEVOTE_VERSION"
 $COMPOSE up -d --build
+# Caddy reads its routes and headers once, and "up" leaves a running proxy alone.
+$COMPOSE restart proxy
 
 echo "== waiting for https://$DOMAIN (the first certificate can take a minute)"
 i=0

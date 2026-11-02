@@ -203,7 +203,17 @@ export function InvitationTemplatePanel({ timeZone, flash, onInvited }: { timeZo
   )
 }
 
-function LivePreview({ wording }: { wording: InvitationWording }) {
+export function LivePreview({
+  wording,
+  path = PATH,
+  note = 'Example participant: Asha Rao. Each real invitation has that person’s own sign-in link; the example button signs nobody in.',
+  title = 'Invitation email preview',
+}: {
+  wording: InvitationWording
+  path?: string
+  note?: string
+  title?: string
+}) {
   const [preview, setPreview] = useState<InvitationPreview | null>(null)
   const [problem, setProblem] = useState<string | null>(null)
   const [height, setHeight] = useState(720)
@@ -213,7 +223,7 @@ function LivePreview({ wording }: { wording: InvitationWording }) {
   useEffect(() => {
     const controller = new AbortController()
     const timer = window.setTimeout(() => {
-      adminAction<InvitationPreview>(`${PATH}/preview`, { body: JSON.parse(key) as InvitationWording, signal: controller.signal })
+      adminAction<InvitationPreview>(`${path}/preview`, { body: JSON.parse(key) as InvitationWording, signal: controller.signal })
         .then((result) => {
           setPreview(result)
           setProblem(null)
@@ -228,7 +238,7 @@ function LivePreview({ wording }: { wording: InvitationWording }) {
       window.clearTimeout(timer)
       controller.abort()
     }
-  }, [key])
+  }, [key, path])
 
   return (
     <div className="overflow-hidden rounded-2xl border border-sand bg-ivory">
@@ -245,7 +255,7 @@ function LivePreview({ wording }: { wording: InvitationWording }) {
       {preview ? (
         <iframe
           ref={frame}
-          title="Invitation email preview"
+          title={title}
           // No scripts ever run inside; same-origin only so the frame can be sized to its content.
           sandbox="allow-same-origin"
           srcDoc={preview.html}
@@ -260,9 +270,7 @@ function LivePreview({ wording }: { wording: InvitationWording }) {
       ) : (
         <SkeletonBlock className="m-4 h-96" />
       )}
-      <p className="border-t border-sand px-4 py-2.5 text-sm text-plum-soft">
-        Example participant: Asha Rao. Each real invitation has that person’s own sign-in link; the example button signs nobody in.
-      </p>
+      <p className="border-t border-sand px-4 py-2.5 text-sm text-plum-soft">{note}</p>
     </div>
   )
 }

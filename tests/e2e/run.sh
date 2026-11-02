@@ -22,13 +22,16 @@ done
 PROJECT=stagevote-e2e
 export STAGEVOTE_HTTP_PORT=3180 DB_HOST_PORT=55480 MAILPIT_UI_PORT=8085 MAILPIT_SMTP_PORT=1085 STAGEVOTE_BIND=127.0.0.1
 export APP_BASE_URL="http://localhost:${STAGEVOTE_HTTP_PORT}" MAILPIT_UI_URL="http://localhost:8085"
+# .env holds the live site's settings on a machine that serves it; this stack is a test stack.
+export APP_ENV=development COMPOSE_PROFILES= GALLERY_MODEL_URL=
 # Isolated test stacks always deliver to their own Mailpit, whatever .env configures for
 # the main stack (a real provider must never receive synthetic test addresses).
 export EMAIL_PROVIDER=mailpit SMTP_HOST=mailpit SMTP_PORT=1025 SMTP_TLS_MODE=none SMTP_USERNAME= SMTP_PASSWORD= \
   GOOGLE_SERVICE_ACCOUNT_FILE= GOOGLE_WORKSPACE_SENDER= MAIL_FROM="StageVote Tests <noreply@example.com>"
 COMPOSE="docker compose -p $PROJECT -f compose.yaml"
 
-$COMPOSE up -d $BUILD db mailpit migrate api worker web proxy >/dev/null
+$COMPOSE up -d $BUILD db mailpit migrate api worker gallery-worker web proxy >/dev/null
+$COMPOSE restart proxy >/dev/null # Caddy reads infra/caddy once, and "up" leaves a running proxy alone
 i=0
 until curl -fsS "$APP_BASE_URL/api/v1/ready" >/dev/null 2>&1; do
   i=$((i + 1)); [ $i -gt 90 ] && { echo "stack did not become ready" >&2; exit 1; }

@@ -317,3 +317,21 @@ repeated with links. These numbers are for this host; measure the production ser
 - **External email providers.** These automated checks use Mailpit only. Gmail SMTP with an App Password was configured on 2026-10-20 and accepted real messages, but in the 2026-10-23 event-day test it refused bulk sending with `454` (see [email-setup.md](email-setup.md)). The Gmail API provider is configured with the owner's test key, but Google refused the delegated token (`unauthorized_client`). Inbox placement, SPF, DKIM and DMARC are not verified.
 - **Production HTTPS deployment.** These checks validate `compose.prod.yaml` and the Caddy files as configuration only. The production server is deployed separately (see [deploy-ec2.md](deploy-ec2.md)) and is not part of these results.
 - **Load across multiple hosts or through the internet.** The load generator and the stack share one host, so network latency is near zero. Venue Wi-Fi will add latency and loss.
+
+## Photo gallery (2026-11-03)
+
+Run before the first deployment, on the host above, in the isolated stacks.
+
+| Check | Result |
+|---|---|
+| Backend suite on the host, without ffmpeg | 276 passed, 5 skipped (the skips need ffmpeg) |
+| `tests/test_gallery.py` in a container with ffmpeg 7.1 and the real OpenCV models | 59 passed |
+| Browser tests of the gallery: Pixel 7 and iPhone 14 profiles (WebKit engine, not a real phone), desktop | 15 passed, 3 skipped by design (the fake camera exists only in Chromium; the width sweep runs once) |
+| Whole browser suite | 58 passed, 60 skipped, 2 failed: `sign-in, lobby and ballot pages have no serious axe violations` reports low contrast in `.gold-frame-tile` on the voting pages, in code this feature does not change |
+| One real selfie against one real group photo of 16 faces | The person scored 0.718 against the selfie (0.687 in the first prototype); the best stranger scored 0.286. The photo reached the person's page in 2 seconds, byte for byte as sent |
+| A selfie added after the photos | Found 4 photos and 1 video in about 1 second |
+| Vision model (Qwen3.6 on this host), called from the worker | Yes for the real match, no for 6 other people. In the prototype, without the confidence rule and the 0.36 floor, it wrongly agreed with one stranger, which is why both exist |
+
+Not checked: real phones (including a real camera and real iPhone files), accuracy across a whole
+event's photos, and capacity. One group photo and its crops are far too small a sample to state an
+accuracy figure.

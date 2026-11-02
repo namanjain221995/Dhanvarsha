@@ -1,4 +1,4 @@
-"""Organiser-edited invitation wording and the shared context every email is rendered with."""
+"""Organiser-edited email wording and the shared context every email is rendered with."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..config import Settings
 from ..mailer.templates import (
     ACCENT_HEX,
-    DEFAULT_INVITATION,
+    DEFAULT_WORDING,
     LOGO_HEIGHT,
     LOGO_MAX_WIDTH,
     Wording,
@@ -21,21 +21,23 @@ from ..mailer.templates import (
 from ..models import EmailTemplate, Programme
 
 
-async def invitation_template(db: AsyncSession, programme_id: uuid.UUID | None) -> EmailTemplate | None:
+async def email_template(
+    db: AsyncSession, programme_id: uuid.UUID | None, kind: str = "invitation"
+) -> EmailTemplate | None:
     if programme_id is None:
         return None
     return (
         await db.execute(
             select(EmailTemplate)
-            .where(EmailTemplate.programme_id == programme_id, EmailTemplate.kind == "invitation")
+            .where(EmailTemplate.programme_id == programme_id, EmailTemplate.kind == kind)
             .execution_options(populate_existing=True)
         )
     ).scalar_one_or_none()
 
 
-def wording_of(row: EmailTemplate | None) -> Wording:
+def wording_of(row: EmailTemplate | None, kind: str = "invitation") -> Wording:
     if row is None:
-        return DEFAULT_INVITATION
+        return DEFAULT_WORDING[kind]
     return Wording(
         subject=row.subject,
         heading=row.heading,

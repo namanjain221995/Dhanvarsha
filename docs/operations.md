@@ -251,3 +251,23 @@ API processes. Scale by raising `API_WORKERS` (each process holds up to
 - Export aggregate CSV.
 - Back up, then decide retention: the simplest way to remove personal data is to archive
   the backup securely and remove the database volume (`docker compose -f compose.prod.yaml down -v`).
+
+## Photo gallery
+
+`/gallery` is for after the event: anyone with the link adds a selfie and their name once (a cookie
+remembers the browser), shares photos and videos in the Upload tab, and finds everyone in the People
+tab. Organisers share the link, send the gallery email and remove files under **Photo gallery** in
+the console. See [architecture.md](architecture.md#photo-gallery) for how it works.
+
+- **The vision model.** Set `GALLERY_MODEL_URL` in `.env` (on the DGX host:
+  `http://host.docker.internal:8000/v1`) and recreate `gallery-worker`. Without it, only OpenCV's
+  clear matches count, and the console says so.
+- **Checking the queue.** The console shows files waiting and files that could not be read. Worker
+  logs: `docker compose -f compose.prod.yaml logs --tail 50 gallery-worker`. Run exactly one.
+- **Disk.** Files live in the `media` volume. Uploads stop when free space would fall below
+  `GALLERY_FREE_SPACE_RESERVE_BYTES`. `scripts/backup.sh` includes them, so backups grow with them.
+- **Someone asks to be removed.** They can remove themselves from their own coin. An organiser can
+  too, under People: that deletes the name, picture and every record of the face. Photos stay; remove
+  a photo itself under Files.
+- **Previewing a change before it goes live** on a machine that serves the site: `scripts/preview.sh`
+  runs this checkout on `http://localhost:3100` with its own database, media and inbox.

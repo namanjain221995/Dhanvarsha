@@ -71,7 +71,8 @@ class Upload:
     """An unfinished upload, as its .json file describes it."""
 
     upload_id: str
-    admin_id: uuid.UUID
+    # The organiser, or the person in the photo gallery, who started it.
+    owner_id: uuid.UUID
     name: str
     size: int
     content_type: str
@@ -101,7 +102,7 @@ def _uploads() -> Path:
     return _root() / UPLOAD_DIR
 
 
-def _part(upload_id: str) -> Path:
+def part_path(upload_id: str) -> Path:
     return _uploads() / f"{upload_id}.part"
 
 
@@ -180,15 +181,15 @@ def _sweep(directory: Path, now: float) -> None:
                 entry.unlink(missing_ok=True)
 
 
-def _create(upload: Upload) -> None:
+def create_upload(upload: Upload) -> None:
     directory = _uploads()
     directory.mkdir(parents=True, exist_ok=True)
     _sweep(directory, time.time())
     if _free_bytes(directory) < upload.size + FREE_SPACE_RESERVE:
         raise _no_space()
-    _part(upload.upload_id).touch(exist_ok=False)
+    part_path(upload.upload_id).touch(exist_ok=False)
     meta = {
-        "admin_id": str(upload.admin_id),
+        "owner_id": str(upload.owner_id),
         "name": upload.name,
         "size": upload.size,
         "content_type": upload.content_type,
@@ -202,7 +203,7 @@ def _create(upload: Upload) -> None:
 async def start_upload(ctx: AdminContext, name: str, size: int, content_type: str) -> str:
     check_size(size, content_type)
     upload = Upload(uuid.uuid4().hex, ctx.admin_id, name, size, content_type)
-    await asyncio.to_thread(_create, upload)
+    await asyncio.to_thread(create_upload, upload)
     return upload.upload_id
 
 
@@ -214,7 +215,8 @@ def _read_meta(upload_id: str) -> Upload | None:
         raw = json.loads(_meta(upload_id).read_text())
         return Upload(
             upload_id,
-            uuid.UUID(raw["admin_id"]),
+            # Uploads started before the gallery name their organiser "admin_id".
+            uuid.UUID(raw.get("owner_id") or raw["admin_id"]),
             str(raw["name"]),
             int(raw["size"]),
             str(raw.get("content_type", "")),
@@ -223,18 +225,22 @@ def _read_meta(upload_id: str) -> Upload | None:
         return None
 
 
-async def load_upload(upload_id: str, ctx: AdminContext) -> Upload:
-    """The upload, if it exists and this organiser started it (404 otherwise)."""
+async def load_owned_upload(upload_id: str, owner_id: uuid.UUID) -> Upload:
+    """The upload, if it exists and this owner started it (404 otherwise)."""
     if not _UPLOAD_ID.fullmatch(upload_id):
         raise _not_found()
     upload = await asyncio.to_thread(_read_meta, upload_id)
-    if upload is None or upload.admin_id != ctx.admin_id:
+    if upload is None or upload.owner_id != owner_id:
         raise _not_found()
     return upload
 
 
+async def load_upload(upload_id: str, ctx: AdminContext) -> Upload:
+    return await load_owned_upload(upload_id, ctx.admin_id)
+
+
 @contextmanager
-def _locked(path: Path) -> Iterator[int]:
+def locked(path: Path) -> Iterator[int]:
     """The .part file, open and locked. 404 when the upload ended while this request waited."""
     try:
         fd = os.open(path, os.O_RDWR)
@@ -254,7 +260,7 @@ def _locked(path: Path) -> Iterator[int]:
 
 
 def _append(upload: Upload, offset: int, data: bytearray) -> int:
-    with _locked(_part(upload.upload_id)) as fd:
+    with locked(part_path(upload.upload_id)) as fd:
         received = os.fstat(fd).st_size
         if offset != received:
             raise AppError(
@@ -293,8 +299,8 @@ async def write_chunk(upload: Upload, offset: int, data: bytearray) -> int:
 # ---- completing -------------------------------------------------------------------
 
 
-def _discard(upload_id: str) -> None:
-    _part(upload_id).unlink(missing_ok=True)
+def discard(upload_id: str) -> None:
+    part_path(upload_id).unlink(missing_ok=True)
     _meta(upload_id).unlink(missing_ok=True)
 
 
@@ -335,8 +341,8 @@ def _store_video(fd: int, part: Path, size: int, content_type: str, extension: s
 
 
 def _finish(upload: Upload) -> Stored:
-    part = _part(upload.upload_id)
-    with _locked(part) as fd:
+    part = part_path(upload.upload_id)
+    with locked(part) as fd:
         received = os.fstat(fd).st_size
         if received != upload.size:
             raise AppError(
@@ -356,9 +362,9 @@ def _finish(upload: Upload) -> Stored:
                 stored = _store_image(part, received)
         except AppError:
             # The whole file is here and was refused: sending it again cannot change that.
-            _discard(upload.upload_id)
+            discard(upload.upload_id)
             raise
-        _discard(upload.upload_id)
+        discard(upload.upload_id)
         return stored
 
 
@@ -398,10 +404,10 @@ async def finish_upload(db: AsyncSession, upload: Upload, ctx: AdminContext) -> 
 
 def _abort(upload: Upload) -> None:
     try:
-        with _locked(_part(upload.upload_id)):
-            _discard(upload.upload_id)
+        with locked(part_path(upload.upload_id)):
+            discard(upload.upload_id)
     except AppError:
-        _discard(upload.upload_id)  # the .part file was already gone: drop what is left
+        discard(upload.upload_id)  # the .part file was already gone: drop what is left
 
 
 async def abort_upload(upload: Upload) -> None:

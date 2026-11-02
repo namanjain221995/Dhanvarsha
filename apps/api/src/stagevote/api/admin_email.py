@@ -1,4 +1,4 @@
-"""Admin email: provider diagnostics, invitation wording, previews, job status and controlled retries."""
+"""Admin email: provider diagnostics, wording of the emails, previews, job status and controlled retries."""
 
 from __future__ import annotations
 
@@ -18,15 +18,16 @@ from ..deps import AdminContext, current_admin
 from ..errors import conflict, not_found, validation
 from ..mailer.providers import make_provider
 from ..mailer.templates import (
-    DEFAULT_INVITATION,
+    DEFAULT_WORDING,
     PLACEHOLDERS,
     PREVIEW_LINK_TOKEN,
     Wording,
+    render_gallery,
     render_invitation,
     unknown_placeholders,
 )
 from ..models import EmailAttempt, EmailJob, EmailTemplate
-from ..services.email_templates import invitation_template, programme_context, wording_of
+from ..services.email_templates import email_template, programme_context, wording_of
 from ..services.invitations import queue_test_email, sign_in_link
 from ..services.participants import normalize_email
 from ..services.programmes import active_programme
@@ -136,7 +137,9 @@ async def diagnose(
     return {"provider": settings.email_provider, "checks": checks, "config_problems": problems}
 
 
-# ---- invitation wording ---------------------------------------------------------
+# ---- email wording ------------------------------------------------------------------
+
+TemplateKind = Literal["invitation", "gallery"]
 
 
 class WordingIn(Model):
@@ -159,10 +162,10 @@ def _checked(body: WordingIn) -> Wording:
     return wording
 
 
-def _template_out(row: EmailTemplate | None) -> dict[str, Any]:
+def _template_out(row: EmailTemplate | None, kind: TemplateKind) -> dict[str, Any]:
     return {
-        "wording": wording_of(row).as_dict(),
-        "defaults": DEFAULT_INVITATION.as_dict(),
+        "wording": wording_of(row, kind).as_dict(),
+        "defaults": DEFAULT_WORDING[kind].as_dict(),
         "customised": row is not None,
         "updated_at": row.updated_at if row else None,
         "placeholders": [
@@ -171,16 +174,19 @@ def _template_out(row: EmailTemplate | None) -> dict[str, Any]:
     }
 
 
-@router.get("/email/templates/invitation")
-async def get_invitation_template(response: Response, db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+@router.get("/email/templates/{kind}")
+async def get_template(
+    kind: TemplateKind, response: Response, db: AsyncSession = Depends(get_db)
+) -> dict[str, Any]:
     no_store(response)
     async with db.begin():
         programme = await active_programme(db)
-        return _template_out(await invitation_template(db, programme.id))
+        return _template_out(await email_template(db, programme.id, kind), kind)
 
 
-@router.put("/email/templates/invitation")
-async def save_invitation_template(
+@router.put("/email/templates/{kind}")
+async def save_template(
+    kind: TemplateKind,
     body: WordingIn,
     response: Response,
     ctx: AdminContext = Depends(current_admin),
@@ -193,21 +199,22 @@ async def save_invitation_template(
         values = wording.as_dict()
         await db.execute(
             pg_insert(EmailTemplate)
-            .values(programme_id=programme.id, kind="invitation", updated_by_admin_id=ctx.admin_id, **values)
+            .values(programme_id=programme.id, kind=kind, updated_by_admin_id=ctx.admin_id, **values)
             .on_conflict_do_update(
                 index_elements=["programme_id", "kind"],
                 set_={**values, "updated_by_admin_id": ctx.admin_id, "updated_at": func.now()},
             )
         )
-        await audit(
-            db, ctx.actor, "email.template_saved", programme_id=programme.id, details={"kind": "invitation"}
-        )
-        return _template_out(await invitation_template(db, programme.id))
+        await audit(db, ctx.actor, "email.template_saved", programme_id=programme.id, details={"kind": kind})
+        return _template_out(await email_template(db, programme.id, kind), kind)
 
 
-@router.delete("/email/templates/invitation")
-async def reset_invitation_template(
-    response: Response, ctx: AdminContext = Depends(current_admin), db: AsyncSession = Depends(get_db)
+@router.delete("/email/templates/{kind}")
+async def reset_template(
+    kind: TemplateKind,
+    response: Response,
+    ctx: AdminContext = Depends(current_admin),
+    db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     """Go back to the built-in wording."""
     no_store(response)
@@ -215,18 +222,16 @@ async def reset_invitation_template(
         programme = await active_programme(db)
         await db.execute(
             delete(EmailTemplate).where(
-                EmailTemplate.programme_id == programme.id, EmailTemplate.kind == "invitation"
+                EmailTemplate.programme_id == programme.id, EmailTemplate.kind == kind
             )
         )
-        await audit(
-            db, ctx.actor, "email.template_reset", programme_id=programme.id, details={"kind": "invitation"}
-        )
-    return _template_out(None)
+        await audit(db, ctx.actor, "email.template_reset", programme_id=programme.id, details={"kind": kind})
+    return _template_out(None, kind)
 
 
-@router.post("/email/templates/invitation/preview")
-async def preview_invitation(
-    body: WordingIn, response: Response, db: AsyncSession = Depends(get_db)
+@router.post("/email/templates/{kind}/preview")
+async def preview_template(
+    kind: TemplateKind, body: WordingIn, response: Response, db: AsyncSession = Depends(get_db)
 ) -> dict[str, Any]:
     """Render (unsaved) wording for an example participant. Nothing is stored or sent."""
     no_store(response)
@@ -240,9 +245,17 @@ async def preview_invitation(
     if context["theme"] == "stage":
         context["banner_src"] = "/api/v1/public/email-banner.gif"
         context["mark_src"] = "/brand/techsara-mark.png"
-    # The example link signs nobody in, like the one in preview emails.
-    context |= {"display_name": "Asha Rao", "link": sign_in_link(settings.app_base_url, PREVIEW_LINK_TOKEN)}
-    subject, body_text, body_html = render_invitation(context, wording)
+    if kind == "gallery":
+        share = f"{settings.app_base_url}/gallery"
+        context |= {"display_name": "Asha Rao", "link": share, "share_link": share}
+        subject, body_text, body_html = render_gallery(context, wording)
+    else:
+        # The example link signs nobody in, like the one in preview emails.
+        context |= {
+            "display_name": "Asha Rao",
+            "link": sign_in_link(settings.app_base_url, PREVIEW_LINK_TOKEN),
+        }
+        subject, body_text, body_html = render_invitation(context, wording)
     return {"subject": subject, "text": body_text, "html": body_html}
 
 
@@ -254,6 +267,7 @@ MAX_PREVIEW_RECIPIENTS = 10
 class TestIn(Model):
     # One or more addresses separated by commas, semicolons, spaces or new lines.
     to: str = Field(min_length=3, max_length=4000)
+    template: TemplateKind = "invitation"
 
 
 def _recipients(raw: str) -> list[str]:
@@ -290,7 +304,10 @@ async def send_test(
     addresses = _recipients(body.to)
     async with db.begin():
         programme = await active_programme(db)
-        jobs = [await queue_test_email(db, address, ctx.actor, programme.id) for address in addresses]
+        kind = "gallery_test" if body.template == "gallery" else "test"
+        jobs = [
+            await queue_test_email(db, address, ctx.actor, programme.id, kind=kind) for address in addresses
+        ]
     return {"ok": True, "queued": len(jobs), "recipients": addresses, "job_ids": [str(j.id) for j in jobs]}
 
 
@@ -300,7 +317,7 @@ async def list_jobs(
     status: Literal[
         "all", "queued", "processing", "accepted", "failed", "unknown", "superseded", "cancelled"
     ] = "all",
-    kind: Literal["all", "invitation", "test"] = "all",
+    kind: Literal["all", "invitation", "test", "gallery", "gallery_test"] = "all",
     page: int = 1,
     page_size: int = 50,
     db: AsyncSession = Depends(get_db),

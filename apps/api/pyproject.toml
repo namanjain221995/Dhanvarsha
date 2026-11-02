@@ -21,6 +21,13 @@ dependencies = [
     "python-multipart>=0.0.32,<0.1",
     "google-auth>=2.62,<3",
     "google-api-python-client>=2.201,<3",
+    # The photo gallery: OpenCV's face detector and recogniser, iPhone photos, removing a
+    # photo's location without touching its picture, and the call to the vision model.
+    "opencv-python-headless>=5.0,<5.1",
+    "numpy>=2.5,<3",
+    "pillow-heif>=1.1,<2",
+    "piexif>=1.1,<2",
+    "httpx>=0.28,<0.29",
 ]
 
 [dependency-groups]
@@ -81,3 +88,4 @@ asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "session"
 asyncio_default_test_loop_scope = "session"
 addopts = "-ra"
+markers = ["real_opencv: uses the real OpenCV face models instead of the stand-in"]

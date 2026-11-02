@@ -16,7 +16,8 @@ from ..config import Settings
 from ..logging import get_logger
 from ..models import EmailAttempt, EmailJob, Participant, Programme
 from ..security import decrypt_payload
-from ..services.email_templates import invitation_template, programme_context, wording_of
+from ..services.email_templates import email_template, programme_context, wording_of
+from ..services.gallery import gallery_link
 from ..services.invitations import LINK_TOKEN_KEY, sign_in_link
 from ..services.participants import name_from_email
 from ..state import emit
@@ -28,6 +29,7 @@ from .templates import (
     STAGE_BANNER_CID,
     brand_mark_png,
     email_logo_png,
+    render_gallery,
     render_invitation,
     stage_banner_gif,
 )
@@ -113,7 +115,7 @@ async def _prepare(
                 db, job, "superseded", code="superseded", error="A newer invitation replaced this one"
             )
             return None
-    elif job.kind != "test":
+    elif job.kind not in ("test", "gallery", "gallery_test"):
         # Kinds from the retired activation/reset flow are never sent.
         await _finish(
             db, job, "cancelled", code="retired_kind", error=f"{job.kind} emails are no longer sent"
@@ -140,7 +142,8 @@ async def _prepare(
 
     programme = await db.get(Programme, job.programme_id) if job.programme_id else None
     context, logo_key = await programme_context(db, programme, settings)
-    wording = wording_of(await invitation_template(db, job.programme_id))
+    template = "gallery" if job.kind in ("gallery", "gallery_test") else "invitation"
+    wording = wording_of(await email_template(db, job.programme_id, template), template)
     inline: list[InlineImage] = []
     if logo_key:
         logo = await asyncio.to_thread(email_logo_png, settings.media_root, logo_key)
@@ -154,16 +157,32 @@ async def _prepare(
         mark = await asyncio.to_thread(brand_mark_png)
         inline.append(InlineImage(cid=BRAND_MARK_CID, data=mark, subtype="png"))
         context["mark_src"] = f"cid:{BRAND_MARK_CID}"
+    preview = job.kind in ("test", "gallery_test")
     if job.kind == "invitation":
         assert participant is not None
         context |= {
             "display_name": participant.display_name or name_from_email(participant.email),
             "link": sign_in_link(settings.app_base_url, secret[LINK_TOKEN_KEY]),
         }
+    elif job.kind == "gallery":
+        assert participant is not None
+        context |= {
+            "display_name": participant.display_name or name_from_email(participant.email),
+            "link": gallery_link(settings.app_base_url, participant.id),
+            "share_link": f"{settings.app_base_url}/gallery",
+        }
+    elif job.kind == "gallery_test":
+        # A preview: the gallery's plain link, which asks for a name like the shared one does.
+        context |= {
+            "display_name": "",
+            "link": f"{settings.app_base_url}/gallery",
+            "share_link": f"{settings.app_base_url}/gallery",
+        }
     else:
         # A preview: the real design and wording with an example link that signs nobody in.
         context |= {"display_name": "", "link": sign_in_link(settings.app_base_url, PREVIEW_LINK_TOKEN)}
-    subject, body_text, body_html = render_invitation(context, wording, preview=job.kind == "test")
+    render = render_gallery if template == "gallery" else render_invitation
+    subject, body_text, body_html = render(context, wording, preview=preview)
     return OutgoingEmail(
         to=job.recipient,
         subject=subject,

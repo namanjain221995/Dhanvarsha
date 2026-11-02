@@ -17,6 +17,7 @@ from sqlalchemy import (
     Boolean,
     CheckConstraint,
     DateTime,
+    Float,
     ForeignKey,
     ForeignKeyConstraint,
     Index,
@@ -38,11 +39,16 @@ EVENT_STATUSES = ("upcoming", "open", "closed")
 BALLOT_KINDS = ("team", "individual", "mcq", "text")
 # The longest typed answer, in characters (ck_votes_choice enforces the same limit).
 ANSWER_MAX_LENGTH = 500
-EMAIL_JOB_KINDS = ("invitation", "login_reminder", "password_reset", "test")
+EMAIL_JOB_KINDS = ("invitation", "login_reminder", "password_reset", "test", "gallery", "gallery_test")
 EMAIL_JOB_STATUSES = ("queued", "processing", "accepted", "failed", "unknown", "superseded", "cancelled")
 SCHEDULE_JOB_STATUSES = ("pending", "done", "skipped", "missed", "stale", "failed")
 # opening_media is the image or video an opening-page card shows full screen.
 ASSET_KINDS = ("programme_logo", "banner", "event_logo", "nominee_photo", "opening_media")
+GALLERY_MEDIA_KINDS = ("image", "video")
+GALLERY_MEDIA_STATUSES = ("queued", "processing", "ready", "failed")
+# How a face reached its person: it started a new one, OpenCV was sure, the vision model settled
+# a close call, or its whole group joined someone who gave a selfie later.
+GALLERY_MATCHED_BY = ("new", "opencv", "model", "merge")
 
 
 def _in(column: str, values: tuple[str, ...]) -> str:
@@ -537,7 +543,7 @@ class EmailTemplate(Base):
     """
 
     __tablename__ = "email_templates"
-    __table_args__ = (CheckConstraint("kind IN ('invitation')", name="ck_email_templates_kind"),)
+    __table_args__ = (CheckConstraint("kind IN ('invitation', 'gallery')", name="ck_email_templates_kind"),)
 
     programme_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("programmes.id", ondelete="CASCADE"), primary_key=True
@@ -659,3 +665,137 @@ class WorkerHeartbeat(Base):
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     info: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+
+
+class GalleryPerson(Base):
+    """Someone in the photo gallery: a person who gave a selfie and a name (enrolled_at set), or a
+    group of matching faces nobody has named yet. The selfie itself is never kept, only what
+    describes the face in it (embedding, aligned) and a small round picture (avatar_key)."""
+
+    __tablename__ = "gallery_people"
+    __table_args__ = (
+        Index("ix_gallery_people_programme", "programme_id", "name"),
+        Index(
+            "uq_gallery_people_participant",
+            "participant_id",
+            unique=True,
+            postgresql_where=text("participant_id IS NOT NULL"),
+        ),
+        Index("ix_gallery_people_rematch", "updated_at", postgresql_where=text("rematch_pending")),
+    )
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    programme_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("programmes.id", ondelete="RESTRICT"), nullable=False
+    )
+    name: Mapped[str] = mapped_column(String(80), nullable=False, default="", server_default="")
+    # Set when the person came through their email link or a voter's sign-in.
+    participant_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("participants.id", ondelete="SET NULL")
+    )
+    embedding: Mapped[bytes | None] = mapped_column(LargeBinary)
+    aligned: Mapped[bytes | None] = mapped_column(LargeBinary)
+    avatar_key: Mapped[str | None] = mapped_column(String(80))
+    enrolled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    consent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # The worker still has to look for this person's selfie among the faces already found.
+    rematch_pending: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
+    created_at: Mapped[datetime] = created_at_col()
+    updated_at: Mapped[datetime] = updated_at_col()
+
+
+class GalleryDevice(Base):
+    """A browser that remembers a person, by the SHA-256 of its long-lived cookie."""
+
+    __tablename__ = "gallery_devices"
+    __table_args__ = (Index("ix_gallery_devices_person", "person_id"),)
+
+    token_hash: Mapped[bytes] = mapped_column(LargeBinary, primary_key=True)
+    person_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("gallery_people.id", ondelete="CASCADE"), nullable=False
+    )
+    created_at: Mapped[datetime] = created_at_col()
+
+
+class GalleryMedia(Base):
+    """One uploaded picture or video, from the moment its last byte arrives.
+
+    source_key is the file as it arrived, in a folder Caddy never serves. Only the worker turns it
+    into public files: storage_key (the full-quality file a download gives), display_key (what a
+    browser can show: the same file, or a copy it can play) and thumb_key (the small picture).
+    """
+
+    __tablename__ = "gallery_media"
+    __table_args__ = (
+        CheckConstraint(_in("kind", GALLERY_MEDIA_KINDS), name="ck_gallery_media_kind"),
+        CheckConstraint(_in("status", GALLERY_MEDIA_STATUSES), name="ck_gallery_media_status"),
+        UniqueConstraint("programme_id", "sha256", name="uq_gallery_media_file"),
+        Index("ix_gallery_media_due", "status", "next_attempt_at"),
+        Index("ix_gallery_media_uploader", "uploader_person_id"),
+        Index("ix_gallery_media_recent", "programme_id", "created_at"),
+    )
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    programme_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("programmes.id", ondelete="RESTRICT"), nullable=False
+    )
+    kind: Mapped[str] = mapped_column(String(8), nullable=False)
+    status: Mapped[str] = mapped_column(String(12), nullable=False, default="queued", server_default="queued")
+    source_key: Mapped[str | None] = mapped_column(String(120))
+    storage_key: Mapped[str | None] = mapped_column(String(80))
+    display_key: Mapped[str | None] = mapped_column(String(80))
+    thumb_key: Mapped[str | None] = mapped_column(String(80))
+    content_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    byte_size: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    width: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    height: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    duration_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    original_name: Mapped[str] = mapped_column(String(255), nullable=False, default="", server_default="")
+    uploader_person_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("gallery_people.id", ondelete="SET NULL")
+    )
+    uploader_ip: Mapped[str | None] = mapped_column(String(64))
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    next_attempt_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    lease_owner: Mapped[str | None] = mapped_column(String(80))
+    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_error: Mapped[str | None] = mapped_column(String(300))
+    face_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    created_at: Mapped[datetime] = created_at_col()
+    processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class GalleryFace(Base):
+    """One face found in a file, and the person it belongs to."""
+
+    __tablename__ = "gallery_faces"
+    __table_args__ = (
+        CheckConstraint(_in("matched_by", GALLERY_MATCHED_BY), name="ck_gallery_faces_matched_by"),
+        Index("ix_gallery_faces_person", "person_id", "media_id"),
+        Index("ix_gallery_faces_media", "media_id"),
+        Index("ix_gallery_faces_reference", "person_id", postgresql_where=text("is_reference")),
+    )
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    media_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("gallery_media.id", ondelete="CASCADE"), nullable=False
+    )
+    person_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("gallery_people.id", ondelete="CASCADE"), nullable=False
+    )
+    embedding: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    aligned: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    crop_key: Mapped[str] = mapped_column(String(80), nullable=False)
+    quality: Mapped[float] = mapped_column(Float, nullable=False)
+    frame_ms: Mapped[int | None] = mapped_column(Integer)
+    match_score: Mapped[float | None] = mapped_column(Float)
+    matched_by: Mapped[str] = mapped_column(String(12), nullable=False, default="new", server_default="new")
+    is_reference: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
+    created_at: Mapped[datetime] = created_at_col()

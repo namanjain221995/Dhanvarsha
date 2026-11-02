@@ -29,7 +29,7 @@ from stagevote.config import get_settings
 from stagevote.db import asyncpg_dsn, build_engine
 from stagevote.security import new_token, token_hash
 
-HEAD = "0013"
+HEAD = "0014"
 
 LINK_COLUMNS = (
     "SELECT column_name, data_type, is_nullable FROM information_schema.columns "
@@ -633,6 +633,49 @@ async def test_0013_adds_the_spotlight_and_drops_it_on_downgrade(scratch: Databa
         assert (
             await owner.fetchval("SELECT spotlight::text FROM programmes WHERE id = $1", programme_id) == "{}"
         )
+    finally:
+        await app.close()
+        await owner.close()
+
+
+async def test_0014_adds_the_gallery_and_removes_its_data_on_downgrade(scratch: DatabaseInfo) -> None:
+    """Additive: the previous release ignores the new tables. The email kinds widen and narrow again."""
+    await alembic(scratch, "0013")
+    owner = await connect(scratch.owner_url)
+    app = await connect(scratch.app_url)
+    try:
+        programme_id = await old_programme(owner, "Dhanvarsha 2026")
+        job = (
+            "INSERT INTO email_jobs (id, programme_id, kind, recipient, status, message_id, attempts, max_attempts) "
+            "VALUES ($1, $2, $3, 'a@b.c', 'queued', $4, 0, 6)"
+        )
+        with pytest.raises(asyncpg.CheckViolationError):
+            await owner.execute(job, uuid.uuid4(), programme_id, "gallery", "<one@b.c>")
+
+        await alembic(scratch, "0014")
+        assert await owner.fetchval("SELECT version_num FROM alembic_version") == HEAD
+        await owner.execute(job, uuid.uuid4(), programme_id, "gallery", "<two@b.c>")
+        await owner.execute(job, uuid.uuid4(), programme_id, "test", "<three@b.c>")
+        # The runtime role reads and writes the new tables, and only known statuses fit.
+        person = await app.fetchval(
+            "INSERT INTO gallery_people (id, programme_id, name) VALUES ($1, $2, 'Asha') RETURNING id",
+            uuid.uuid4(),
+            programme_id,
+        )
+        media = "INSERT INTO gallery_media (id, programme_id, kind, status, content_type, byte_size, sha256) VALUES ($1, $2, 'image', $3, 'image/png', 1, $4)"
+        await app.execute(media, uuid.uuid4(), programme_id, "queued", "a" * 64)
+        with pytest.raises(asyncpg.CheckViolationError):
+            await app.execute(media, uuid.uuid4(), programme_id, "lost", "b" * 64)
+        with pytest.raises(asyncpg.UniqueViolationError):  # one file, one row
+            await app.execute(media, uuid.uuid4(), programme_id, "queued", "a" * 64)
+        await app.execute("DELETE FROM gallery_people WHERE id = $1", person)
+
+        await alembic(scratch, "0013", downgrade=True)
+        assert await owner.fetchval("SELECT to_regclass('gallery_people')") is None
+        assert await owner.fetchval("SELECT count(*) FROM email_jobs WHERE kind = 'gallery'") == 0
+        assert await owner.fetchval("SELECT count(*) FROM email_jobs WHERE kind = 'test'") == 1
+        await alembic(scratch, "head")
+        assert await owner.fetchval("SELECT version_num FROM alembic_version") == HEAD
     finally:
         await app.close()
         await owner.close()

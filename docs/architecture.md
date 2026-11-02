@@ -351,3 +351,34 @@ Private pages and API responses are `no-store`; there is no service worker.
   semaphore: strong enough, and a burst of sign-ins cannot exhaust memory.
 - **Next.js renders every page per request** so CSP nonces work; pages are light and the
   data is client-fetched, so this costs little.
+
+## Photo gallery
+
+Nothing here touches events, votes or the voters' sign-in. `services/gallery.py` is the API's side,
+`worker/gallery.py` the worker's.
+
+- **Who is visiting.** No account: the form (selfie, name, consent) creates a `gallery_people` row and
+  a long-lived cookie, stored hashed in `gallery_devices`. The gallery email's link carries an HMAC of
+  the participant's id in the URL fragment, which says who it is for and opens nothing but the gallery.
+  A signed-in voter is known too. A second selfie that matches closely (`SAME_SELFIE_AT`) joins the
+  same person from another device. The selfie is never stored: only a round crop, an aligned 112-pixel
+  crop and the SFace description.
+- **Uploads.** The same chunked protocol as opening-page media (`services/media.py`), owned by the
+  person. The file's first bytes decide what it is. It waits in `.gallery-incoming/`, which Caddy never
+  serves, and the person only hears "uploaded".
+- **The queue.** `gallery_media` rows are leased with `SKIP LOCKED`, and the lease is renewed during
+  long videos. An unreadable file fails for good and is removed; anything else is retried three times.
+- **Public files** (`services/gallery_files.py`). What people see is what was sent, with no marks: a JPEG
+  keeps its picture data and loses only its location; HEIC and AVIF become JPEG; a video's streams are
+  copied into a new MP4 or WebM without metadata. A video browsers cannot play gets an H.264 copy to
+  watch, and the download stays the full-quality file.
+- **Faces** (`services/gallery_faces.py`). OpenCV's YuNet finds faces at several sizes and SFace
+  describes each one, on the CPU. A video is sampled once a second, at most 300 frames, and each face
+  keeps its clearest sighting.
+- **Who a face belongs to** (`services/gallery_match.py`). Cosine 0.50 or more is the same person, below
+  0.36 is not, and the band between goes to the vision model (`services/gallery_model.py`), which sees
+  only the two aligned crops and counts only with confidence 0.9 or more. No answer means "not the same
+  person": a missing photo is a smaller mistake than someone else's photo on your page. A face matching
+  nobody starts an unnamed person, listed once seen in two files. A new selfie then absorbs the unnamed
+  groups it matches. Only one worker decides at a time, so two photos of a stranger cannot each start a
+  new person.

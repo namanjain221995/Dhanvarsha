@@ -453,6 +453,7 @@ def main(argv: list[str] | None = None) -> int:
     rc = sub.add_parser("reconcile")
     rc.add_argument("--slug")
     sub.add_parser("check-privileges")
+    sub.add_parser("gallery-worker")
     args = parser.parse_args(argv)
 
     if args.command == "bootstrap":
@@ -465,6 +466,10 @@ def main(argv: list[str] | None = None) -> int:
         from .worker.runner import run_worker
 
         asyncio.run(run_worker())
+    elif args.command == "gallery-worker":
+        from .worker.gallery import run_gallery_worker
+
+        asyncio.run(run_gallery_worker())
     elif args.command == "seed-demo":
         from .seed import seed_demo
 

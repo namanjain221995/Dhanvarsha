@@ -34,7 +34,7 @@ import { InvitationTemplatePanel } from './invitation-template'
 
 const PAGE_SIZE = 25
 const STATUSES: EmailJobStatus[] = ['queued', 'processing', 'accepted', 'failed', 'unknown', 'superseded', 'cancelled']
-const KINDS: EmailJobKind[] = ['invitation', 'test']
+const KINDS: EmailJobKind[] = ['invitation', 'test', 'gallery', 'gallery_test']
 const STATUS_TONE: Record<EmailJobStatus, Tone> = {
   queued: 'neutral',
   processing: 'neutral',

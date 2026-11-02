@@ -95,6 +95,21 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     worker_id: str | None = None
 
+    # The photo gallery (/gallery). Its link has no sign-in, so unlike the organisers' uploads
+    # its files have limits, and the disk keeps a reserve for the database and the voting.
+    gallery_models_dir: str = "/app/models"
+    # An OpenAI-style address of the vision model that settles close matches, such as
+    # http://host.docker.internal:8000/v1. Empty: only OpenCV's clear matches count.
+    gallery_model_url: str = ""
+    gallery_model_name: str = "Qwen/Qwen3.6-35B-A3B-NVFP4"
+    gallery_max_image_bytes: int = 100 * 1024 * 1024
+    gallery_max_video_bytes: int = 8 * 1024 * 1024 * 1024
+    gallery_max_person_bytes: int = 100 * 1024 * 1024 * 1024
+    gallery_free_space_reserve_bytes: int = 20 * 1024 * 1024 * 1024
+    gallery_concurrency: int = 2
+    gallery_cv_threads: int = 2
+    gallery_ffmpeg_threads: int = 4
+
     @field_validator("programme_timezone")
     @classmethod
     def _valid_timezone(cls, value: str) -> str:
@@ -148,6 +163,12 @@ class Settings(BaseSettings):
     @property
     def admin_cookie_name(self) -> str:
         return "__Host-sv_admin" if self.cookie_secure else "sv_admin"
+
+    @property
+    def gallery_cookie_name(self) -> str:
+        # Names the browser of someone who filled in the gallery's form. It grants access to the
+        # gallery only, and has nothing to do with the voters' session or sign-in link.
+        return "__Host-sv_gallery" if self.cookie_secure else "sv_gallery"
 
     @property
     def migration_url(self) -> str:

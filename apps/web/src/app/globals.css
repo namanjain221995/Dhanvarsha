@@ -2544,3 +2544,1130 @@ html:has([data-scene='opening']) body {
   opacity: 0;
   pointer-events: none;
 }
+
+/*
+ * The photo gallery (/gallery): the event's night blue and gold, for looking at photos. Faces are
+ * struck on gold coins, the one flourish. Everything else stays quiet so the photos carry the page.
+ */
+html:has(.gallery-page) {
+  background: #050c2c;
+}
+.gallery-page {
+  --g-night: #050c2c;
+  --g-raised: #0d1b52;
+  --g-line: rgb(170 185 255 / 0.2);
+  --g-text: #f2f3ff;
+  --g-soft: #b8c1ea;
+  --g-gold: #f2c14e;
+  --g-gold-text: #f6d26b;
+  --g-danger: #ffb1a8;
+  --g-row: 112px;
+  min-height: 100dvh;
+  background:
+    radial-gradient(90rem 34rem at 50% -14rem, rgb(38 63 170 / 0.5), transparent 70%),
+    var(--g-night);
+  color: var(--g-text);
+  -webkit-tap-highlight-color: transparent;
+}
+.gallery-page :focus-visible,
+.gallery-camera :focus-visible,
+.gallery-viewer :focus-visible {
+  outline: 2px solid var(--g-gold, #f2c14e);
+  outline-offset: 3px;
+}
+.gallery-centre {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+}
+.gallery-spinner {
+  width: 2.25rem;
+  height: 2.25rem;
+  color: #f2c14e;
+}
+.gallery-title {
+  font-family: var(--font-cinzel), 'Times New Roman', serif;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--g-gold-text);
+}
+.gallery-title span {
+  margin-left: 0.5em;
+  font-size: 0.72em;
+  letter-spacing: 0.22em;
+  color: var(--g-gold);
+}
+.gallery-note {
+  font-size: 0.875rem;
+  line-height: 1.5;
+  color: var(--g-soft);
+}
+.gallery-error {
+  font-size: 0.9rem;
+  line-height: 1.45;
+  color: var(--g-danger);
+}
+.gallery-link {
+  min-height: 2.75rem;
+  padding: 0 0.25rem;
+  font-size: 0.925rem;
+  font-weight: 600;
+  color: var(--g-gold-text);
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+}
+
+/* Buttons. The gold one is the page's next step; there is only ever one in view. */
+.gallery-cta,
+.gallery-ghost,
+.gallery-danger {
+  display: inline-flex;
+  min-height: 3rem;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0 1.25rem;
+  border-radius: 999px;
+  font-size: 0.975rem;
+  font-weight: 700;
+  transition:
+    filter 150ms,
+    transform 150ms,
+    background-color 150ms;
+}
+.gallery-cta svg,
+.gallery-ghost svg,
+.gallery-danger svg {
+  width: 1.15rem;
+  height: 1.15rem;
+  flex: none;
+}
+.gallery-cta {
+  background: linear-gradient(180deg, #ffe9a8 0%, #f4cb52 42%, #dba62d 78%, #bb841b 100%);
+  color: #1b1f4d;
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.6),
+    0 14px 28px -16px rgb(242 193 78 / 0.7);
+}
+.gallery-cta:hover:not(:disabled) {
+  filter: brightness(1.06);
+}
+.gallery-cta:active:not(:disabled) {
+  transform: translateY(1px);
+}
+.gallery-cta:disabled {
+  cursor: progress;
+  filter: saturate(0.5) brightness(0.8);
+}
+.gallery-ghost {
+  background: rgb(170 185 255 / 0.1);
+  border: 1px solid var(--g-line);
+  color: var(--g-text);
+}
+.gallery-ghost:hover {
+  background: rgb(170 185 255 / 0.18);
+}
+.gallery-danger {
+  background: #c23a4e;
+  color: #fff;
+}
+.gallery-danger:hover:not(:disabled) {
+  background: #a92f42;
+}
+.gallery-round {
+  display: inline-flex;
+  width: 2.75rem;
+  height: 2.75rem;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: rgb(5 12 44 / 0.62);
+  color: #f2f3ff;
+  transition: background-color 150ms;
+}
+.gallery-round:hover {
+  background: rgb(38 55 130 / 0.85);
+}
+.gallery-round svg {
+  width: 1.3rem;
+  height: 1.3rem;
+}
+
+/* The coin: a ridged gold rim around a face. */
+.gallery-coin {
+  --coin-rim: 3px;
+  position: relative;
+  display: block;
+  width: 100%;
+  aspect-ratio: 1;
+  padding: var(--coin-rim);
+  border-radius: 50%;
+  background:
+    repeating-conic-gradient(rgb(90 58 6 / 0.55) 0deg 1.4deg, transparent 1.4deg 4deg),
+    conic-gradient(from 215deg, #fff1b5, #f2c14e, #a9740f, #f7d36a, #fff1b5, #b8801a, #f2c14e, #fff1b5);
+  box-shadow: 0 10px 22px -12px rgb(242 193 78 / 0.55);
+}
+.gallery-coin[data-size='small'] {
+  --coin-rim: 2px;
+}
+.gallery-coin[data-size='large'] {
+  --coin-rim: 6px;
+  box-shadow: 0 22px 44px -22px rgb(242 193 78 / 0.7);
+}
+.gallery-coin[data-spin] {
+  animation: gallery-coin-strike 700ms cubic-bezier(0.2, 0.8, 0.25, 1);
+}
+@keyframes gallery-coin-strike {
+  from {
+    transform: perspective(600px) rotateY(180deg) scale(0.86);
+  }
+  to {
+    transform: perspective(600px) rotateY(360deg) scale(1);
+  }
+}
+.gallery-coin-face {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border-radius: 50%;
+  border: 1.5px solid rgb(5 12 44 / 0.85);
+  background: var(--g-raised, #0d1b52);
+  color: var(--g-soft, #b8c1ea);
+}
+.gallery-coin-face img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.gallery-coin-face svg {
+  width: 52%;
+  height: 52%;
+}
+.gallery-coin-blank {
+  display: flex;
+  width: 100%;
+  aspect-ratio: 1;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  border: 2px dashed rgb(242 193 78 / 0.65);
+  background: radial-gradient(circle at 50% 38%, rgb(38 63 170 / 0.35), transparent 72%);
+  color: var(--g-gold);
+}
+.gallery-coin-blank svg {
+  width: 34%;
+  height: 34%;
+}
+
+/* The first visit: the form. */
+.gallery-first main {
+  display: flex;
+  width: min(100%, 27rem);
+  margin-inline: auto;
+  flex-direction: column;
+  padding: max(1.75rem, env(safe-area-inset-top)) 1rem max(2rem, env(safe-area-inset-bottom));
+  text-align: center;
+}
+.gallery-first .gallery-title {
+  font-size: 1.05rem;
+}
+.gallery-first h1 {
+  margin-top: 1.1rem;
+  font-size: clamp(1.75rem, 8vw, 2.25rem);
+  font-weight: 760;
+  font-stretch: 92%;
+  line-height: 1.08;
+  letter-spacing: -0.01em;
+  text-wrap: balance;
+}
+.gallery-lede {
+  margin-top: 0.7rem;
+  font-size: 1rem;
+  line-height: 1.5;
+  color: var(--g-soft);
+  text-wrap: pretty;
+}
+.gallery-form {
+  display: flex;
+  flex-direction: column;
+  gap: 1.15rem;
+  margin-top: 1.5rem;
+  text-align: left;
+}
+.gallery-form > .gallery-cta {
+  width: 100%;
+  min-height: 3.25rem;
+}
+.gallery-selfie {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.85rem;
+  text-align: center;
+}
+.gallery-selfie-coin {
+  width: min(52vw, 11.5rem);
+}
+.gallery-selfie-actions {
+  display: flex;
+  width: 100%;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.6rem;
+}
+.gallery-selfie-actions > * {
+  flex: 1 1 10rem;
+}
+.gallery-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+.gallery-field label {
+  font-size: 0.925rem;
+  font-weight: 650;
+}
+.gallery-field input {
+  min-height: 3rem;
+  padding: 0 0.95rem;
+  border: 1px solid rgb(170 185 255 / 0.32);
+  border-radius: 0.8rem;
+  background: rgb(5 12 44 / 0.55);
+  font-size: 1rem;
+  color: var(--g-text);
+}
+.gallery-field input[aria-invalid] {
+  border-color: var(--g-danger);
+}
+.gallery-consent label {
+  display: flex;
+  gap: 0.7rem;
+  font-size: 0.875rem;
+  line-height: 1.45;
+  color: var(--g-soft);
+  cursor: pointer;
+}
+.gallery-consent input {
+  width: 1.3rem;
+  height: 1.3rem;
+  margin-top: 0.1rem;
+  flex: none;
+  accent-color: var(--g-gold);
+}
+.gallery-consent .gallery-error {
+  margin-top: 0.4rem;
+}
+
+/* The camera. */
+.gallery-camera {
+  width: 100%;
+  max-width: none;
+  height: 100dvh;
+  max-height: none;
+  margin: 0;
+  background: #000;
+  color: #f2f3ff;
+}
+.gallery-camera[open] {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  padding: 1rem;
+}
+.gallery-camera-close {
+  position: absolute;
+  top: max(0.75rem, env(safe-area-inset-top));
+  right: 0.75rem;
+  z-index: 1;
+}
+.gallery-camera-frame {
+  position: relative;
+  width: min(100%, 62dvh, 34rem);
+  aspect-ratio: 1;
+  overflow: hidden;
+  border-radius: 1.25rem;
+  background: #0d1b52;
+}
+.gallery-camera-frame video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transform: scaleX(-1); /* a mirror, as people expect a selfie to look */
+}
+.gallery-camera-guide {
+  position: absolute;
+  inset: 9%;
+  border: 3px solid rgb(242 193 78 / 0.9);
+  border-radius: 50%;
+  box-shadow: 0 0 0 100vmax rgb(5 12 44 / 0.45);
+}
+.gallery-camera-hint {
+  font-size: 0.925rem;
+  color: #d7dcf7;
+  text-align: center;
+}
+.gallery-shutter {
+  width: 4.5rem;
+  height: 4.5rem;
+  flex: none;
+  border: 5px solid #fff;
+  border-radius: 50%;
+  background: linear-gradient(180deg, #ffe9a8, #dba62d);
+}
+.gallery-shutter:disabled {
+  opacity: 0.4;
+}
+.gallery-camera-refused {
+  display: flex;
+  max-width: 24rem;
+  flex-direction: column;
+  align-items: center;
+  gap: 1.25rem;
+  text-align: center;
+  line-height: 1.5;
+}
+
+/* The two tabs: at the foot of a phone, where the thumb is; in the header on a large screen. */
+.gallery-home {
+  padding-bottom: calc(4.75rem + env(safe-area-inset-bottom));
+}
+.gallery-bar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: max(0.6rem, env(safe-area-inset-top)) 1rem 0.6rem;
+  /* No backdrop-filter here: it would make the tabs inside fix to this bar, not to the screen. */
+  background: rgb(5 12 44 / 0.97);
+  border-bottom: 1px solid rgb(170 185 255 / 0.12);
+}
+.gallery-bar .gallery-title {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 1.02rem;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.gallery-me {
+  display: block;
+  width: 2.75rem;
+  height: 2.75rem;
+  flex: none;
+  border-radius: 50%;
+}
+.gallery-tabs {
+  position: fixed;
+  inset: auto 0 0;
+  z-index: 30;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  padding: 0.4rem 0.75rem calc(0.4rem + env(safe-area-inset-bottom));
+  gap: 0.5rem;
+  background: rgb(9 19 66 / 0.98);
+  border-top: 1px solid rgb(170 185 255 / 0.18);
+}
+.gallery-tabs button {
+  position: relative;
+  display: flex;
+  min-height: 3.1rem;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.12rem;
+  border-radius: 0.85rem;
+  font-size: 0.8rem;
+  font-weight: 650;
+  color: var(--g-soft);
+  transition:
+    color 150ms,
+    background-color 150ms;
+}
+.gallery-tabs button svg {
+  width: 1.35rem;
+  height: 1.35rem;
+}
+.gallery-tabs button[aria-current='page'] {
+  background: rgb(242 193 78 / 0.14);
+  color: var(--g-gold-text);
+}
+.gallery-tab-badge {
+  position: absolute;
+  top: 0.2rem;
+  left: calc(50% + 0.6rem);
+  min-width: 1.2rem;
+  padding: 0 0.3rem;
+  border-radius: 999px;
+  background: var(--g-gold);
+  color: #1b1f4d;
+  font-size: 0.7rem;
+  font-weight: 800;
+  line-height: 1.2rem;
+  text-align: center;
+}
+.gallery-main {
+  width: min(100%, 76rem);
+  margin-inline: auto;
+  padding: 1rem;
+}
+
+/* Upload. */
+.gallery-upload {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+.gallery-drop {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.65rem;
+  padding: 2rem 1.25rem;
+  border: 2px dashed rgb(242 193 78 / 0.5);
+  border-radius: 1.5rem;
+  background: rgb(13 27 82 / 0.5);
+  text-align: center;
+  transition:
+    border-color 150ms,
+    background-color 150ms;
+}
+.gallery-drop[data-over] {
+  border-color: var(--g-gold);
+  background: rgb(242 193 78 / 0.12);
+}
+.gallery-drop h2 {
+  font-size: 1.4rem;
+  font-weight: 750;
+  font-stretch: 92%;
+  line-height: 1.15;
+  text-wrap: balance;
+}
+.gallery-drop > p:not(.gallery-note) {
+  color: var(--g-soft);
+}
+.gallery-drop .gallery-cta {
+  margin-block: 0.5rem 0.25rem;
+}
+.gallery-drop .gallery-note {
+  max-width: 26rem;
+}
+.gallery-drop-icon {
+  display: flex;
+  width: 4rem;
+  height: 4rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: rgb(242 193 78 / 0.14);
+  color: var(--g-gold);
+}
+.gallery-drop-icon svg {
+  width: 2rem;
+  height: 2rem;
+}
+.gallery-drop-laptop {
+  display: none;
+}
+.gallery-queue-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem 1rem;
+  line-height: 1.45;
+  color: var(--g-soft);
+}
+.gallery-queue-head strong {
+  color: var(--g-text);
+}
+.gallery-queue-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-top: 0.85rem;
+}
+.gallery-row {
+  display: flex;
+  min-height: 4rem;
+  align-items: center;
+  gap: 0.8rem;
+  padding: 0.5rem 0.6rem;
+  border-radius: 0.95rem;
+  background: rgb(13 27 82 / 0.62);
+}
+.gallery-row-thumb {
+  display: flex;
+  width: 3rem;
+  height: 3rem;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border-radius: 0.6rem;
+  background: rgb(5 12 44 / 0.7);
+  color: var(--g-soft);
+}
+.gallery-row-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.gallery-row-thumb svg {
+  width: 1.4rem;
+  height: 1.4rem;
+}
+.gallery-row-text {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: 0.875rem;
+}
+.gallery-row-name {
+  overflow: hidden;
+  font-weight: 600;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.gallery-row-done {
+  color: var(--g-gold-text);
+  font-weight: 600;
+}
+.gallery-row-wait {
+  color: var(--g-soft);
+}
+.gallery-row-error {
+  line-height: 1.35;
+  color: var(--g-danger);
+}
+.gallery-row-bar {
+  display: block;
+  height: 0.35rem;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgb(170 185 255 / 0.18);
+}
+.gallery-row-bar span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #dba62d, #ffe9a8);
+  transition: width 200ms linear;
+}
+.gallery-row-action {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 0.15rem;
+}
+.gallery-row-action .gallery-round {
+  background: transparent;
+}
+.gallery-row-action .gallery-round:hover {
+  background: rgb(170 185 255 / 0.14);
+}
+.gallery-row-tick {
+  width: 1.5rem;
+  height: 1.5rem;
+  margin-right: 0.6rem;
+  color: var(--g-gold);
+}
+.gallery-row-percent {
+  min-width: 2.6rem;
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  color: var(--g-soft);
+}
+.gallery-row-percent svg {
+  margin-left: auto;
+  width: 1.1rem;
+  height: 1.1rem;
+}
+
+/* People: a tray of coins. */
+.gallery-people {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+.gallery-search {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.gallery-search > svg {
+  position: absolute;
+  left: 1rem;
+  width: 1.2rem;
+  height: 1.2rem;
+  color: var(--g-soft);
+  pointer-events: none;
+}
+.gallery-search input {
+  width: 100%;
+  min-height: 3rem;
+  padding: 0 3rem 0 2.8rem;
+  border: 1px solid rgb(170 185 255 / 0.28);
+  border-radius: 999px;
+  background: rgb(13 27 82 / 0.7);
+  font-size: 1rem;
+  color: var(--g-text);
+}
+.gallery-search input::placeholder {
+  color: var(--g-soft);
+}
+.gallery-search input::-webkit-search-cancel-button {
+  display: none;
+}
+.gallery-search button {
+  position: absolute;
+  right: 0.15rem;
+  display: flex;
+  width: 2.75rem;
+  height: 2.75rem;
+  align-items: center;
+  justify-content: center;
+  color: var(--g-soft);
+}
+.gallery-search button svg {
+  width: 1.15rem;
+  height: 1.15rem;
+}
+.gallery-coins {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(78px, 1fr));
+  gap: 1.15rem 0.85rem;
+}
+.gallery-coins[aria-busy] {
+  opacity: 0.7;
+}
+.gallery-person {
+  display: flex;
+  width: 100%;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.15rem;
+  text-align: center;
+  border-radius: 0.75rem;
+}
+.gallery-person .gallery-coin {
+  margin-bottom: 0.35rem;
+  transition: transform 180ms var(--ease-soft);
+}
+.gallery-person:hover .gallery-coin {
+  transform: translateY(-3px) rotate(-3deg);
+}
+.gallery-person-name {
+  display: -webkit-box;
+  width: 100%;
+  overflow: hidden;
+  font-size: 0.85rem;
+  font-weight: 650;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+.gallery-person-name[data-untitled] {
+  color: var(--g-soft);
+  font-weight: 550;
+}
+.gallery-person-count {
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--g-soft);
+}
+.gallery-empty {
+  display: flex;
+  max-width: 28rem;
+  margin: 2.5rem auto;
+  flex-direction: column;
+  align-items: center;
+  gap: 1rem;
+  line-height: 1.5;
+  text-align: center;
+  color: var(--g-soft);
+}
+.gallery-sentinel {
+  height: 1px;
+}
+.gallery-skeleton-coin {
+  display: block;
+  width: 100%;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: rgb(170 185 255 / 0.12);
+}
+.gallery-skeleton-line {
+  display: block;
+  width: 70%;
+  height: 0.7rem;
+  margin-top: 0.5rem;
+  border-radius: 999px;
+  background: rgb(170 185 255 / 0.12);
+}
+.gallery-skeleton-photos {
+  height: 16rem;
+  margin-top: 1.25rem;
+  border-radius: 0.75rem;
+  background: rgb(170 185 255 / 0.08);
+}
+
+/* One person's page. Rows keep each photo's own shape, so no one at the edge of a group is cut off. */
+.gallery-back {
+  display: inline-flex;
+  min-height: 2.75rem;
+  align-items: center;
+  gap: 0.4rem;
+  margin-left: -0.25rem;
+  padding-right: 0.5rem;
+  font-weight: 650;
+  color: var(--g-gold-text);
+}
+.gallery-back svg {
+  width: 1.25rem;
+  height: 1.25rem;
+}
+.gallery-person-head {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-block: 0.5rem 1.25rem;
+}
+.gallery-person-head > .gallery-coin {
+  width: 6rem;
+  flex: none;
+}
+.gallery-person-head > div {
+  min-width: 0;
+}
+.gallery-person-head h2 {
+  font-family: var(--font-cinzel), 'Times New Roman', serif;
+  font-size: clamp(1.55rem, 7vw, 2.75rem);
+  font-weight: 700;
+  line-height: 1.1;
+  overflow-wrap: anywhere;
+  color: var(--g-gold-text);
+}
+.gallery-person-head h2[data-untitled] {
+  color: var(--g-soft);
+}
+.gallery-person-head p {
+  margin-top: 0.2rem;
+  color: var(--g-soft);
+}
+.gallery-photos {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+/* The last row keeps the height of the others instead of stretching to fill. */
+.gallery-photos::after {
+  content: '';
+  flex-grow: 1000;
+}
+.gallery-photo {
+  aspect-ratio: var(--ratio);
+  flex-grow: var(--ratio);
+  flex-basis: calc(var(--ratio) * var(--g-row));
+  min-width: 0;
+  overflow: hidden;
+  border-radius: 0.3rem;
+  background: var(--g-raised);
+}
+.gallery-photo button {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.gallery-photo img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition: transform 220ms var(--ease-soft);
+}
+.gallery-photo button:hover img {
+  transform: scale(1.025);
+}
+.gallery-photo-video {
+  position: absolute;
+  left: 0.35rem;
+  bottom: 0.35rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.15rem 0.45rem 0.15rem 0.3rem;
+  border-radius: 999px;
+  background: rgb(5 12 44 / 0.78);
+  font-size: 0.75rem;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  color: #fff;
+}
+.gallery-photo-video svg {
+  width: 0.85rem;
+  height: 0.85rem;
+  fill: currentColor;
+}
+
+/* The viewer: the photo itself on black, with no marks on it. */
+.gallery-viewer {
+  width: 100%;
+  max-width: none;
+  height: 100dvh;
+  max-height: none;
+  margin: 0;
+  overflow: hidden;
+  background: #000;
+  color: #f2f3ff;
+}
+.gallery-viewer::backdrop {
+  background: #000;
+}
+.gallery-viewer-stage {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  touch-action: pan-y pinch-zoom;
+}
+.gallery-viewer-stage img,
+.gallery-viewer-stage video {
+  max-width: 100%;
+  max-height: 100%;
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: contain;
+}
+.gallery-viewer-spinner {
+  position: absolute;
+  width: 2rem;
+  height: 2rem;
+  color: #f2c14e;
+  pointer-events: none;
+}
+.gallery-viewer-error {
+  position: absolute;
+  max-width: 22rem;
+  padding: 1rem;
+  border-radius: 0.8rem;
+  background: rgb(5 12 44 / 0.85);
+  text-align: center;
+}
+.gallery-viewer-top {
+  position: absolute;
+  inset: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: max(0.6rem, env(safe-area-inset-top)) 0.75rem 0.6rem;
+  pointer-events: none;
+}
+.gallery-viewer-top > * {
+  pointer-events: auto;
+}
+.gallery-viewer-count {
+  padding: 0.25rem 0.75rem;
+  border-radius: 999px;
+  background: rgb(5 12 44 / 0.62);
+  font-size: 0.875rem;
+  font-variant-numeric: tabular-nums;
+}
+.gallery-viewer-arrow {
+  position: absolute;
+  top: 50%;
+  display: none;
+  transform: translateY(-50%);
+}
+.gallery-viewer-arrow[data-side='left'] {
+  left: 0.75rem;
+}
+.gallery-viewer-arrow[data-side='right'] {
+  right: 0.75rem;
+}
+
+/* The sheet behind your own coin. */
+.gallery-sheet {
+  width: calc(100% - 2rem);
+  max-width: 26rem;
+  max-height: calc(100dvh - 2rem);
+  margin: auto;
+  overflow-y: auto;
+  border: 1px solid rgb(170 185 255 / 0.22);
+  border-radius: 1.5rem;
+  background: #0b1849;
+  color: #f2f3ff;
+}
+.gallery-sheet::backdrop {
+  background: rgb(2 6 26 / 0.72);
+}
+.gallery-sheet-body {
+  --g-soft: #b8c1ea;
+  --g-gold: #f2c14e;
+  --g-gold-text: #f6d26b;
+  --g-danger: #ffb1a8;
+  --g-text: #f2f3ff;
+  --g-line: rgb(170 185 255 / 0.2);
+  --g-raised: #0d1b52;
+  position: relative;
+  padding: 1.5rem 1.25rem;
+}
+.gallery-sheet-close {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+}
+.gallery-sheet-menu {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
+  text-align: center;
+  line-height: 1.5;
+}
+.gallery-sheet-menu > .gallery-coin {
+  width: 7.5rem;
+}
+.gallery-sheet-menu > .gallery-cta,
+.gallery-sheet-menu > .gallery-ghost,
+.gallery-sheet-menu > .gallery-danger {
+  width: 100%;
+}
+.gallery-sheet-menu p {
+  color: var(--g-soft);
+}
+.gallery-sheet h2 {
+  padding-inline: 2rem;
+  font-size: 1.3rem;
+  font-weight: 750;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+.gallery-sheet-edit h2 {
+  padding-inline: 0 2.5rem;
+}
+
+@media (min-width: 768px) {
+  .gallery-page {
+    --g-row: 220px;
+  }
+  .gallery-home {
+    padding-bottom: 2rem;
+  }
+  .gallery-bar {
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    padding: 0.7rem 1.5rem;
+  }
+  .gallery-me {
+    justify-self: end;
+  }
+  .gallery-bar .gallery-title {
+    font-size: 1.2rem;
+  }
+  .gallery-tabs {
+    position: static;
+    display: flex;
+    gap: 0.25rem;
+    padding: 0.25rem;
+    border: 1px solid rgb(170 185 255 / 0.18);
+    border-radius: 999px;
+    background: rgb(13 27 82 / 0.7);
+  }
+  .gallery-tabs button {
+    min-height: 2.5rem;
+    min-width: 7.5rem;
+    flex-direction: row;
+    gap: 0.5rem;
+    padding: 0 1.1rem;
+    border-radius: 999px;
+    font-size: 0.925rem;
+  }
+  .gallery-tabs button svg {
+    width: 1.1rem;
+    height: 1.1rem;
+  }
+  .gallery-tabs button:hover:not([aria-current='page']) {
+    color: var(--g-text);
+  }
+  .gallery-tab-badge {
+    position: static;
+  }
+  .gallery-main {
+    padding: 1.75rem 1.5rem;
+  }
+  .gallery-first main {
+    padding-top: 3rem;
+  }
+  .gallery-first .gallery-title {
+    font-size: 1.2rem;
+  }
+  .gallery-upload[data-filled] {
+    display: grid;
+    grid-template-columns: minmax(0, 24rem) minmax(0, 1fr);
+    align-items: start;
+    gap: 1.75rem;
+  }
+  .gallery-upload[data-filled] .gallery-drop {
+    position: sticky;
+    top: 5.25rem;
+  }
+  .gallery-upload:not([data-filled]) .gallery-drop {
+    padding-block: 4.5rem;
+  }
+  .gallery-drop-laptop {
+    display: block;
+  }
+  .gallery-drop-phone {
+    display: none;
+  }
+  .gallery-search {
+    max-width: 26rem;
+  }
+  .gallery-coins {
+    grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+    gap: 1.75rem 1.4rem;
+  }
+  .gallery-person-name {
+    font-size: 0.95rem;
+  }
+  .gallery-person-head > .gallery-coin {
+    width: 8rem;
+  }
+  .gallery-person-head {
+    gap: 1.5rem;
+  }
+  .gallery-viewer-arrow {
+    display: inline-flex;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .gallery-coin[data-spin] {
+    animation: none;
+  }
+  .gallery-person .gallery-coin,
+  .gallery-photo img {
+    transition: none;
+  }
+  .gallery-person:hover .gallery-coin {
+    transform: none;
+  }
+  .gallery-photo button:hover img {
+    transform: none;
+  }
+}

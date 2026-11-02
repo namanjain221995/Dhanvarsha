@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block content %}
+{% if preview %}
+<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#fff4d6;border:1px solid #efd28a;border-radius:14px;margin:0 0 18px 0;">
+  <tr><td style="padding:12px 16px;font-size:14px;line-height:1.5;color:#5c4300;">
+    <strong>Preview.</strong> This is how participants see this email. Their button also says who they are, so they only add a selfie.
+  </td></tr>
+</table>
+{% endif %}
+{{ intro_html }}
+<table role="presentation" align="center" cellspacing="0" cellpadding="0" style="margin:8px auto 12px auto;">
+  <tr><td align="center" bgcolor="{{ accent }}" style="border-radius:999px;background:{{ accent }};">
+    <a href="{{ link }}" style="display:inline-block;padding:14px 30px;border-radius:999px;color:#ffffff;text-decoration:none;font-size:16px;font-weight:700;">{{ button_label }}</a>
+  </td></tr>
+</table>
+<p style="margin:0 0 20px 0;font-size:14px;line-height:1.5;color:#6b5670;text-align:center;">This button knows it is you, so you only need to add a selfie. Please do not forward it. For anyone else, share this link instead: <a href="{{ share_link }}" style="color:{{ accent }};word-break:break-all;">{{ share_link }}</a></p>
+{{ closing_html }}
+<p style="margin:6px 0 0 0;font-size:13px;line-height:1.5;color:#6b5670;">Button not working? Copy this link into your browser: <a href="{{ link }}" style="color:{{ accent }};word-break:break-all;">{{ link }}</a></p>
+{% endblock %}

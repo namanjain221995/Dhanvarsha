@@ -1,6 +1,7 @@
 'use client'
 
 import {
+  Images,
   ListOrdered,
   LoaderCircle,
   LogOut,
@@ -39,6 +40,7 @@ const NAV: { href: string; label: string; icon: React.ReactNode; exact?: boolean
   { href: '/admin/programme', label: 'Programme settings', icon: <SlidersHorizontal aria-hidden className={iconClass} /> },
   { href: '/admin/opening', label: 'Opening page', icon: <MonitorPlay aria-hidden className={iconClass} /> },
   { href: '/admin/spotlight', label: 'Spotlight', icon: <Sparkles aria-hidden className={iconClass} /> },
+  { href: '/admin/gallery', label: 'Photo gallery', icon: <Images aria-hidden className={iconClass} /> },
   { href: '/admin/audit', label: 'Audit log', icon: <ScrollText aria-hidden className={iconClass} /> },
 ]
 

@@ -31,7 +31,7 @@ class UploadIn(Model):
     content_type: str = Field(default="", max_length=255)
 
 
-async def _chunk(request: Request) -> bytearray:
+async def read_chunk(request: Request) -> bytearray:
     """The raw body, refused once it passes CHUNK_SIZE (Content-Length may be absent).
 
     Nothing is written before the whole body has arrived, so a chunk the browser cancels
@@ -73,7 +73,7 @@ async def put_chunk(
 ) -> dict[str, Any]:
     no_store(response)
     upload = await media.load_upload(upload_id, ctx)
-    received = await media.write_chunk(upload, offset, await _chunk(request))
+    received = await media.write_chunk(upload, offset, await read_chunk(request))
     return {"received": received}
 
 

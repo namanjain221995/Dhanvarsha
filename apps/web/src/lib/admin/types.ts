@@ -368,7 +368,7 @@ export type ParticipantFilter =
 
 export type EmailJobStatus = 'queued' | 'processing' | 'accepted' | 'failed' | 'unknown' | 'superseded' | 'cancelled'
 /** login_reminder and password_reset only appear on rows created before those emails were retired. */
-export type EmailJobKind = 'invitation' | 'login_reminder' | 'password_reset' | 'test'
+export type EmailJobKind = 'invitation' | 'login_reminder' | 'password_reset' | 'test' | 'gallery' | 'gallery_test'
 
 export type ParticipantRow = {
   id: string
@@ -540,3 +540,40 @@ export type AuditEntry = {
 }
 
 export type AuditList = { total: number; page: number; items: AuditEntry[] }
+
+export type GallerySummary = {
+  share_url: string
+  photos: number
+  videos: number
+  pending: number
+  failed: number
+  bytes: number
+  enrolled: number
+  unnamed: number
+  model_enabled: boolean
+  email: { to_send: number; already: number; reserved: number }
+}
+
+export type GalleryMediaStatus = 'queued' | 'processing' | 'ready' | 'failed'
+
+export type AdminGalleryMedia = {
+  id: string
+  type: 'image' | 'video'
+  url: string | null
+  download_url: string | null
+  thumb_url: string | null
+  name: string
+  status: GalleryMediaStatus
+  byte_size: number
+  faces: number
+  error: string | null
+  uploaded_at: string
+  uploader: string
+  uploader_ip: string
+}
+
+export type AdminGalleryMediaList = { media: AdminGalleryMedia[]; total: number }
+
+export type AdminGalleryPerson = { id: string; name: string; avatar_url: string | null; photos: number; videos: number }
+
+export type AdminGalleryPeople = { people: AdminGalleryPerson[]; total: number; pending: number }

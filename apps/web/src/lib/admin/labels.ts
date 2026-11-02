@@ -80,9 +80,16 @@ export const EMAIL_KIND_LABELS: Record<EmailJobKind, string> = {
   login_reminder: 'Login reminder (retired)',
   password_reset: 'Reset link (retired)',
   test: 'Invitation preview',
+  gallery: 'Gallery email',
+  gallery_test: 'Gallery email preview',
 }
 
 const AUDIT_ACTIONS: Record<string, string> = {
+  'gallery.media_deleted': 'Removed a gallery file',
+  'gallery.person_renamed': 'Renamed someone in the gallery',
+  'gallery.person_merged': 'Merged two people in the gallery',
+  'gallery.person_deleted': 'Removed someone from the gallery',
+  'gallery.email_sent': 'Sent the gallery email',
   'admin.login': 'Organiser signed in',
   'asset.uploaded': 'Image uploaded',
   'ballot.corrected': 'Ballot corrected after opening',

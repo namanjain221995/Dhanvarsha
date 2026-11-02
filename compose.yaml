@@ -45,6 +45,12 @@ x-api-env: &api-env
   MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-5242880}
   MAX_MEDIA_BYTES: ${MAX_MEDIA_BYTES:-0}
   MAX_MEDIA_IMAGE_BYTES: ${MAX_MEDIA_IMAGE_BYTES:-0}
+  GALLERY_MODEL_URL: ${GALLERY_MODEL_URL:-}
+  GALLERY_MODEL_NAME: ${GALLERY_MODEL_NAME:-Qwen/Qwen3.6-35B-A3B-NVFP4}
+  GALLERY_MAX_IMAGE_BYTES: ${GALLERY_MAX_IMAGE_BYTES:-104857600}
+  GALLERY_MAX_VIDEO_BYTES: ${GALLERY_MAX_VIDEO_BYTES:-8589934592}
+  GALLERY_MAX_PERSON_BYTES: ${GALLERY_MAX_PERSON_BYTES:-107374182400}
+  GALLERY_FREE_SPACE_RESERVE_BYTES: ${GALLERY_FREE_SPACE_RESERVE_BYTES:-21474836480}
   LOG_LEVEL: ${LOG_LEVEL:-INFO}
 
 services:
@@ -131,6 +137,30 @@ services:
     environment: *api-env
     command: ["stagevote", "worker"]
     stop_grace_period: 30s
+    volumes:
+      - media:/data/media
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  # Reads the faces in the photo gallery's files. Apart from the worker above and capped, so that
+  # no video can slow the voting. Run exactly one (worker/gallery.py). It reaches the vision model
+  # on this machine through GALLERY_MODEL_URL, and works without it.
+  gallery-worker:
+    image: stagevote-api:local
+    restart: unless-stopped
+    environment: *api-env
+    command: ["stagevote", "gallery-worker"]
+    stop_grace_period: 30s
+    cpus: ${GALLERY_WORKER_CPUS:-4}
+    mem_limit: ${GALLERY_WORKER_MEMORY:-6g}
+    pids_limit: 256
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - media:/data/media
     depends_on:

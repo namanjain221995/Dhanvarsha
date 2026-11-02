@@ -62,7 +62,7 @@ export EMAIL_PROVIDER=mailpit SMTP_HOST=mailpit SMTP_PORT=1025 SMTP_TLS_MODE=non
 # count against this limit, but a few of them must not lock out the whole run.
 export LOGIN_FAILURES_PER_IP=100000
 # The test copy is plain HTTP on localhost, even on a production server whose .env says production.
-export APP_ENV=development
+export APP_ENV=development COMPOSE_PROFILES=
 # Its own organiser account, independent of the real one (whose bootstrap password is removed
 # from .env after the first sign-in on a production server).
 LOAD_ADMIN_EMAIL=loadtest-admin@example.com
