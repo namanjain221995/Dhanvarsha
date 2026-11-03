@@ -45,7 +45,7 @@ _REQUEST_ID = re.compile(r"^[A-Za-z0-9._-]{8,64}$")
 MAX_JSON_BYTES = 2_000_000
 MAX_UPLOAD_BYTES_SLACK = 64 * 1024
 # PUT one chunk of an opening-page image or video, or of a file for the photo gallery.
-_MEDIA_CHUNK_PATH = re.compile(r"/api/v1/(admin/media|gallery)/uploads/[^/]+")
+_MEDIA_CHUNK_PATH = re.compile(r"/api/v1/(admin/media|admin/gallery|gallery)/uploads/[^/]+")
 _SELFIE_PATH = "/api/v1/gallery/enrol"
 
 

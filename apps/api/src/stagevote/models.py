@@ -735,6 +735,7 @@ class GalleryDirectUpload(Base):
     __table_args__ = (Index("ix_gallery_s3_uploads_created", "created_at"),)
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    # Whoever started it, a person or an organiser: there is no foreign key, so it can hold either.
     person_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     s3_key: Mapped[str] = mapped_column(String(1024), nullable=False)
     s3_upload_id: Mapped[str] = mapped_column(String(1024), nullable=False)
@@ -816,6 +817,10 @@ class GalleryMedia(Base):
     original_name: Mapped[str] = mapped_column(String(255), nullable=False, default="", server_default="")
     uploader_person_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("gallery_people.id", ondelete="SET NULL")
+    )
+    # Set in place of the person when an organiser sent the file from the console.
+    uploader_admin_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("admin_users.id", ondelete="SET NULL")
     )
     uploader_ip: Mapped[str | None] = mapped_column(String(64))
     attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")

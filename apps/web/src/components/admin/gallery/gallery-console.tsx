@@ -1,7 +1,7 @@
 'use client'
 
 import { Copy, Film, RotateCcw, Save, ScanFace, Search, Send, Trash2, Undo2, UserPen } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useSyncExternalStore } from 'react'
 import { Coin } from '@/components/gallery/coin'
 import { Button } from '@/components/ui/button'
 import { Notice } from '@/components/ui/misc'
@@ -17,10 +17,12 @@ import type {
   InvitationTemplate,
   InvitationWording,
 } from '@/lib/admin/types'
+import { organiserQueue } from '@/lib/admin/gallery-queue'
 import { plural } from '@/lib/admin/labels'
 import { countLabel } from '@/lib/gallery'
 import { ConfirmDialog } from '../confirm'
 import { AnalysisDialog } from './analysis-dialog'
+import { UploadPanel } from './upload-panel'
 import { LivePreview } from '../email/invitation-template'
 import { InputField, SelectField, TextAreaField } from '../form'
 import { EmptyState, FilterChips, FlashRegion, KeyValue, LoadError, MiniButton, PageHeader, Pagination, Panel, SkeletonBlock, StatusChip, useFlash } from '../primitives'
@@ -30,11 +32,13 @@ type Flash = ReturnType<typeof useFlash>
 const TEMPLATE = '/admin/email/templates/gallery'
 const MEDIA_PAGE = 40
 const PEOPLE_PAGE = 40
+/** How often the page looks again while files are on their way or being sorted. */
+const LIVE_RELOAD_MS = 5000
 
 /**
- * The organisers' side of the photo gallery: the link to share, the email that announces it, and
- * removing what should not be there. Anyone with the link can add files, so every file names who
- * sent it. Sorting faces happens by itself.
+ * The organisers' side of the photo gallery: the link to share, the email that announces it, their
+ * own photos and videos, and removing what should not be there. Anyone with the link can add files,
+ * so every file names who sent it. Sorting faces happens by itself.
  */
 export function GalleryConsolePage() {
   const flash = useFlash()
@@ -50,14 +54,54 @@ export function GalleryConsolePage() {
       <FlashRegion flash={flash.flash} onDismiss={flash.clear} className="mt-4" />
       {error && !data ? <LoadError error={error} onRetry={() => void reload()} what="the photo gallery" /> : null}
       {!data && !error ? <SkeletonBlock className="mt-5 h-40 w-full" /> : null}
-      {data ? (
-        <div className="mt-5 space-y-5">
-          <SharePanel summary={data} flash={flash} />
-          <EmailPanel summary={data} flash={flash} onSent={() => void reload()} />
-          <FilesPanel flash={flash} onChanged={() => void reload()} />
-          <PeoplePanel flash={flash} onChanged={() => void reload()} />
-        </div>
-      ) : null}
+      {data ? <GalleryPanels summary={data} flash={flash} reload={reload} /> : null}
+    </div>
+  )
+}
+
+/**
+ * Counts up every few seconds while anything is on its way or being sorted, right after each batch,
+ * and once more when all of it has stopped. The panels reload on each count and keep their own state.
+ */
+function useLiveCount(sending: boolean, sorting: boolean): number {
+  const live = sending || sorting
+  const [count, setCount] = useState(0)
+  const [was, setWas] = useState({ sending, live })
+  if (was.sending !== sending || was.live !== live) {
+    setWas({ sending, live })
+    if ((was.sending && !sending) || (was.live && !live)) setCount(count + 1)
+  }
+  useEffect(() => {
+    if (!live) return
+    const timer = window.setInterval(() => setCount((value) => value + 1), LIVE_RELOAD_MS)
+    return () => window.clearInterval(timer)
+  }, [live])
+  return count
+}
+
+function useReloadOn(count: number, reload: () => Promise<void>) {
+  useEffect(() => {
+    if (count) void reload()
+  }, [count, reload])
+}
+
+function GalleryPanels({ summary, flash, reload }: { summary: GallerySummary; flash: Flash; reload: () => Promise<void> }) {
+  const [queue] = useState(() => organiserQueue(summary.storage.where === 's3'))
+  const sending = useSyncExternalStore(
+    queue.subscribe,
+    () => queue.active,
+    () => queue.active,
+  )
+  const count = useLiveCount(sending, summary.pending > 0)
+  useReloadOn(count, reload)
+
+  return (
+    <div className="mt-5 space-y-5">
+      <SharePanel summary={summary} flash={flash} />
+      <EmailPanel summary={summary} flash={flash} onSent={() => void reload()} />
+      <UploadPanel queue={queue} pending={summary.pending} />
+      <FilesPanel flash={flash} onChanged={() => void reload()} liveCount={count} />
+      <PeoplePanel flash={flash} onChanged={() => void reload()} liveCount={count} />
     </div>
   )
 }
@@ -389,13 +433,17 @@ function SendToForm({ dirty, save, saving, onSent }: { dirty: boolean; save: () 
 
 type FileFilter = 'all' | 'pending' | 'failed'
 
-function FilesPanel({ flash, onChanged }: { flash: Flash; onChanged: () => void }) {
+function FilesPanel({ flash, onChanged, liveCount }: { flash: Flash; onChanged: () => void; liveCount: number }) {
   const [filter, setFilter] = useState<FileFilter>('all')
   const [page, setPage] = useState(1)
   const query = useAdminQuery<AdminGalleryMediaList>('/admin/gallery/media', { status: filter, offset: (page - 1) * MEDIA_PAGE, limit: MEDIA_PAGE })
   const [removing, setRemoving] = useState<AdminGalleryMedia | null>(null)
   const [analysing, setAnalysing] = useState<AdminGalleryMedia | null>(null)
   const [busy, setBusy] = useState(false)
+  useReloadOn(liveCount, query.reload)
+
+  // The list can shrink while the page reloads by itself: step back from a page that has gone.
+  if (query.data && !query.stale && page > 1 && (page - 1) * MEDIA_PAGE >= query.data.total) setPage(Math.max(1, Math.ceil(query.data.total / MEDIA_PAGE)))
 
   const remove = async () => {
     if (!removing) return
@@ -439,7 +487,7 @@ function FilesPanel({ flash, onChanged }: { flash: Flash; onChanged: () => void 
           { value: 'failed', label: 'Could not be read' },
         ]}
       />
-      {query.error && !query.data ? <LoadError error={query.error} onRetry={() => void query.reload()} what="the files" /> : null}
+      {query.error && (!query.data || query.stale) ? <LoadError error={query.error} onRetry={() => void query.reload()} what="the files" /> : null}
       {query.data && query.data.media.length === 0 ? (
         <EmptyState title={filter === 'all' ? 'Nothing shared yet' : 'No files here'}>Files appear here as people share them.</EmptyState>
       ) : null}
@@ -473,6 +521,7 @@ function FilesPanel({ flash, onChanged }: { flash: Flash; onChanged: () => void 
                 <p className="truncate text-plum-soft" title={`${item.uploader} from ${item.uploader_ip}`}>
                   {item.uploader || 'Removed person'}, {plural(item.faces, 'face', 'faces')}
                 </p>
+                {item.from_organiser ? <StatusChip tone="neutral" label="Sent from the console" /> : null}
                 {item.status === 'ready' ? null : (
                   <StatusChip tone={item.status === 'failed' ? 'danger' : 'info'} label={item.status === 'failed' ? 'Could not be read' : 'Waiting'} />
                 )}
@@ -502,7 +551,7 @@ function FilesPanel({ flash, onChanged }: { flash: Flash; onChanged: () => void 
           ))}
         </ul>
       ) : null}
-      {query.data ? <Pagination page={page} pageSize={MEDIA_PAGE} total={query.data.total} onPage={setPage} label="Files" busy={query.pending} /> : null}
+      {query.data ? <Pagination page={page} pageSize={MEDIA_PAGE} total={query.data.total} onPage={setPage} label="Files" busy={query.stale && query.pending} /> : null}
       {analysing ? <AnalysisDialog mediaId={analysing.id} name={analysing.name} onClose={() => setAnalysing(null)} /> : null}
       {removing ? (
         <ConfirmDialog
@@ -522,7 +571,7 @@ function FilesPanel({ flash, onChanged }: { flash: Flash; onChanged: () => void 
 
 type PersonDialog = { kind: 'rename' | 'merge' | 'remove'; person: AdminGalleryPerson }
 
-function PeoplePanel({ flash, onChanged }: { flash: Flash; onChanged: () => void }) {
+function PeoplePanel({ flash, onChanged, liveCount }: { flash: Flash; onChanged: () => void; liveCount: number }) {
   const [typed, setTyped] = useState('')
   const [search, setSearch] = useState('')
   const [page, setPage] = useState(1)
@@ -532,6 +581,9 @@ function PeoplePanel({ flash, onChanged }: { flash: Flash; onChanged: () => void
   const [into, setInto] = useState('')
   const [busy, setBusy] = useState(false)
   const [problem, setProblem] = useState<string | null>(null)
+  useReloadOn(liveCount, query.reload)
+
+  if (query.data && !query.stale && page > 1 && (page - 1) * PEOPLE_PAGE >= query.data.total) setPage(Math.max(1, Math.ceil(query.data.total / PEOPLE_PAGE)))
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -584,7 +636,7 @@ function PeoplePanel({ flash, onChanged }: { flash: Flash; onChanged: () => void
           className="min-h-11 w-full rounded-[var(--radius-control)] border border-sand-strong bg-paper pl-9 pr-3"
         />
       </div>
-      {query.error && !query.data ? <LoadError error={query.error} onRetry={() => void query.reload()} what="the people" /> : null}
+      {query.error && (!query.data || query.stale) ? <LoadError error={query.error} onRetry={() => void query.reload()} what="the people" /> : null}
       {query.data && query.data.people.length === 0 ? <EmptyState title="Nobody here">People appear once they add a selfie, or once a face turns up in a shared file.</EmptyState> : null}
       {query.data && query.data.people.length > 0 ? (
         <ul className="mt-4 divide-y divide-sand">
@@ -617,7 +669,7 @@ function PeoplePanel({ flash, onChanged }: { flash: Flash; onChanged: () => void
           ))}
         </ul>
       ) : null}
-      {query.data ? <Pagination page={page} pageSize={PEOPLE_PAGE} total={query.data.total} onPage={setPage} label="People" busy={query.pending} /> : null}
+      {query.data ? <Pagination page={page} pageSize={PEOPLE_PAGE} total={query.data.total} onPage={setPage} label="People" busy={query.stale && query.pending} /> : null}
 
       {dialog?.kind === 'rename' ? (
         <ConfirmDialog open title="Rename this person" confirmLabel="Save name" busy={busy} error={problem} onConfirm={() => void confirm()} onClose={() => setDialog(null)}>

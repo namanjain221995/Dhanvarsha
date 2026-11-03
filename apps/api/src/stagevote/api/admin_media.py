@@ -25,7 +25,8 @@ admin = APIRouter(prefix="/api/v1/admin", dependencies=[Depends(current_admin)])
 
 class UploadIn(Model):
     name: SingleLine = Field(min_length=1, max_length=255)
-    size: int = Field(gt=0)
+    # No limit of its own, only what a BIGINT column holds: past that, the database refuses it too late.
+    size: int = Field(gt=0, le=2**63 - 1)
     # What the browser says the file is. It only picks the size limit; the file's own first
     # bytes decide what it is.
     content_type: str = Field(default="", max_length=255)

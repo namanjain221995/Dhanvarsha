@@ -366,11 +366,18 @@ Nothing here touches events, votes or the voters' sign-in. `services/gallery.py`
 - **Uploads.** The same chunked protocol as opening-page media (`services/media.py`), owned by the
   person. The file's first bytes decide what it is. It waits in `.gallery-incoming/`, which Caddy never
   serves, and the person only hears "uploaded".
+- **Organisers' uploads.** `/admin/gallery` sends files through `/api/v1/admin/gallery/uploads`, which take the
+  same requests as the public routes under the organiser's session, so a file reaches the same queue and the
+  same worker and lands on the page of everyone in it. `gallery_media.uploader_admin_id` says which organiser
+  sent it, and each finished upload leaves a `gallery.media_uploaded` audit row. On S3 that row leaves `duplicate`
+  empty, because only the worker sees all of the file, and it writes no row when it drops a copy. Organisers skip
+  the per-hour and per-person limits, which protect the public link; the size limits, the total limit and the disk
+  reserve still apply.
 - **The queue.** `gallery_media` rows are leased with `SKIP LOCKED`, and the lease is renewed during
   long videos. An unreadable file fails for good and is removed; anything else is retried three times.
 - **Public files** (`services/gallery_files.py`). What people see is what was sent, with no marks: a JPEG
-  keeps its picture data and loses only its location; HEIC and AVIF become JPEG; a video's streams are
-  copied into a new MP4 or WebM without metadata. A video browsers cannot play gets an H.264 copy to
+  keeps its picture data and loses only its location, in EXIF or in XMP; HEIC and AVIF become JPEG; a video's
+  streams are copied into a new MP4 or WebM without metadata. A video browsers cannot play gets an H.264 copy to
   watch, and the download stays the full-quality file.
 - **Faces** (`services/gallery_faces.py`). OpenCV's YuNet finds faces at several sizes and SFace
   describes each one, on the CPU. A video is sampled once a second, at most 300 frames, and each face
@@ -396,4 +403,7 @@ Nothing here touches events, votes or the voters' sign-in. `services/gallery.py`
   signed links; the API only signs and then checks. The worker fetches each file to read it, copies it inside
   the bucket when its bytes did not change, and otherwise sends the changed copy back. Reading runs on a fixed
   pool of threads, each with its own copy of the models, and how many run at once follows the queue, whether a
-  round is open and how busy the machine is. Deciding who a face belongs to stays one file at a time.
+  round is open and how busy the machine is. Deciding who a face belongs to stays one file at a time. Once S3 has
+  joined the parts, `incoming/<id>` belongs to whoever removes the `gallery_s3_uploads` row: complete queues the
+  file, while an abort, or the worker's sweep after 72 hours, puts the object in `gallery_storage_trash`. If complete
+  finds the row gone it answers 404, so a file with no source is never queued.

@@ -62,6 +62,8 @@ async function request<T>(scope: Scope, path: string, options: RequestOptions = 
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(new DOMException('timeout', 'TimeoutError')), options.timeoutMs ?? 15000)
   const onAbort = () => controller.abort(options.signal?.reason)
+  // An event only tells of an abort still to come: this one may have happened while the caller waited.
+  if (options.signal?.aborted) onAbort()
   options.signal?.addEventListener('abort', onAbort, { once: true })
 
   const headers: Record<string, string> = { Accept: 'application/json' }

@@ -32,7 +32,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import get_settings
 from ..db import sessionmaker
-from ..deps import check_origin, client_ip, load_participant_session
+from ..deps import AdminContext, check_origin, client_ip, load_participant_session
 from ..errors import AppError
 from ..models import (
     GalleryDevice,
@@ -388,6 +388,25 @@ async def delete_person(db: AsyncSession, person_id: uuid.UUID) -> bool:
 # ---- uploading ---------------------------------------------------------------------------
 
 
+@dataclass(frozen=True)
+class Sender:
+    """Who a file comes from: someone on the public page, or an organiser in the console."""
+
+    programme_id: uuid.UUID
+    # Who may carry on with an unfinished upload: the person's id or the organiser's.
+    owner_id: uuid.UUID
+    person_id: uuid.UUID | None = None
+    admin_id: uuid.UUID | None = None
+
+    @classmethod
+    def of_person(cls, person: GalleryPerson) -> Sender:
+        return cls(person.programme_id, person.id, person_id=person.id)
+
+    @classmethod
+    def of_organiser(cls, ctx: AdminContext, programme: Programme) -> Sender:
+        return cls(programme.id, ctx.admin_id, admin_id=ctx.admin_id)
+
+
 def _ftyp_type(head: bytes) -> tuple[str, str]:
     brand = head[8:12]
     if brand in _AVIF_BRANDS:
@@ -445,35 +464,34 @@ def _reject_if_disk_is_low(size: int) -> None:
         )
 
 
-async def start_upload(
-    db: AsyncSession, person: GalleryPerson, name: str, size: int, content_type: str
-) -> str:
-    await _check_room(db, person, size, content_type)
+async def start_upload(db: AsyncSession, sender: Sender, name: str, size: int, content_type: str) -> str:
+    await _check_room(db, sender, size, content_type)
     await asyncio.to_thread(_reject_if_disk_is_low, size)
-    upload = uploads.Upload(uuid.uuid4().hex, person.id, name, size, content_type)
+    upload = uploads.Upload(uuid.uuid4().hex, sender.owner_id, name, size, content_type)
     await asyncio.to_thread(uploads.create_upload, upload)
     return upload.upload_id
 
 
-async def _check_room(db: AsyncSession, person: GalleryPerson, size: int, content_type: str) -> None:
+async def _check_room(db: AsyncSession, sender: Sender, size: int, content_type: str) -> None:
     """Whatever an organiser has chosen to limit. Nothing, by default."""
     problem = _size_problem(size, content_type)
     if problem:
         raise problem
     settings = get_settings()
-    if settings.gallery_uploads_per_hour > 0:
-        limit = Limit(f"gallery-upload:{person.id}", settings.gallery_uploads_per_hour, 3600)
+    # Per hour and per person protect the public link, which an organiser does not come through.
+    if sender.person_id is not None and settings.gallery_uploads_per_hour > 0:
+        limit = Limit(f"gallery-upload:{sender.person_id}", settings.gallery_uploads_per_hour, 3600)
         async with db.begin():
             await enforce(db, limit, message="That is a lot of files in one hour. Wait a while and continue.")
             await hit(db, limit)
-    if settings.gallery_max_person_bytes > 0:
+    if sender.person_id is not None and settings.gallery_max_person_bytes > 0:
         async with db.begin():
             shared = (
                 await db.execute(
                     text(
                         "SELECT coalesce(sum(byte_size), 0) FROM gallery_media WHERE uploader_person_id = :p"
                     ),
-                    {"p": person.id},
+                    {"p": sender.person_id},
                 )
             ).scalar_one()
         if int(shared) + size > settings.gallery_max_person_bytes:
@@ -483,20 +501,46 @@ async def _check_room(db: AsyncSession, person: GalleryPerson, size: int, conten
             total = (
                 await db.execute(
                     text("SELECT coalesce(sum(byte_size), 0) FROM gallery_media WHERE programme_id = :p"),
-                    {"p": person.programme_id},
+                    {"p": sender.programme_id},
                 )
             ).scalar_one()
         if int(total) + size > settings.gallery_max_total_bytes:
             raise AppError("INSUFFICIENT_STORAGE", "The gallery is full for now. Tell the organisers.", 507)
 
 
+async def _audit_upload(
+    db: AsyncSession,
+    actor: Actor | None,
+    sender: Sender,
+    name: str,
+    size: int,
+    media_id: uuid.UUID | None,
+    duplicate: bool | None,
+) -> None:
+    """An organiser's finished file goes on the audit log. No id: it was a file already here.
+    `duplicate` None: it went straight to S3, and only the worker sees enough of it to know."""
+    if actor is None:
+        return
+    await audit(
+        db,
+        actor,
+        "gallery.media_uploaded",
+        programme_id=sender.programme_id,
+        target_type="gallery_media" if media_id else None,
+        target_id=media_id,
+        details={"name": name, "bytes": size, "duplicate": duplicate},
+    )
+
+
 # ---- straight from the browser to S3 --------------------------------------------------------
 
 
 async def start_direct_upload(
-    db: AsyncSession, person: GalleryPerson, name: str, size: int, content_type: str
+    db: AsyncSession, sender: Sender, name: str, size: int, content_type: str
 ) -> dict[str, Any]:
-    await _check_room(db, person, size, content_type)
+    await _check_room(db, sender, size, content_type)
+    # S3 holds the file, but the worker fetches it here to read it.
+    await asyncio.to_thread(_reject_if_disk_is_low, size)
     upload_id = uuid.uuid4().hex
     key = store.incoming_key(upload_id)
     s3_upload_id = await asyncio.to_thread(store.start_multipart, key)
@@ -504,7 +548,7 @@ async def start_direct_upload(
         db.add(
             GalleryDirectUpload(
                 id=upload_id,
-                person_id=person.id,
+                person_id=sender.owner_id,
                 s3_key=key,
                 s3_upload_id=s3_upload_id,
                 name=name[:255],
@@ -514,13 +558,13 @@ async def start_direct_upload(
     return {"upload_id": upload_id, "part_size": store.part_size_for(size), "mode": "s3"}
 
 
-async def direct_upload(
-    db: AsyncSession, upload_id: str, person: GalleryPerson
-) -> GalleryDirectUpload | None:
-    """The person's own upload to S3 with this id, or None: it may be an upload through this server."""
+async def direct_upload(db: AsyncSession, upload_id: str, sender: Sender) -> GalleryDirectUpload | None:
+    """The sender's own upload to S3 with this id, or None: it may be an upload through this server."""
+    if not uploads.is_upload_id(upload_id):
+        return None
     async with db.begin():
         row = await db.get(GalleryDirectUpload, upload_id)
-        return row if row is not None and row.person_id == person.id else None
+        return row if row is not None and row.person_id == sender.owner_id else None
 
 
 async def direct_part_urls(row: GalleryDirectUpload, numbers: list[int]) -> dict[str, str]:
@@ -531,7 +575,7 @@ async def direct_part_urls(row: GalleryDirectUpload, numbers: list[int]) -> dict
 
 
 async def finish_direct_upload(
-    db: AsyncSession, row: GalleryDirectUpload, person: GalleryPerson, ip: str
+    db: AsyncSession, row: GalleryDirectUpload, sender: Sender, ip: str, actor: Actor | None = None
 ) -> dict[str, Any]:
     """Everything has reached S3: check it and queue it. The first bytes decide what it is, as for any file."""
     key, s3_upload_id, name, size, upload_id = row.s3_key, row.s3_upload_id, row.name, row.size, row.id
@@ -554,7 +598,7 @@ async def finish_direct_upload(
         raise problem
     assert found is not None
     item = GalleryMedia(
-        programme_id=person.programme_id,
+        programme_id=sender.programme_id,
         kind="video" if found[0].startswith("video/") else "image",
         source_key=key,
         source_on_s3=True,
@@ -563,26 +607,45 @@ async def finish_direct_upload(
         # Only the worker sees all of it: it puts the real hash here, and spots a file sent twice.
         sha256=f"pending-{upload_id}",
         original_name=name,
-        uploader_person_id=person.id,
+        uploader_person_id=sender.person_id,
+        uploader_admin_id=sender.admin_id,
         uploader_ip=ip[:64],
     )
     async with db.begin():
+        # An abort got here first and has the object on its way out, so this file must not be queued.
+        removed = await db.execute(text("DELETE FROM gallery_s3_uploads WHERE id = :i"), {"i": upload_id})
+        if not getattr(removed, "rowcount", 0):
+            raise _not_found()
         db.add(item)
         await db.flush()
-        await db.execute(text("DELETE FROM gallery_s3_uploads WHERE id = :i"), {"i": upload_id})
         media_id = item.id
+        await _audit_upload(db, actor, sender, name, size, media_id, None)
     return {"status": "uploaded", "duplicate": False, "id": str(media_id)}
+
+
+async def drop_direct_upload(db: AsyncSession, upload_id: str) -> None:
+    """Forget an upload to S3, and its object if S3 has joined the parts: nothing else would ever remove that.
+    Only whoever removes the row does this, so a file that complete has just queued keeps its source."""
+    await db.execute(
+        text(
+            """
+            WITH gone AS (DELETE FROM gallery_s3_uploads WHERE id = :i RETURNING s3_key)
+            INSERT INTO gallery_storage_trash (s3_key) SELECT s3_key FROM gone
+            """
+        ),
+        {"i": upload_id},
+    )
 
 
 async def abort_direct_upload(db: AsyncSession, row: GalleryDirectUpload) -> None:
     key, s3_upload_id, upload_id = row.s3_key, row.s3_upload_id, row.id
     await asyncio.to_thread(store.abort_multipart, key, s3_upload_id)
     async with db.begin():
-        await db.execute(text("DELETE FROM gallery_s3_uploads WHERE id = :i"), {"i": upload_id})
+        await drop_direct_upload(db, upload_id)
 
 
-async def load_upload(upload_id: str, person: GalleryPerson) -> uploads.Upload:
-    return await uploads.load_owned_upload(upload_id, person.id)
+async def load_upload(upload_id: str, sender: Sender) -> uploads.Upload:
+    return await uploads.load_owned_upload(upload_id, sender.owner_id)
 
 
 @dataclass(frozen=True)
@@ -641,20 +704,21 @@ def _arrive(upload: uploads.Upload) -> _Arrived:
 
 
 async def finish_upload(
-    db: AsyncSession, upload: uploads.Upload, person: GalleryPerson, ip: str
+    db: AsyncSession, upload: uploads.Upload, sender: Sender, ip: str, actor: Actor | None = None
 ) -> dict[str, Any]:
     """Queue the file. The same file sent twice counts once, for everyone."""
     arrived = await asyncio.to_thread(_arrive, upload)
     source = Path(get_settings().media_root) / arrived.source_key
     item = GalleryMedia(
-        programme_id=person.programme_id,
+        programme_id=sender.programme_id,
         kind="video" if arrived.content_type.startswith("video/") else "image",
         source_key=arrived.source_key,
         content_type=arrived.content_type,
         byte_size=arrived.size,
         sha256=arrived.sha256,
         original_name=upload.name[:255],
-        uploader_person_id=person.id,
+        uploader_person_id=sender.person_id,
+        uploader_admin_id=sender.admin_id,
         uploader_ip=ip[:64],
     )
     try:
@@ -662,8 +726,11 @@ async def finish_upload(
             db.add(item)
             await db.flush()
             media_id = item.id
+            await _audit_upload(db, actor, sender, upload.name, arrived.size, media_id, False)
     except IntegrityError:
         await asyncio.to_thread(source.unlink, missing_ok=True)
+        async with db.begin():
+            await _audit_upload(db, actor, sender, upload.name, arrived.size, None, True)
         return {"status": "uploaded", "duplicate": True}
     except Exception:
         await asyncio.to_thread(source.unlink, missing_ok=True)
@@ -883,7 +950,7 @@ async def admin_media(
             f"""
             SELECT m.id, m.kind, m.status, m.location, m.display_key, m.storage_key, m.thumb_key, m.width,
                    m.height, m.duration_ms, m.original_name, m.byte_size, m.face_count, m.last_error, m.created_at,
-                   m.uploader_ip, p.name AS uploader, count(*) OVER () AS total
+                   m.uploader_ip, m.uploader_admin_id, p.name AS uploader, count(*) OVER () AS total
             FROM gallery_media m LEFT JOIN gallery_people p ON p.id = m.uploader_person_id
             WHERE m.programme_id = :p {statuses[kind]}
             ORDER BY m.created_at DESC, m.id
@@ -903,7 +970,9 @@ async def admin_media(
                 "faces": row.face_count,
                 "error": row.last_error,
                 "uploaded_at": row.created_at,
-                "uploader": row.uploader or "",
+                "uploader": row.uploader or ("Organiser" if row.uploader_admin_id else ""),
+                # A guest can call themselves "Organiser". They cannot set this.
+                "from_organiser": row.uploader_admin_id is not None,
                 "uploader_ip": row.uploader_ip or "",
             }
             for row in items

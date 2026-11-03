@@ -1,5 +1,5 @@
 import { ApiError, participantApi, type RequestOptions } from './api'
-import { uploadInChunks, type ChunkedOptions } from './chunked-upload'
+import { stopIfAborted, uploadInChunks, type ChunkedOptions, type UploadCall } from './chunked-upload'
 
 /** The photo gallery's API (/gallery): no sign-in, a cookie remembers who filled in the form. */
 
@@ -39,7 +39,10 @@ export type PersonPage = { person: PersonCard; media: GalleryItem[]; total: numb
 
 export const galleryApi = <T>(path: string, options?: RequestOptions) => participantApi<T>(`/gallery${path}`, options)
 
-const call = <T>(path: string, options: RequestOptions) => participantApi<T>(path, options)
+/** Where a file goes, and with which sign-in: guests use the public routes, organisers the console's. */
+export type UploadTarget = { call: UploadCall; root: string }
+
+const GUEST_UPLOADS: UploadTarget = { call: participantApi, root: '/gallery/uploads' }
 
 type Uploaded = { status: string; duplicate: boolean }
 
@@ -54,6 +57,7 @@ const SIGNED_AT_ONCE = 20
 /** One part to its signed link. An XHR, not fetch: only XHR reports how far an upload has come. */
 function sendPart(url: string, part: Blob, signal: AbortSignal | undefined, onProgress: (sent: number) => void) {
   return new Promise<void>((resolve, reject) => {
+    stopIfAborted(signal)
     const xhr = new XMLHttpRequest()
     const onAbort = () => xhr.abort()
     signal?.addEventListener('abort', onAbort, { once: true })
@@ -78,13 +82,18 @@ function sendPart(url: string, part: Blob, signal: AbortSignal | undefined, onPr
  * The file goes straight to S3 in parts, so a hundred phones never queue on the server's internet line.
  * This server only signs the links, and checks the whole file when it has arrived.
  */
-async function uploadDirect(file: File, { signal, onProgress }: ChunkedOptions): Promise<Uploaded> {
-  const started = await galleryApi<{ upload_id: string; part_size: number }>('/uploads', {
+async function uploadDirect(file: File, { call, root }: UploadTarget, { signal, onProgress }: ChunkedOptions): Promise<Uploaded> {
+  const started = await call<{ upload_id: string; part_size: number; mode: string }>(root, {
     method: 'POST',
     body: { name: file.name.slice(0, 255) || 'upload', size: file.size, content_type: file.type || 'application/octet-stream', direct: true },
     signal,
   })
-  const path = `/uploads/${encodeURIComponent(started.upload_id)}`
+  const path = `${root}/${encodeURIComponent(started.upload_id)}`
+  // S3 was turned off after this page last asked, and the server started an upload through itself.
+  if (started.mode !== 's3') {
+    void call(path, { method: 'DELETE' }).catch(() => {})
+    throw new DirectBlocked()
+  }
   const count = Math.max(1, Math.ceil(file.size / started.part_size))
   const sent = new Array<number>(count).fill(0)
   const report = () => onProgress?.(sent.reduce((total, value) => total + value, 0), file.size)
@@ -95,7 +104,7 @@ async function uploadDirect(file: File, { signal, onProgress }: ChunkedOptions):
   const linkFor = async (number: number) => {
     if (!links.has(number)) {
       const numbers = Array.from({ length: Math.min(SIGNED_AT_ONCE, count - number + 1) }, (_, index) => number + index)
-      const { urls } = await galleryApi<{ urls: Record<string, string> }>(`${path}/parts`, { method: 'POST', body: { numbers }, signal })
+      const { urls } = await call<{ urls: Record<string, string> }>(`${path}/parts`, { method: 'POST', body: { numbers }, signal })
       for (const [key, value] of Object.entries(urls)) links.set(Number(key), value)
     }
     return links.get(number) as string
@@ -135,18 +144,19 @@ async function uploadDirect(file: File, { signal, onProgress }: ChunkedOptions):
     onProgress?.(0, file.size)
     await Promise.all(Array.from({ length: Math.min(PARTS_AT_ONCE, count) }, sender))
     // The server checks the first bytes and joins the parts: a large file takes a moment.
-    return await galleryApi<Uploaded>(`${path}/complete`, { method: 'POST', timeoutMs: 300_000, signal })
+    return await call<Uploaded>(`${path}/complete`, { method: 'POST', timeoutMs: 300_000, signal })
   } catch (error) {
-    void galleryApi(path, { method: 'DELETE' }).catch(() => {})
+    void call(path, { method: 'DELETE' }).catch(() => {})
     throw error
   }
 }
 
-export async function uploadToGallery(file: File, options: ChunkedOptions & { direct?: boolean } = {}): Promise<Uploaded> {
-  const through = () => uploadInChunks<Uploaded>(call, '/gallery/uploads', file, options)
+export async function uploadToGallery(file: File, options: ChunkedOptions & { direct?: boolean; target?: UploadTarget } = {}): Promise<Uploaded> {
+  const target = options.target ?? GUEST_UPLOADS
+  const through = () => uploadInChunks<Uploaded>(target.call, target.root, file, options)
   if (!options.direct) return through()
   try {
-    return await uploadDirect(file, options)
+    return await uploadDirect(file, target, options)
   } catch (error) {
     // Blocked from S3 here: the file comes through the server instead, slower but sure.
     if (error instanceof DirectBlocked) return through()

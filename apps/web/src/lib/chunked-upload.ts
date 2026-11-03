@@ -5,7 +5,7 @@ const CHUNK_RETRIES = 3
 
 const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
-function stopIfAborted(signal: AbortSignal | undefined) {
+export function stopIfAborted(signal: AbortSignal | undefined) {
   if (signal?.aborted) throw new ApiError(0, 'ABORTED', 'The upload was cancelled.')
 }
 

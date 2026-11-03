@@ -225,9 +225,13 @@ def _read_meta(upload_id: str) -> Upload | None:
         return None
 
 
+def is_upload_id(value: str) -> bool:
+    return _UPLOAD_ID.fullmatch(value) is not None
+
+
 async def load_owned_upload(upload_id: str, owner_id: uuid.UUID) -> Upload:
     """The upload, if it exists and this owner started it (404 otherwise)."""
-    if not _UPLOAD_ID.fullmatch(upload_id):
+    if not is_upload_id(upload_id):
         raise _not_found()
     upload = await asyncio.to_thread(_read_meta, upload_id)
     if upload is None or upload.owner_id != owner_id:

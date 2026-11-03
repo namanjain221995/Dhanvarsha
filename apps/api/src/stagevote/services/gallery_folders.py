@@ -24,6 +24,7 @@ from ..db import sessionmaker
 from ..logging import get_logger
 from ..models import GalleryPerson
 from . import gallery_store as store
+from .gallery import drop_direct_upload
 from .gallery_files import remove_public
 
 log = get_logger(__name__)
@@ -123,7 +124,8 @@ async def sweep_leftovers() -> None:
 
 
 async def abort_abandoned_uploads() -> None:
-    """Parts of an upload nobody finished are charged for until S3 is told to drop them."""
+    """Parts of an upload nobody finished are charged for until S3 is told to drop them. So is the
+    whole file, if a request died after S3 had joined them."""
     async with sessionmaker()() as db, db.begin():
         rows = list(
             await db.execute(
@@ -137,7 +139,7 @@ async def abort_abandoned_uploads() -> None:
     for row in rows:
         await asyncio.to_thread(store.abort_multipart, row.s3_key, row.s3_upload_id)
         async with sessionmaker()() as db, db.begin():
-            await db.execute(text("DELETE FROM gallery_s3_uploads WHERE id = :i"), {"i": row.id})
+            await drop_direct_upload(db, row.id)
 
 
 # ---- files shared before S3 was set up -------------------------------------------------------

@@ -362,3 +362,11 @@ On the real bucket through the preview: files moved, sent and read, folders foll
 Whole browser suite: 61 passed, 60 skipped by each spec's browser rules, 2 failed. Both failures are the `sign-in, lobby and ballot pages have no serious axe violations` test reporting low contrast in `.gold-frame-tile` on the voting pages, as before this work.
 
 Not checked: real phones, 200 real connections through Cloudflare, a Mumbai bucket's speed, a real upload from the production address (it needs the deploy).
+
+### Organiser uploads (2026-11-04)
+
+Backend suite: 391 passed, 6 skipped (the skips need ffmpeg). Static checks pass. Gallery browser tests on all projects, on the final code with a fresh build: 35 passed, 37 skipped by each spec's browser rules, none failed.
+
+On the real bucket through the preview, with web security on: a 17 MB photo from `/admin/gallery` went straight to S3 in three parts in about 13 seconds, was sorted within about 25 seconds, showed "Organiser, 1 face" under Files with no page reload, downloaded byte for byte, and appeared on the guest's own page. A chosen folder sent its two photos, skipped its text file and ignored its hidden file. No console errors, and no sideways scroll at phone width.
+
+Not checked: a real upload from the production console, real phones, the whole browser suite on this change.

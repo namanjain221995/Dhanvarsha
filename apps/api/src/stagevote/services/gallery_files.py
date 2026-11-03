@@ -4,8 +4,9 @@ Nothing here touches the database. A file arrives in INCOMING, which Caddy never
 becomes public once it has been decoded here. The picture people see and download is what the
 uploader sent, with no boxes or marks on it. What changes is only what must:
 
-- A JPEG keeps its exact picture data; only a location in its EXIF is removed, since anyone with the
-  gallery link can download it. Other formats are rewritten only if they carry a location.
+- A JPEG keeps its exact picture data; only a location in its EXIF or XMP is removed, since anyone with
+  the gallery link can download it. XMP with no location stays: a phone's HDR or motion photo says what
+  it is there. Other formats are rewritten only if they carry a location.
 - HEIC and AVIF (iPhones, newer Android phones) become a high-quality JPEG: most browsers cannot
   show them.
 - A video is copied stream by stream into an MP4 or WebM with no metadata (phones record the location
@@ -21,6 +22,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -48,6 +50,15 @@ INCOMING = ".gallery-incoming"
 THUMB_EDGE = 640
 ANALYSE_EDGE = 4096
 EXIF_GPS_IFD = 0x8825
+# XMP names a location's properties GPS..., such as exif:GPSLatitude. Only a name counts: the same text can
+# hold base64 (a phone's depth map, say) with those three letters in it by chance.
+_XMP_LOCATION = re.compile(rb"[:<\s]gps", re.IGNORECASE)
+_JPEG_APP1 = 0xE1
+_JPEG_EXIF_HEADER = b"Exif\x00\x00"
+# An XMP packet, and the further packets a large one spills into.
+_JPEG_XMP_HEADERS = (b"http://ns.adobe.com/xap/1.0/\x00", b"http://ns.adobe.com/xmp/extension/\x00")
+# The markers a length follows. Anything else ends the walk, as the start of the picture data does.
+_JPEG_SEGMENTS = {*range(0xC0, 0xD0), *range(0xDB, 0xFF)}
 # Sampling a video: one frame a second, at most this many, at most this large.
 FRAME_EDGE = 1920
 MAX_FRAMES = 300
@@ -150,11 +161,48 @@ def _analysis_pixels(image: Image.Image) -> np.ndarray:
     return rgb_to_bgr(np.asarray(rgb))
 
 
-def _has_location(image: Image.Image) -> bool:
+def _exif_has_location(image: Image.Image) -> bool:
     try:
         return bool(image.getexif().get_ifd(EXIF_GPS_IFD))
     except (OSError, ValueError, SyntaxError, AttributeError):
         return False
+
+
+def _has_location(image: Image.Image) -> bool:
+    if image.format == "PNG":
+        image.load()  # its text can come after its pixels
+    return _XMP_LOCATION.search(image.info.get("xmp") or b"") is not None or _exif_has_location(image)
+
+
+def _stray_location_segments(path: Path) -> list[tuple[int, int]]:
+    """Where a JPEG can still say where it was taken, before its picture data. XMP counts if any of it holds a
+    location. So does EXIF after the first block, which piexif leaves behind if another segment comes first."""
+    exif_blocks: list[tuple[int, int]] = []
+    xmp_packets: list[tuple[int, int]] = []
+    xmp = bytearray()
+    with path.open("rb") as jpeg:
+        jpeg.seek(2)
+        while True:
+            start = jpeg.tell()
+            head = jpeg.read(4)
+            if len(head) < 4 or head[0] != 0xFF or head[1] not in _JPEG_SEGMENTS:
+                break
+            body = jpeg.read(max(0, int.from_bytes(head[2:], "big") - 2))
+            if head[1] == _JPEG_APP1 and body.startswith(_JPEG_EXIF_HEADER):
+                exif_blocks.append((start, jpeg.tell()))
+            elif head[1] == _JPEG_APP1 and body.startswith(_JPEG_XMP_HEADERS):
+                xmp_packets.append((start, jpeg.tell()))
+                xmp += body
+    return exif_blocks[1:] + (xmp_packets if _XMP_LOCATION.search(xmp) else [])
+
+
+def _drop_stray_location(path: Path) -> None:
+    segments = _stray_location_segments(path)
+    if segments:
+        data = bytearray(path.read_bytes())
+        for start, end in sorted(segments, reverse=True):
+            del data[start:end]
+        path.write_bytes(data)
 
 
 def _publish_jpeg(source: Path) -> str:
@@ -169,12 +217,13 @@ def _publish_jpeg(source: Path) -> str:
             piexif.insert(piexif.dump(exif), str(temporary))
     except Exception as exc:  # piexif raises bare ValueErrors and struct errors on damaged EXIF
         with Image.open(source) as image:
-            if _has_location(image):
+            if _exif_has_location(image):
                 log.info("location removed by re-encoding", extra={"error": type(exc).__name__})
                 exif_data = image.getexif()
                 exif_data.get_ifd(EXIF_GPS_IFD).clear()
                 del exif_data[EXIF_GPS_IFD]
                 image.save(temporary, format="JPEG", quality=95, subsampling="keep", exif=exif_data)
+    _drop_stray_location(temporary)
     os.replace(temporary, root() / key)
     return key
 

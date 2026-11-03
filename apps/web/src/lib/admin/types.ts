@@ -572,6 +572,7 @@ export type AdminGalleryMedia = {
   error: string | null
   uploaded_at: string
   uploader: string
+  from_organiser: boolean
   uploader_ip: string
 }
 

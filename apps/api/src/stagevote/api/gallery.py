@@ -23,7 +23,7 @@ from ..services import gallery, media
 from ..services import gallery_store as store
 from ..services.invitations import message_id_for
 from ..services.programmes import active_programme, asset_urls
-from ..state import audit, emit
+from ..state import Actor, audit, emit
 from .admin_media import UploadIn, read_chunk
 from .admin_participants import SendToIn, listed_people
 from .common import NO_STORE, Model, SingleLine, no_store, set_session_cookie
@@ -137,17 +137,64 @@ class PartsIn(Model):
     numbers: list[int] = Field(min_length=1, max_length=100)
 
 
+# The public page and the organisers' console send files the same way: only the sender differs.
+
+
+async def _start(db: AsyncSession, sender: gallery.Sender, body: GalleryUploadIn) -> dict[str, Any]:
+    if body.direct and store.enabled():
+        return await gallery.start_direct_upload(db, sender, body.name, body.size, body.content_type)
+    upload_id = await gallery.start_upload(db, sender, body.name, body.size, body.content_type)
+    return {"upload_id": upload_id, "chunk_size": media.CHUNK_SIZE, "mode": "server"}
+
+
+async def _sign(
+    db: AsyncSession, sender: gallery.Sender, upload_id: str, numbers: list[int]
+) -> dict[str, Any]:
+    row = await gallery.direct_upload(db, upload_id, sender)
+    if row is None or any(not 1 <= number <= store.MAX_PARTS for number in numbers):
+        raise AppError("NOT_FOUND", "This upload was not found. Start the upload again.", 404)
+    return {"urls": await gallery.direct_part_urls(row, numbers)}
+
+
+async def _store_chunk(
+    request: Request, sender: gallery.Sender, upload_id: str, offset: int
+) -> dict[str, Any]:
+    upload = await gallery.load_upload(upload_id, sender)
+    received = await media.write_chunk(upload, offset, await read_chunk(request))
+    return {"received": received}
+
+
+async def _finish(
+    db: AsyncSession, sender: gallery.Sender, upload_id: str, ip: str, actor: Actor | None = None
+) -> dict[str, Any]:
+    direct = await gallery.direct_upload(db, upload_id, sender)
+    if direct is not None:
+        return await gallery.finish_direct_upload(db, direct, sender, ip, actor)
+    upload = await gallery.load_upload(upload_id, sender)
+    return await gallery.finish_upload(db, upload, sender, ip, actor)
+
+
+async def _abort(db: AsyncSession, sender: gallery.Sender, upload_id: str) -> Response:
+    direct = await gallery.direct_upload(db, upload_id, sender)
+    if direct is not None:
+        await gallery.abort_direct_upload(db, direct)
+    else:
+        upload = await gallery.load_upload(upload_id, sender)
+        await media.abort_upload(upload)
+    return Response(status_code=204, headers=NO_STORE)
+
+
+async def _guest(db: AsyncSession, request: Request) -> gallery.Sender:
+    async with db.begin():
+        return gallery.Sender.of_person(await gallery.require_person(db, request))
+
+
 @router.post("/uploads", status_code=201)
 async def start_upload(
     body: GalleryUploadIn, request: Request, response: Response, db: AsyncSession = Depends(get_db)
 ) -> dict[str, Any]:
     no_store(response)
-    async with db.begin():
-        person = await gallery.require_person(db, request)
-    if body.direct and store.enabled():
-        return await gallery.start_direct_upload(db, person, body.name, body.size, body.content_type)
-    upload_id = await gallery.start_upload(db, person, body.name, body.size, body.content_type)
-    return {"upload_id": upload_id, "chunk_size": media.CHUNK_SIZE, "mode": "server"}
+    return await _start(db, await _guest(db, request), body)
 
 
 @router.post("/uploads/{upload_id}/parts")
@@ -156,12 +203,7 @@ async def sign_parts(
 ) -> dict[str, Any]:
     """Signed links for the next parts of a file going straight to S3."""
     no_store(response)
-    async with db.begin():
-        person = await gallery.require_person(db, request)
-    row = await gallery.direct_upload(db, upload_id, person)
-    if row is None or any(not 1 <= number <= store.MAX_PARTS for number in body.numbers):
-        raise AppError("NOT_FOUND", "This upload was not found. Start the upload again.", 404)
-    return {"urls": await gallery.direct_part_urls(row, body.numbers)}
+    return await _sign(db, await _guest(db, request), upload_id, body.numbers)
 
 
 @router.put("/uploads/{upload_id}")
@@ -173,11 +215,7 @@ async def put_chunk(
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     no_store(response)
-    async with db.begin():
-        person = await gallery.require_person(db, request)
-    upload = await gallery.load_upload(upload_id, person)
-    received = await media.write_chunk(upload, offset, await read_chunk(request))
-    return {"received": received}
+    return await _store_chunk(request, await _guest(db, request), upload_id, offset)
 
 
 @router.post("/uploads/{upload_id}/complete", status_code=201)
@@ -186,26 +224,12 @@ async def complete_upload(
 ) -> dict[str, Any]:
     """The whole file is here. The person only ever hears "uploaded": the rest is the worker's."""
     no_store(response)
-    async with db.begin():
-        person = await gallery.require_person(db, request)
-    direct = await gallery.direct_upload(db, upload_id, person)
-    if direct is not None:
-        return await gallery.finish_direct_upload(db, direct, person, client_ip(request))
-    upload = await gallery.load_upload(upload_id, person)
-    return await gallery.finish_upload(db, upload, person, client_ip(request))
+    return await _finish(db, await _guest(db, request), upload_id, client_ip(request))
 
 
 @router.delete("/uploads/{upload_id}", status_code=204)
 async def abort_upload(upload_id: str, request: Request, db: AsyncSession = Depends(get_db)) -> Response:
-    async with db.begin():
-        person = await gallery.require_person(db, request)
-    direct = await gallery.direct_upload(db, upload_id, person)
-    if direct is not None:
-        await gallery.abort_direct_upload(db, direct)
-    else:
-        upload = await gallery.load_upload(upload_id, person)
-        await media.abort_upload(upload)
-    return Response(status_code=204, headers=NO_STORE)
+    return await _abort(db, await _guest(db, request), upload_id)
 
 
 # ---- people ------------------------------------------------------------------------------
@@ -418,6 +442,69 @@ async def admin_delete_person(
         )
     await gallery.delete_person(db, person_id)
     return Response(status_code=204, headers=NO_STORE)
+
+
+# ---- files from the organisers ------------------------------------------------------------
+
+
+async def _organiser(db: AsyncSession, ctx: AdminContext) -> gallery.Sender:
+    async with db.begin():
+        return gallery.Sender.of_organiser(ctx, await active_programme(db))
+
+
+@admin.post("/uploads", status_code=201)
+async def admin_start_upload(
+    body: GalleryUploadIn,
+    response: Response,
+    ctx: AdminContext = Depends(current_admin),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """A file from the console goes the way a guest's does: the same queue, worker and pages."""
+    no_store(response)
+    return await _start(db, await _organiser(db, ctx), body)
+
+
+@admin.post("/uploads/{upload_id}/parts")
+async def admin_sign_parts(
+    upload_id: str,
+    body: PartsIn,
+    response: Response,
+    ctx: AdminContext = Depends(current_admin),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    no_store(response)
+    return await _sign(db, await _organiser(db, ctx), upload_id, body.numbers)
+
+
+@admin.put("/uploads/{upload_id}")
+async def admin_put_chunk(
+    upload_id: str,
+    request: Request,
+    response: Response,
+    offset: int = Query(ge=0),
+    ctx: AdminContext = Depends(current_admin),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    no_store(response)
+    return await _store_chunk(request, await _organiser(db, ctx), upload_id, offset)
+
+
+@admin.post("/uploads/{upload_id}/complete", status_code=201)
+async def admin_complete_upload(
+    upload_id: str,
+    response: Response,
+    ctx: AdminContext = Depends(current_admin),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    no_store(response)
+    return await _finish(db, await _organiser(db, ctx), upload_id, ctx.ip, ctx.actor)
+
+
+@admin.delete("/uploads/{upload_id}", status_code=204)
+async def admin_abort_upload(
+    upload_id: str, ctx: AdminContext = Depends(current_admin), db: AsyncSession = Depends(get_db)
+) -> Response:
+    return await _abort(db, await _organiser(db, ctx), upload_id)
 
 
 # ---- the gallery email ----------------------------------------------------------------------

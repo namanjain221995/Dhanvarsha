@@ -256,23 +256,30 @@ API processes. Scale by raising `API_WORKERS` (each process holds up to
 
 `/gallery` is for after the event: anyone with the link adds a selfie and their name once (a cookie
 remembers the browser), shares photos and videos in the Upload tab, and finds everyone in the People
-tab. Organisers share the link, send the gallery email and remove files under **Photo gallery** in
-the console. See [architecture.md](architecture.md#photo-gallery) for how it works.
+tab. Organisers share the link, send the gallery email, upload files and remove them under **Photo
+gallery** in the console. See [architecture.md](architecture.md#photo-gallery) for how it works.
 
 The gallery email goes to everyone on the participant list who has not had it, or to addresses typed
 with commas in **Send the gallery email to** (up to 50). A typed address gets the real email with its
 own link even if it had one before, and joins the participant list if it is new. **Send a preview to**
 takes commas too (up to 10), and its copies are marked `[Preview]` and carry the plain gallery link.
 
+- **Uploading from the console.** **Upload photos and videos** takes many files or whole folders, such as the
+  photographer's set, and each file then goes the way a guest's does: the worker finds the faces and puts it on
+  the page of everyone in it, and Files names "Organiser" as its sender and marks it **Sent from the console**, which a
+  guest calling themselves Organiser cannot get. From a folder, only photos and videos the gallery can read are sent.
+  The rest of a batch keeps going while you move around the console, but closing or reloading the tab stops it, and
+  **Sign out** asks first because it stops it too.
 - **The vision model.** Set `GALLERY_MODEL_URL` in `.env` (on the DGX host:
   `http://host.docker.internal:8000/v1`) and recreate `gallery-worker`. Without it, only OpenCV's
   clear matches count, and the console says so.
 - **Checking the queue.** The console shows files waiting and files that could not be read. Worker
   logs: `docker compose -f compose.prod.yaml logs --tail 50 gallery-worker`. Run exactly one.
 - **Disk.** Files live in the `media` volume. There is no limit on files by default, so anyone with the
-  link can use the disk down to `GALLERY_FREE_SPACE_RESERVE_BYTES`, where uploads stop for everyone. Set
-  the `GALLERY_MAX_*` values if that becomes a problem. `scripts/backup.sh` includes the files, so
-  backups grow with them.
+  link can use the disk down to `GALLERY_FREE_SPACE_RESERVE_BYTES`, where uploads stop for everyone. Files going
+  straight to S3 count too, since the worker fetches each one here to read it. The check runs when an upload
+  starts, so a long queue built before the disk ran low can still take it lower. Set the `GALLERY_MAX_*` values if
+  that becomes a problem. `scripts/backup.sh` includes the files, so backups grow with them.
 - **Files on S3.** With `GALLERY_S3_BUCKET` set, full-size files move to S3 and browsers fetch them through
   signed links. Each file has one real copy at `files/<id>/`, and `people/<Name>/` holds a copy for each
   named person in it, so renaming someone moves their folder. Unnamed groups get no folder. Thumbnails stay

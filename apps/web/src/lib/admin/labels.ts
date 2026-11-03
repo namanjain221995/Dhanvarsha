@@ -85,6 +85,7 @@ export const EMAIL_KIND_LABELS: Record<EmailJobKind, string> = {
 }
 
 const AUDIT_ACTIONS: Record<string, string> = {
+  'gallery.media_uploaded': 'Uploaded a gallery file',
   'gallery.media_deleted': 'Removed a gallery file',
   'gallery.person_renamed': 'Renamed someone in the gallery',
   'gallery.person_merged': 'Merged two people in the gallery',
@@ -168,6 +169,7 @@ export const AUDIT_PREFIXES: { value: string; label: string }[] = [
   { value: 'email.', label: 'Email' },
   { value: 'admin.', label: 'Organiser sign-ins' },
   { value: 'asset.', label: 'Uploads' },
+  { value: 'gallery.', label: 'Photo gallery' },
   { value: 'spotlight.', label: 'Spotlight' },
 ]
 

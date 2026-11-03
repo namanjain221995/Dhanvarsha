@@ -29,7 +29,7 @@ from stagevote.config import get_settings
 from stagevote.db import asyncpg_dsn, build_engine
 from stagevote.security import new_token, token_hash
 
-HEAD = "0017"
+HEAD = "0018"
 
 LINK_COLUMNS = (
     "SELECT column_name, data_type, is_nullable FROM information_schema.columns "
@@ -802,6 +802,47 @@ async def test_0017_adds_direct_uploads_and_will_not_strand_a_waiting_file(scrat
         await owner.execute("UPDATE gallery_media SET source_on_s3 = false WHERE id = $1", media_id)
         await alembic(scratch, "0016", downgrade=True)
         assert await owner.fetchval("SELECT to_regclass('gallery_s3_uploads')") is None
+        await alembic(scratch, "head")
+    finally:
+        await app.close()
+        await owner.close()
+
+
+async def test_0018_names_the_organiser_and_a_file_outlives_them(scratch: DatabaseInfo) -> None:
+    await alembic(scratch, "0017")
+    owner = await connect(scratch.owner_url)
+    app = await connect(scratch.app_url)
+    try:
+        programme_id = await old_programme(owner, "Dhanvarsha 2026")
+        media_id = uuid.uuid4()
+        await app.execute(
+            "INSERT INTO gallery_media (id, programme_id, kind, content_type, byte_size, sha256) "
+            "VALUES ($1, $2, 'image', 'image/png', 1, $3)",
+            media_id,
+            programme_id,
+            "f" * 64,
+        )
+        await alembic(scratch, "0018")
+        sent_by = "SELECT uploader_admin_id FROM gallery_media WHERE id = $1"
+        assert await owner.fetchval(sent_by, media_id) is None
+        name_them = "UPDATE gallery_media SET uploader_admin_id = $1 WHERE id = $2"
+        with pytest.raises(asyncpg.ForeignKeyViolationError):
+            await app.execute(name_them, uuid.uuid4(), media_id)
+        admin_id = uuid.uuid4()
+        await owner.execute(
+            "INSERT INTO admin_users (id, email, display_name, password_hash) "
+            "VALUES ($1, 'organiser@example.com', 'Organiser', $2)",
+            admin_id,
+            OLD_HASH,
+        )
+        await app.execute(name_them, admin_id, media_id)
+        assert await owner.fetchval(sent_by, media_id) == admin_id
+        await owner.execute("DELETE FROM admin_users WHERE id = $1", admin_id)
+        assert await owner.fetchval(sent_by, media_id) is None
+        await alembic(scratch, "0017", downgrade=True)
+        columns = "SELECT count(*) FROM information_schema.columns WHERE column_name = 'uploader_admin_id'"
+        assert await owner.fetchval(columns) == 0
+        assert await owner.fetchval("SELECT count(*) FROM gallery_media WHERE id = $1", media_id) == 1
         await alembic(scratch, "head")
     finally:
         await app.close()

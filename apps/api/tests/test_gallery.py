@@ -15,6 +15,7 @@ import os
 import shutil
 import subprocess
 import uuid
+import zlib
 from pathlib import Path
 from typing import Any
 
@@ -24,10 +25,11 @@ import piexif
 import pytest
 from PIL import Image
 
-from helpers import ADMIN_API, API, World, assert_error, drain
+from helpers import ADMIN_API, API, AdminClient, World, assert_error, drain
 from stagevote.config import get_settings
 from stagevote.mailer.providers import RecordingProvider
-from stagevote.services import gallery, gallery_files, gallery_match, gallery_model
+from stagevote.main import MAX_JSON_BYTES, MAX_UPLOAD_BYTES_SLACK
+from stagevote.services import gallery, gallery_files, gallery_match, gallery_model, media
 from stagevote.services.gallery_faces import Face
 from stagevote.services.participants import name_from_email
 from stagevote.worker import gallery as gallery_worker
@@ -410,8 +412,67 @@ async def test_a_request_from_another_site_is_refused(world: World) -> None:
 # ---- files ---------------------------------------------------------------------------------------
 
 
+def _xmp(*properties: str) -> bytes:
+    """An XMP packet holding these properties, as an editor writes one."""
+    return (
+        '<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">'
+        f'<rdf:Description xmlns:exif="http://ns.adobe.com/exif/1.0/" {" ".join(properties)}/>'
+        "</rdf:RDF></x:xmpmeta>"
+    ).encode()
+
+
+XMP_PLACE = _xmp('exif:GPSLatitude="19,4.0N"', 'exif:GPSLongitude="72,52.0E"')
+# A phone's HDR photo says so here, and its depth map is base64 that can hold any three letters.
+XMP_NO_PLACE = _xmp('hdrgm:Version="1.0"', 'GDepth:Data="qGPSx9gpsZ+GpS/w"')
+
+
+def _jpeg_segment(body: bytes, marker: int = 0xE1) -> bytes:
+    return bytes([0xFF, marker]) + (len(body) + 2).to_bytes(2, "big") + body
+
+
+def _xmp_segment(packet: bytes) -> bytes:
+    return _jpeg_segment(b"http://ns.adobe.com/xap/1.0/\x00" + packet)
+
+
+def _further_xmp_segment(packet: bytes) -> bytes:
+    """The rest of a packet too large for one segment: a GUID, the whole length, and where this part goes."""
+    head = b"http://ns.adobe.com/xmp/extension/\x00" + b"0" * 32
+    return _jpeg_segment(head + len(packet).to_bytes(4, "big") + bytes(4) + packet)
+
+
+def _jpeg(*segments: bytes) -> bytes:
+    """A noisy JPEG with these segments right after its start."""
+    out = io.BytesIO()
+    Image.effect_noise((200, 100), 60).convert("RGB").save(out, format="JPEG", quality=90)
+    return out.getvalue()[:2] + b"".join(segments) + out.getvalue()[2:]
+
+
+def _scan(data: bytes) -> bytes:
+    """The picture data: from the start-of-scan marker on, it should be the same bytes."""
+    return data[data.index(b"\xff\xda") :]
+
+
+def _png_with_xmp(png: bytes, packet: bytes, *, after_pixels: bool = False) -> bytes:
+    """The PNG with its XMP before its pixels, as most tools write it, or after them, as the format allows."""
+    body = b"XML:com.adobe.xmp\x00\x00\x00\x00\x00" + packet
+    chunk = len(body).to_bytes(4, "big") + b"iTXt" + body + zlib.crc32(b"iTXt" + body).to_bytes(4, "big")
+    where = png.rindex(b"IEND") - 4 if after_pixels else png.index(b"IDAT") - 4
+    return png[:where] + chunk + png[where:]
+
+
+async def _public_copy(world: World, visitor: Visitor, data: bytes, name: str, content_type: str) -> bytes:
+    """Upload the file, let the worker read it, and return what guests can then download."""
+    resp = await visitor.upload(data, name, content_type)
+    assert resp.status_code == 201, resp.text
+    await _sort(world)
+    row = await world.factory.fetchrow("SELECT * FROM gallery_media WHERE id = :m", m=resp.json()["id"])
+    assert row.status == "ready"
+    return (_root() / row.storage_key).read_bytes()
+
+
+@pytest.mark.parametrize("xmp_first", [False, True], ids=["exif-then-xmp", "xmp-then-exif"])
 async def test_a_jpeg_keeps_its_picture_but_loses_its_location(
-    world: World, visitor: Visitor, monkeypatch: pytest.MonkeyPatch
+    world: World, visitor: Visitor, monkeypatch: pytest.MonkeyPatch, xmp_first: bool
 ) -> None:
     out = io.BytesIO()
     Image.effect_noise((200, 100), 60).convert("RGB").save(out, format="JPEG", quality=90)
@@ -421,20 +482,107 @@ async def test_a_jpeg_keeps_its_picture_but_loses_its_location(
             "GPS": {piexif.GPSIFD.GPSLatitudeRef: b"N", piexif.GPSIFD.GPSLatitude: ((19, 1), (4, 1), (0, 1))},
         }
     )
-    target = io.BytesIO()
-    piexif.insert(exif, out.getvalue(), target)
+    # An editor's export can say where it was twice. With another segment first, piexif adds its clean EXIF
+    # and leaves the old one where it was.
+    blocks = (
+        (_xmp_segment(XMP_PLACE), _jpeg_segment(exif))
+        if xmp_first
+        else (_jpeg_segment(exif), _xmp_segment(XMP_PLACE))
+    )
+    sent = out.getvalue()[:2] + b"".join(blocks) + out.getvalue()[2:]
+    assert piexif.load(sent)["GPS"] and b"GPSLatitude" in sent and exif in sent
     await visitor.enrolled()
     monkeypatch.setattr(gallery_files, "find_faces", lambda bgr, *, min_px=24: [])
-    resp = await visitor.upload(target.getvalue(), "holiday.jpg", "image/jpeg")
+    resp = await visitor.upload(sent, "holiday.jpg", "image/jpeg")
     await _sort(world)
     row = await world.factory.fetchrow("SELECT * FROM gallery_media WHERE id = :m", m=resp.json()["id"])
     public = (_root() / row.storage_key).read_bytes()
     assert piexif.load(public)["GPS"] == {}
+    assert b"GPSLatitude" not in public and exif not in public
+    assert public[: public.index(b"\xff\xda")].count(b"Exif\x00\x00") == 1
     assert piexif.load(public)["0th"][piexif.ImageIFD.Make] == b"Phone"
-    # The scan data, from the start-of-scan marker on, is the same bytes.
-    assert public[public.index(b"\xff\xda") :] == out.getvalue()[out.getvalue().index(b"\xff\xda") :]
+    assert _scan(public) == _scan(sent)
     # Width and height as the picture is shown: the camera held it turned.
     assert (row.width, row.height) == (100, 200)
+
+
+async def test_a_location_in_any_part_of_a_jpegs_xmp_takes_all_of_it(
+    world: World, visitor: Visitor, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    await visitor.enrolled()
+    monkeypatch.setattr(gallery_files, "find_faces", lambda bgr, *, min_px=24: [])
+    credit = _jpeg_segment(b"Photoshop 3.0\x00" + b"8BIM a photographer's credit", 0xED)
+    packet = _xmp_segment(XMP_NO_PLACE)
+    further = _further_xmp_segment(XMP_PLACE)
+    # The packet that says it continues goes with the part that holds the location. The credit is not a location.
+    sent = _jpeg(credit, packet, further)
+    public = await _public_copy(world, visitor, sent, "a.jpg", "image/jpeg")
+    assert packet not in public and further not in public
+    assert credit in public and _scan(public) == _scan(sent)
+
+
+async def test_a_jpeg_with_no_location_stays_byte_for_byte(
+    world: World, visitor: Visitor, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    await visitor.enrolled()
+    monkeypatch.setattr(gallery_files, "find_faces", lambda bgr, *, min_px=24: [])
+    sent = _jpeg(_xmp_segment(XMP_NO_PLACE), _further_xmp_segment(XMP_NO_PLACE))
+    assert await _public_copy(world, visitor, sent, "hdr.jpg", "image/jpeg") == sent
+
+
+@pytest.mark.parametrize(
+    "made",
+    [
+        lambda png, exif: _png_with_xmp(png, XMP_PLACE),
+        lambda png, exif: _png_with_xmp(png, XMP_PLACE, after_pixels=True),
+        # Its EXIF says nothing, and comes first: Pillow has no reason to read as far as the XMP.
+        lambda png, exif: _png_with_xmp(exif, XMP_PLACE, after_pixels=True),
+    ],
+    ids=["before-the-pixels", "after-the-pixels", "after-the-pixels-with-exif"],
+)
+async def test_a_png_with_a_location_only_in_xmp_is_rewritten(
+    world: World, visitor: Visitor, made: Any
+) -> None:
+    await visitor.enrolled()
+    picture = Image.new("RGB", (64, 64), (0, 0, 0))
+    picture.putpixel((63, 63), (9, 8, 7))
+    plain, with_exif = io.BytesIO(), io.BytesIO()
+    picture.save(plain, format="PNG")
+    picture.save(with_exif, format="PNG", exif=piexif.dump({"0th": {piexif.ImageIFD.Make: b"Phone"}}))
+    sent = made(plain.getvalue(), with_exif.getvalue())
+    assert b"GPSLatitude" in sent
+    public = await _public_copy(world, visitor, sent, "a.png", "image/png")
+    assert b"GPSLatitude" not in public
+    assert Image.open(io.BytesIO(public)).convert("RGB").tobytes() == picture.tobytes()
+
+
+async def test_a_webp_with_a_location_only_in_xmp_is_rewritten(world: World, visitor: Visitor) -> None:
+    await visitor.enrolled()
+    picture = Image.new("RGB", (64, 64), (0, 0, 0))
+    picture.putpixel((63, 63), (9, 8, 7))
+    out = io.BytesIO()
+    picture.save(out, format="WEBP", lossless=True, xmp=XMP_PLACE)
+    assert b"GPSLatitude" in out.getvalue()
+    public = await _public_copy(world, visitor, out.getvalue(), "a.webp", "image/webp")
+    assert b"GPSLatitude" not in public
+    assert Image.open(io.BytesIO(public)).convert("RGB").tobytes() == picture.tobytes()
+
+
+@pytest.mark.parametrize("image_format", ["PNG", "WEBP"])
+async def test_a_picture_whose_xmp_has_no_location_is_not_rewritten(
+    world: World, visitor: Visitor, image_format: str
+) -> None:
+    await visitor.enrolled()
+    out = io.BytesIO()
+    picture = Image.new("RGB", (64, 64), (0, 0, 0))
+    if image_format == "PNG":
+        picture.save(out, format="PNG")
+        sent = _png_with_xmp(out.getvalue(), XMP_NO_PLACE)
+    else:
+        picture.save(out, format="WEBP", lossless=True, xmp=XMP_NO_PLACE)
+        sent = out.getvalue()
+    kind = image_format.lower()
+    assert await _public_copy(world, visitor, sent, f"a.{kind}", f"image/{kind}") == sent
 
 
 async def test_an_iphone_photo_becomes_a_jpeg_every_browser_shows(world: World, visitor: Visitor) -> None:
@@ -833,6 +981,404 @@ async def test_organisers_retry_a_file_only_when_it_failed_and_is_still_stored(
     assert (
         await world.factory.fetchval("SELECT status FROM gallery_media WHERE id = :m", m=media_id) == "ready"
     )
+
+
+# ---- files from the organisers' console -------------------------------------------------------------
+
+
+async def _console_start(admin: AdminClient, name: str, size: int, content_type: str = "image/png") -> str:
+    started = await admin.post(
+        f"{ORGANISER}/uploads", {"name": name, "size": size, "content_type": content_type}
+    )
+    assert started.status_code == 201, started.text
+    assert started.json()["mode"] == "server" and started.json()["chunk_size"] == media.CHUNK_SIZE
+    return str(started.json()["upload_id"])
+
+
+async def _console_chunk(admin: AdminClient, upload_id: str, offset: int, data: bytes) -> httpx.Response:
+    """One chunk, sent as the browser sends it: the raw bytes as the request body."""
+    return await admin.http.put(
+        f"{ADMIN}/uploads/{upload_id}",
+        params={"offset": offset},
+        content=data,
+        headers={"X-CSRF-Token": admin.csrf, "Content-Type": "application/octet-stream"},
+    )
+
+
+async def _console_upload(
+    admin: AdminClient,
+    data: bytes,
+    name: str = "photo.png",
+    content_type: str = "image/png",
+    *,
+    chunk: int = 64 * 1024,
+) -> httpx.Response:
+    """The whole flow (start, chunks of `chunk` bytes, complete); returns the completion."""
+    upload_id = await _console_start(admin, name, len(data), content_type)
+    for offset in range(0, len(data), chunk):
+        sent = await _console_chunk(admin, upload_id, offset, data[offset : offset + chunk])
+        assert sent.status_code == 200, sent.text
+        assert sent.json() == {"received": min(offset + chunk, len(data))}
+    return await admin.post(f"{ORGANISER}/uploads/{upload_id}/complete")
+
+
+def _temporary(upload_id: str) -> list[Path]:
+    return list((_root() / media.UPLOAD_DIR).glob(f"{upload_id}*"))
+
+
+async def _uploads_on_the_audit_log(world: World) -> list[Any]:
+    return await world.factory.fetch(
+        "SELECT actor_type, actor_id, actor_label, target_type, target_id, details, ip FROM audit_log "
+        "WHERE programme_id = :p AND action = 'gallery.media_uploaded' ORDER BY id",
+        p=world.programme_id,
+    )
+
+
+async def test_an_organisers_file_lands_on_the_page_of_everyone_in_it(world: World, visitor: Visitor) -> None:
+    asha = await visitor.enrolled("Asha", person=1)
+    ben = await Visitor(world.http()).enrolled("Ben", person=2)
+    await _sort(world)
+    admin = await world.admin()
+    group = _picture(1, second=2, salt=200)
+    sent = await _console_upload(admin, group, "group.png", chunk=50)
+    assert sent.status_code == 201, sent.text
+    assert sent.headers["cache-control"].startswith("no-store")
+    media_id = sent.json()["id"]
+    assert sent.json() == {"status": "uploaded", "duplicate": False, "id": media_id}
+    await _console_upload(admin, _picture(8, second=9, salt=201), "strangers.png")
+
+    # It waits for the worker like any other file, in the folder Caddy never serves.
+    row = await world.factory.fetchrow("SELECT * FROM gallery_media WHERE id = :m", m=media_id)
+    assert row.status == "queued" and row.source_key.startswith(".gallery-incoming/")
+    assert row.uploader_admin_id == admin.info.id and row.uploader_person_id is None
+    assert row.uploader_ip == world.ip
+    await _sort(world)
+
+    for person in (asha, ben):
+        page = await visitor.page(person)
+        assert [m["id"] for m in page["media"]] == [media_id]
+        assert page["person"]["photos"] == 1
+    public = (await visitor.page(asha))["media"][0]["download_url"].removeprefix("/media/")
+    assert (_root() / public).read_bytes() == group  # the same bytes that were sent
+
+    unnamed = [p for p in (await visitor.people())["people"] if not p["name"]]
+    assert len(unnamed) == 2 and all(p["photos"] == 1 and p["avatar_url"] for p in unnamed)
+    for person in unnamed:
+        assert (await visitor.page(person["id"]))["media"][0]["name"] == "strangers.png"
+
+    listed = {m["id"]: m for m in (await admin.get(f"{ORGANISER}/media")).json()["media"]}
+    assert listed[media_id]["uploader"] == "Organiser" and listed[media_id]["uploader_ip"] == world.ip
+    assert listed[media_id]["status"] == "ready" and listed[media_id]["faces"] == 2
+
+
+async def test_the_file_list_names_the_guest_says_organiser_and_leaves_a_removed_person_blank(
+    world: World, visitor: Visitor
+) -> None:
+    await visitor.enrolled("Asha", person=1)
+    admin = await world.admin()
+    from_guest = (await visitor.upload(_picture(1, salt=205), "guest.png")).json()["id"]
+    from_console = (await _console_upload(admin, _picture(1, salt=206), "console.png")).json()["id"]
+    await _sort(world)
+
+    async def uploaders() -> dict[str, str]:
+        return {m["id"]: m["uploader"] for m in (await admin.get(f"{ORGANISER}/media")).json()["media"]}
+
+    assert await uploaders() == {from_guest: "Asha", from_console: "Organiser"}
+    row = await world.factory.fetchrow(
+        "SELECT uploader_person_id, uploader_admin_id FROM gallery_media WHERE id = :m", m=from_guest
+    )
+    assert row.uploader_person_id is not None and row.uploader_admin_id is None
+
+    assert (await visitor.http.delete(f"{GALLERY}/me")).status_code == 204
+    assert await uploaders() == {from_guest: "", from_console: "Organiser"}
+
+
+async def test_a_guest_who_calls_themselves_organiser_is_not_taken_for_one(
+    world: World, visitor: Visitor
+) -> None:
+    await visitor.enrolled("Organiser", person=1)
+    admin = await world.admin()
+    from_guest = (await visitor.upload(_picture(1, salt=207), "guest.png")).json()["id"]
+    from_console = (await _console_upload(admin, _picture(1, salt=208), "console.png")).json()["id"]
+    listed = (await admin.get(f"{ORGANISER}/media")).json()["media"]
+    assert {m["id"]: (m["uploader"], m["from_organiser"]) for m in listed} == {
+        from_guest: ("Organiser", False),
+        from_console: ("Organiser", True),
+    }
+
+
+async def test_a_full_chunk_passes_on_the_organisers_path_and_a_larger_one_does_not(world: World) -> None:
+    admin = await world.admin()
+    data = _picture(1, salt=210)
+    data += bytes(media.CHUNK_SIZE + 1234 - len(data))  # a PNG with padding after it
+    assert media.CHUNK_SIZE > MAX_JSON_BYTES
+    sent = await _console_upload(admin, data, "large.png", chunk=media.CHUNK_SIZE)
+    assert sent.status_code == 201, sent.text
+    await _sort(world)
+    row = await world.factory.fetchrow("SELECT * FROM gallery_media WHERE id = :m", m=sent.json()["id"])
+    assert row.status == "ready" and row.byte_size == len(data)
+
+    upload_id = await _console_start(admin, "larger.png", 3 * media.CHUNK_SIZE)
+    # Refused while reading it, and before reading it once it says it is larger than a chunk can be.
+    for size in (media.CHUNK_SIZE + 1, media.CHUNK_SIZE + MAX_UPLOAD_BYTES_SLACK + 1):
+        assert_error(await _console_chunk(admin, upload_id, 0, bytes(size)), 413, "PAYLOAD_TOO_LARGE")
+    assert (_root() / media.UPLOAD_DIR / f"{upload_id}.part").stat().st_size == 0
+    # Only a chunk has this room: everything else on the path is still the size of a JSON body.
+    assert_error(
+        await admin.http.post(
+            f"{ADMIN}/uploads/{upload_id}/complete",
+            content=bytes(MAX_JSON_BYTES + 1),
+            headers={"X-CSRF-Token": admin.csrf},
+        ),
+        413,
+        "PAYLOAD_TOO_LARGE",
+    )
+
+
+async def test_only_a_signed_in_organiser_reaches_the_upload_routes(world: World, visitor: Visitor) -> None:
+    admin = await world.admin()
+    upload_id = await _console_start(admin, "a.png", 5)
+    await visitor.enrolled()
+    nobody = world.http()
+    another_site = {"Origin": "https://evil.example", "X-CSRF-Token": admin.csrf}
+    requests: list[tuple[str, str, dict[str, Any]]] = [
+        ("POST", f"{ADMIN}/uploads", {"json": {"name": "a.png", "size": 5, "content_type": "image/png"}}),
+        ("POST", f"{ADMIN}/uploads/{upload_id}/parts", {"json": {"numbers": [1]}}),
+        ("PUT", f"{ADMIN}/uploads/{upload_id}", {"params": {"offset": 0}, "content": b"12345"}),
+        ("POST", f"{ADMIN}/uploads/{upload_id}/complete", {}),
+        ("DELETE", f"{ADMIN}/uploads/{upload_id}", {}),
+    ]
+    for method, path, sends in requests:
+        assert_error(await nobody.request(method, path, **sends), 401, "UNAUTHENTICATED")
+        assert_error(await visitor.http.request(method, path, **sends), 401, "UNAUTHENTICATED")
+        assert_error(await admin.http.request(method, path, **sends), 403, "CSRF_FAILED")
+        assert_error(await admin.http.request(method, path, headers=another_site, **sends), 403, "BAD_ORIGIN")
+    # None of that touched it.
+    assert (await _console_chunk(admin, upload_id, 0, b"12345")).json() == {"received": 5}
+
+
+async def test_an_upload_belongs_to_the_one_who_started_it(world: World, visitor: Visitor) -> None:
+    await visitor.enrolled()
+    admin = await world.admin()
+    colleague = await world.admin(fresh=True)
+    assert colleague.info.id != admin.info.id
+    mine = await _console_start(admin, "a.png", 5)
+    started = await visitor.http.post(
+        f"{GALLERY}/uploads", json={"name": "b.png", "size": 5, "content_type": "image/png"}
+    )
+    guests = started.json()["upload_id"]
+
+    for organiser, upload_id in ((colleague, mine), (admin, guests), (colleague, guests)):
+        assert_error(await _console_chunk(organiser, upload_id, 0, b"12345"), 404, "NOT_FOUND")
+        parts = await organiser.post(f"{ORGANISER}/uploads/{upload_id}/parts", {"numbers": [1]})
+        assert_error(parts, 404, "NOT_FOUND")
+        assert_error(await organiser.post(f"{ORGANISER}/uploads/{upload_id}/complete"), 404, "NOT_FOUND")
+        assert_error(await organiser.delete(f"{ORGANISER}/uploads/{upload_id}"), 404, "NOT_FOUND")
+
+    # The same browser can be both: on the public routes it is the guest, whoever else it signed in as.
+    both = Visitor(admin.http)
+    await both.enrolled("Organiser at home", person=3)
+    for guest in (visitor, both):
+        path = f"{GALLERY}/uploads/{mine}"
+        assert_error(await guest.http.put(path, params={"offset": 0}, content=b"12345"), 404, "NOT_FOUND")
+        assert_error(await guest.http.post(f"{path}/parts", json={"numbers": [1]}), 404, "NOT_FOUND")
+        assert_error(await guest.http.post(f"{path}/complete"), 404, "NOT_FOUND")
+        assert_error(await guest.http.delete(path), 404, "NOT_FOUND")
+
+    # Both carry on: nobody else's request changed anything.
+    assert (await _console_chunk(admin, mine, 0, b"12345")).json() == {"received": 5}
+    sent = await visitor.http.put(f"{GALLERY}/uploads/{guests}", params={"offset": 0}, content=b"12345")
+    assert sent.json() == {"received": 5}
+
+
+@pytest.mark.parametrize("bad", ["%00", "abc%00def", "abc", "a" * 200, "a%20b"])
+async def test_an_id_no_upload_could_have_is_not_found_on_every_route(
+    world: World, visitor: Visitor, bad: str
+) -> None:
+    await visitor.enrolled()
+    admin = await world.admin()
+    assert_error(await admin.post(f"{ORGANISER}/uploads/{bad}/parts", {"numbers": [1]}), 404, "NOT_FOUND")
+    assert_error(await _console_chunk(admin, bad, 0, b"12345"), 404, "NOT_FOUND")
+    assert_error(await admin.post(f"{ORGANISER}/uploads/{bad}/complete"), 404, "NOT_FOUND")
+    assert_error(await admin.delete(f"{ORGANISER}/uploads/{bad}"), 404, "NOT_FOUND")
+    path = f"{GALLERY}/uploads/{bad}"
+    assert_error(await visitor.http.post(f"{path}/parts", json={"numbers": [1]}), 404, "NOT_FOUND")
+    assert_error(await visitor.http.put(path, params={"offset": 0}, content=b"12345"), 404, "NOT_FOUND")
+    assert_error(await visitor.http.post(f"{path}/complete"), 404, "NOT_FOUND")
+    assert_error(await visitor.http.delete(path), 404, "NOT_FOUND")
+
+
+async def test_a_size_no_column_could_hold_is_refused_on_every_route(world: World, visitor: Visitor) -> None:
+    await visitor.enrolled()
+    admin = await world.admin()
+    start = {"name": "a.mp4", "size": 2**63, "content_type": "video/mp4"}
+    assert_error(await admin.post(f"{ORGANISER}/uploads", start), 422, "VALIDATION_FAILED")
+    assert_error(await visitor.http.post(f"{GALLERY}/uploads", json=start), 422, "VALIDATION_FAILED")
+    assert_error(await admin.post("/media/uploads", start), 422, "VALIDATION_FAILED")
+
+
+async def test_an_organiser_can_abandon_an_upload(world: World) -> None:
+    admin = await world.admin()
+    upload_id = await _console_start(admin, "a.png", 5)
+    assert (await _console_chunk(admin, upload_id, 0, b"12")).status_code == 200
+    # A chunk that does not follow the stored part gets the stored size, so the browser resumes.
+    mismatch = assert_error(await _console_chunk(admin, upload_id, 1, b"3"), 409, "UPLOAD_OFFSET_MISMATCH")
+    assert mismatch["details"]["received"] == 2
+    assert_error(await admin.post(f"{ORGANISER}/uploads/{upload_id}/complete"), 409, "UPLOAD_INCOMPLETE")
+    answer = await admin.delete(f"{ORGANISER}/uploads/{upload_id}")
+    assert answer.status_code == 204 and answer.headers["cache-control"].startswith("no-store")
+    assert _temporary(upload_id) == []
+    assert_error(await admin.post(f"{ORGANISER}/uploads/{upload_id}/complete"), 404, "NOT_FOUND")
+
+
+async def test_the_same_file_from_an_organiser_counts_once(world: World, visitor: Visitor) -> None:
+    await visitor.enrolled()
+    admin = await world.admin()
+    incoming = _root() / gallery_files.INCOMING
+    guests, consoles = _picture(1, salt=220), _picture(1, salt=221)
+    assert (await visitor.upload(guests)).json()["duplicate"] is False
+    assert (await _console_upload(admin, consoles)).json()["duplicate"] is False
+    before = set(incoming.iterdir())
+
+    for data in (guests, consoles):
+        again = await _console_upload(admin, data, "copy.png")
+        assert again.status_code == 201, again.text
+        assert again.json() == {"status": "uploaded", "duplicate": True}
+    assert (await visitor.upload(consoles, "copy.png")).json()["duplicate"] is True
+
+    assert set(incoming.iterdir()) == before  # the second copies have gone
+    count = "SELECT count(*) FROM gallery_media WHERE programme_id = :p"
+    assert await world.factory.fetchval(count, p=world.programme_id) == 2
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        b"<svg xmlns='http://www.w3.org/2000/svg'><script>alert(1)</script></svg>",
+        b"<!doctype html><html></html>",
+        b"MZ\x90\x00",
+    ],
+)
+async def test_only_pictures_and_videos_are_accepted_from_organisers_too(
+    world: World, content: bytes
+) -> None:
+    admin = await world.admin()
+    incoming = _root() / gallery_files.INCOMING
+    incoming.mkdir(parents=True, exist_ok=True)
+    before = set(incoming.iterdir())
+    upload_id = await _console_start(admin, "photo.jpg", len(content), "image/jpeg")
+    assert (await _console_chunk(admin, upload_id, 0, content)).status_code == 200
+    assert_error(await admin.post(f"{ORGANISER}/uploads/{upload_id}/complete"), 422, "INVALID_MEDIA")
+
+    assert _temporary(upload_id) == []
+    assert set(incoming.iterdir()) == before
+    count = "SELECT count(*) FROM gallery_media WHERE programme_id = :p"
+    assert await world.factory.fetchval(count, p=world.programme_id) == 0
+    assert await _uploads_on_the_audit_log(world) == []  # refused: it never finished
+
+
+async def test_an_organisers_video_goes_in_the_queue_as_a_video(world: World) -> None:
+    admin = await world.admin()
+    clip = b"\x00\x00\x00\x18ftypisom" + bytes(4000)
+    sent = await _console_upload(admin, clip, "stage.mp4", "video/mp4")
+    assert sent.status_code == 201, sent.text
+    row = await world.factory.fetchrow("SELECT * FROM gallery_media WHERE id = :m", m=sent.json()["id"])
+    assert row.kind == "video" and row.status == "queued" and row.content_type == "video/mp4"
+    assert (_root() / row.source_key).read_bytes() == clip
+    # Reading it needs ffmpeg, which the video tests below cover. It must not wait for the next test's worker.
+    assert (await admin.delete(f"{ORGANISER}/media/{row.id}")).status_code == 204
+
+
+async def test_organisers_skip_the_limits_that_protect_the_public_link(
+    world: World, visitor: Visitor, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    await visitor.enrolled()
+    admin = await world.admin()
+    settings = get_settings()
+    start = {"name": "a.png", "size": 1000, "content_type": "image/png"}
+    monkeypatch.setattr(settings, "gallery_uploads_per_hour", 1)
+    assert (await visitor.http.post(f"{GALLERY}/uploads", json=start)).status_code == 201
+    assert_error(await visitor.http.post(f"{GALLERY}/uploads", json=start), 429, "RATE_LIMITED")
+    for _ in range(3):
+        assert (await admin.post(f"{ORGANISER}/uploads", start)).status_code == 201
+
+    monkeypatch.setattr(settings, "gallery_uploads_per_hour", 0)
+    monkeypatch.setattr(settings, "gallery_max_person_bytes", 100)
+    assert_error(await visitor.http.post(f"{GALLERY}/uploads", json=start), 413, "FILE_TOO_LARGE")
+    assert (await admin.post(f"{ORGANISER}/uploads", start)).status_code == 201
+
+
+async def test_organisers_keep_the_limits_that_protect_the_machine(
+    world: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    admin = await world.admin()
+    settings = get_settings()
+    photo = {"name": "a.png", "size": 1001, "content_type": "image/png"}
+    video = {"name": "a.mp4", "size": 1001, "content_type": "video/mp4"}
+    monkeypatch.setattr(settings, "gallery_max_image_bytes", 1000)
+    assert_error(await admin.post(f"{ORGANISER}/uploads", photo), 413, "FILE_TOO_LARGE")
+    assert (await admin.post(f"{ORGANISER}/uploads", video)).status_code == 201
+    monkeypatch.setattr(settings, "gallery_max_image_bytes", 0)
+    monkeypatch.setattr(settings, "gallery_max_video_bytes", 1000)
+    assert_error(await admin.post(f"{ORGANISER}/uploads", video), 413, "FILE_TOO_LARGE")
+    assert (await admin.post(f"{ORGANISER}/uploads", photo)).status_code == 201
+    monkeypatch.setattr(settings, "gallery_max_video_bytes", 0)
+    monkeypatch.setattr(settings, "gallery_free_space_reserve_bytes", 1 << 62)
+    assert_error(await admin.post(f"{ORGANISER}/uploads", photo), 507, "INSUFFICIENT_STORAGE")
+
+    # A file that said it was something else is checked again once its first bytes are here.
+    monkeypatch.setattr(settings, "gallery_free_space_reserve_bytes", 0)
+    data = _picture(1, salt=225)
+    monkeypatch.setattr(settings, "gallery_max_image_bytes", len(data) - 1)
+    upload_id = await _console_start(admin, "a.mp4", len(data), "video/mp4")
+    assert (await _console_chunk(admin, upload_id, 0, data)).status_code == 200
+    assert_error(await admin.post(f"{ORGANISER}/uploads/{upload_id}/complete"), 413, "FILE_TOO_LARGE")
+    assert _temporary(upload_id) == []
+
+
+async def test_each_finished_upload_from_an_organiser_leaves_one_audit_row(
+    world: World, visitor: Visitor
+) -> None:
+    await visitor.enrolled()
+    admin = await world.admin()
+    data = _picture(1, salt=230)
+    kept = await _console_upload(admin, data, "stage.png")
+    again = await _console_upload(admin, data, "again.png")
+    assert again.json()["duplicate"] is True
+    # A guest's file, and one abandoned half way, are not organisers' finished uploads.
+    assert (await visitor.upload(_picture(1, salt=231))).status_code == 201
+    abandoned = await _console_start(admin, "gone.png", 5)
+    assert (await admin.delete(f"{ORGANISER}/uploads/{abandoned}")).status_code == 204
+
+    first, second = await _uploads_on_the_audit_log(world)
+    for row in (first, second):
+        assert (row.actor_type, row.actor_id) == ("admin", admin.info.id)
+        assert row.actor_label == admin.info.email and row.ip == world.ip
+    assert (first.target_type, first.target_id) == ("gallery_media", kept.json()["id"])
+    assert first.details == {"name": "stage.png", "bytes": len(data), "duplicate": False}
+    assert (second.target_type, second.target_id) == (None, None)  # counted once: there is no second file
+    assert second.details == {"name": "again.png", "bytes": len(data), "duplicate": True}
+
+    listed = await admin.get("/audit", action="gallery.media_uploaded")
+    assert listed.status_code == 200 and listed.json()["total"] == 2
+
+
+async def test_a_file_is_never_queued_without_its_audit_row(
+    world: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    admin = await world.admin()
+    incoming = _root() / gallery_files.INCOMING
+    incoming.mkdir(parents=True, exist_ok=True)
+    before = set(incoming.iterdir())
+
+    async def failing(*args: Any, **kwargs: Any) -> None:
+        raise RuntimeError("audit store unavailable")
+
+    monkeypatch.setattr(gallery, "audit", failing)
+    assert_error(await _console_upload(admin, _picture(1, salt=235)), 500, "INTERNAL_ERROR")
+    count = "SELECT count(*) FROM gallery_media WHERE programme_id = :p"
+    assert await world.factory.fetchval(count, p=world.programme_id) == 0
+    assert set(incoming.iterdir()) == before
 
 
 # ---- what the analysis saw --------------------------------------------------------------------------
@@ -1265,6 +1811,30 @@ async def test_real_opencv_finds_a_face_and_matches_two_framings_of_it(
     assert selfie[0].crop[:4] == b"RIFF"
     blank = np.zeros((400, 400, 3), dtype=np.uint8)
     assert find_faces(blank) == []
+
+
+@pytest.mark.real_opencv
+@real_models
+async def test_real_opencv_puts_an_organisers_photo_on_the_page_of_the_face_in_it(
+    world: World, visitor: Visitor, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(get_settings(), "gallery_models_dir", _models_folder())
+    enrolled = await visitor.enrol("Asha", (FIXTURES / "portrait-selfie.jpg").read_bytes())
+    assert enrolled.status_code == 200, enrolled.text
+    person = enrolled.json()["person"]["id"]
+    await _sort(world)
+    admin = await world.admin()
+    wide = (FIXTURES / "portrait-wide.jpg").read_bytes()
+    sent = await _console_upload(admin, wide, "stage.jpg", "image/jpeg")
+    assert sent.status_code == 201, sent.text
+    await _sort(world)
+    page = await visitor.page(person)
+    assert [m["id"] for m in page["media"]] == [sent.json()["id"]]
+    assert page["person"]["photos"] == 1
+    how = await world.factory.fetchval(
+        "SELECT matched_by FROM gallery_faces WHERE media_id = :m", m=sent.json()["id"]
+    )
+    assert how == "opencv"
 
 
 needs_ffmpeg = pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg is not installed here")

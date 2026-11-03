@@ -25,8 +25,10 @@ import { useEffect, useRef, useState } from 'react'
 import { Notice } from '@/components/ui/misc'
 import { adminApi, setCsrfToken } from '@/lib/api'
 import { beginSignOut, cancelSignOut, describeError } from '@/lib/admin/errors'
+import { queueStillSending } from '@/lib/admin/gallery-queue'
 import { AdminSessionProvider, useAdminSession } from '@/lib/admin/session'
 import type { LiveStatus } from '@/lib/live'
+import { ConfirmDialog } from './confirm'
 import { IconButton, MiniButton, PageSkeleton } from './primitives'
 
 const iconClass = 'size-[1.15rem] shrink-0'
@@ -228,11 +230,15 @@ export function ConnectionStatus({ status, compact = false }: { status: LiveStat
 
 function SignOutButton() {
   const [busy, setBusy] = useState(false)
+  const [asking, setAsking] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const signOut = async () => {
+    setAsking(false)
     setBusy(true)
     setError(null)
     beginSignOut()
+    // Before the session goes: what is left could not finish without it, and leaving must not ask again.
+    queueStillSending()?.stop()
     try {
       await adminApi('/admin/auth/logout', { method: 'POST' })
       setCsrfToken('admin', null)
@@ -245,7 +251,7 @@ function SignOutButton() {
   }
   return (
     <div>
-      <MiniButton busy={busy} onClick={() => void signOut()} className="w-full">
+      <MiniButton busy={busy} onClick={() => (queueStillSending() ? setAsking(true) : void signOut())} className="w-full">
         <LogOut aria-hidden className="size-4" />
         Sign out
       </MiniButton>
@@ -253,6 +259,17 @@ function SignOutButton() {
         <p role="alert" className="mt-2 text-sm font-medium text-danger">
           {error}
         </p>
+      ) : null}
+      {asking ? (
+        <ConfirmDialog
+          open
+          tone="danger"
+          title="Stop the upload and sign out?"
+          description="Files still waiting or being sent will not reach the gallery. Files already uploaded stay there."
+          confirmLabel="Stop and sign out"
+          onConfirm={() => void signOut()}
+          onClose={() => setAsking(false)}
+        />
       ) : null}
     </div>
   )
