@@ -379,9 +379,9 @@ Nothing here touches events, votes or the voters' sign-in. `services/gallery.py`
   0.36 is not, and the band between goes to the vision model (`services/gallery_model.py`), which sees
   only the two aligned crops and counts only with confidence 0.9 or more. No answer means "not the same
   person": a missing photo is a smaller mistake than someone else's photo on your page. A face matching
-  nobody starts an unnamed person, listed once seen in two files. A new selfie then absorbs the unnamed
-  groups it matches. Only one worker decides at a time, so two photos of a stranger cannot each start a
-  new person.
+  nobody starts an unnamed person, listed at once, so everyone in a group photo appears after one upload.
+  A new selfie then absorbs the unnamed groups it matches. Only one worker decides at a time, so two
+  photos of a stranger cannot each start a new person.
 - **The analysis view** (organisers only). `gallery_faces.analysis` keeps each face's box, the detector's
   score and whom it was compared with; `gallery_media.analysis` keeps how the file was read and, for a
   video, the frames a face was clearest in. Opening a file's analysis asks the vision model for a short

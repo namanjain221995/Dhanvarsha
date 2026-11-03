@@ -703,8 +703,9 @@ def _like(query: str) -> str:
 async def list_people(
     db: AsyncSession, programme_id: uuid.UUID, me: uuid.UUID | None, query: str, offset: int, limit: int
 ) -> dict[str, Any]:
-    """Everyone who has a name, and unnamed groups seen in at least two files. A search looks only
-    at names, so it finds a person with no photos yet too. `me` comes first, then the most photos."""
+    """Everyone who has a name, and every unnamed person in a sorted file, so each face in a group
+    photo appears at once. A search looks only at names, so it finds a person with no photos yet too.
+    `me` comes first, then the most photos."""
     rows = await db.execute(
         text(
             """
@@ -721,7 +722,7 @@ async def list_people(
             FROM gallery_people p LEFT JOIN counts c ON c.person_id = p.id
             WHERE p.programme_id = :programme
               AND (:query = '' OR p.name ILIKE :like)
-              AND (p.enrolled_at IS NOT NULL OR coalesce(c.photos, 0) + coalesce(c.videos, 0) >= 2)
+              AND (p.enrolled_at IS NOT NULL OR c.person_id IS NOT NULL)
             ORDER BY (p.id = :me) IS TRUE DESC, coalesce(c.photos, 0) + coalesce(c.videos, 0) DESC,
                      p.name <> '' DESC, p.name, p.id
             OFFSET :offset LIMIT :limit

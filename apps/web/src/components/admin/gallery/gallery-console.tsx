@@ -585,7 +585,7 @@ function PeoplePanel({ flash, onChanged }: { flash: Flash; onChanged: () => void
         />
       </div>
       {query.error && !query.data ? <LoadError error={query.error} onRetry={() => void query.reload()} what="the people" /> : null}
-      {query.data && query.data.people.length === 0 ? <EmptyState title="Nobody here">People appear once they add a selfie, or once a face turns up in two files.</EmptyState> : null}
+      {query.data && query.data.people.length === 0 ? <EmptyState title="Nobody here">People appear once they add a selfie, or once a face turns up in a shared file.</EmptyState> : null}
       {query.data && query.data.people.length > 0 ? (
         <ul className="mt-4 divide-y divide-sand">
           {query.data.people.map((person) => (

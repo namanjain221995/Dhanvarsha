@@ -511,6 +511,18 @@ async def test_a_group_photo_shows_on_the_page_of_each_person_in_it(world: World
     assert (_root() / public).read_bytes() == group  # no marks: the same bytes that were sent
 
 
+async def test_each_face_in_one_group_photo_is_listed_at_once(world: World, visitor: Visitor) -> None:
+    await visitor.enrolled("Asha", person=1)
+    await _sort(world)
+    await visitor.upload(_picture(8, second=9, salt=33), "group.png")
+    await _sort(world)
+
+    unnamed = [p for p in (await visitor.people())["people"] if not p["name"]]
+    assert len(unnamed) == 2 and all(p["photos"] == 1 and p["avatar_url"] for p in unnamed)
+    for person in unnamed:
+        assert (await visitor.page(person["id"]))["media"][0]["name"] == "group.png"
+
+
 async def test_faces_before_the_selfie_join_the_person_afterwards(world: World, visitor: Visitor) -> None:
     uploader = Visitor(world.http())
     await uploader.enrolled("Ben", person=2)
@@ -520,8 +532,8 @@ async def test_faces_before_the_selfie_join_the_person_afterwards(world: World, 
     await _sort(world)
     people = await uploader.people()
     unnamed = [p for p in people["people"] if not p["name"]]
-    assert len(unnamed) == 1 and unnamed[0]["photos"] == 2  # one sighting is not listed yet
-    assert unnamed[0]["avatar_url"]
+    assert [p["photos"] for p in unnamed] == [2, 1]  # the most photos first
+    assert all(p["avatar_url"] for p in unnamed)
 
     person = await visitor.enrolled("Chitra", person=9)
     await _sort(world)
@@ -529,7 +541,7 @@ async def test_faces_before_the_selfie_join_the_person_afterwards(world: World, 
     assert page["person"]["photos"] == 2
     assert page["person"]["name"] == "Chitra"
     people = await uploader.people()
-    assert not [p for p in people["people"] if not p["name"]]
+    assert [p["photos"] for p in people["people"] if not p["name"]] == [1]  # only the other one is left
     assert (
         await world.factory.fetchval("SELECT rematch_pending FROM gallery_people WHERE id = :p", p=person)
         is False
